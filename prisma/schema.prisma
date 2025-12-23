@@ -1,0 +1,205 @@
+// This is your Prisma schema file
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum UserRole {
+  PATIENT
+  DOCTOR
+  RECEPTIONIST
+  ADMIN
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CHECKED_IN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  QUEUED
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+// ============================================
+// CORE ENTITIES
+// ============================================
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  role      UserRole @default(PATIENT)
+  
+  fullName  String
+  phone     String?
+  avatar    String?
+  
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  bookingsAsPatient   Booking[]           @relation("PatientBookings")
+  bookingsAsDoctor    Booking[]           @relation("DoctorBookings")
+  workingHours        DoctorWorkingHours[]
+  breakTimes          DoctorBreakTime[]
+  offDays             DoctorOffDay[]
+  statusChanges       BookingStatusHistory[] @relation("ChangedByUser")
+  
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+model Service {
+  id                String   @id @default(uuid())
+  name              String   @unique
+  description       String?
+  durationMinutes   Int
+  price             Decimal  @db.Decimal(10, 2)
+  maxSlotsPerHour   Int      @default(2)
+  
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  bookings          Booking[]
+  
+  @@index([isActive])
+  @@map("services")
+}
+
+model DoctorWorkingHours {
+  id         String    @id @default(uuid())
+  doctorId   String
+  dayOfWeek  DayOfWeek
+  startTime  String
+  endTime    String
+  
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  
+  doctor     User      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  
+  @@unique([doctorId, dayOfWeek])
+  @@index([doctorId])
+  @@map("doctor_working_hours")
+}
+
+model DoctorBreakTime {
+  id         String   @id @default(uuid())
+  doctorId   String
+  date       DateTime @db.Date
+  startTime  String
+  endTime    String
+  reason     String?
+  
+  createdAt  DateTime @default(now())
+  
+  doctor     User     @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  
+  @@index([doctorId, date])
+  @@map("doctor_break_times")
+}
+
+model DoctorOffDay {
+  id        String   @id @default(uuid())
+  doctorId  String
+  date      DateTime @db.Date
+  reason    String?
+  
+  createdAt DateTime @default(now())
+  
+  doctor    User     @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  
+  @@unique([doctorId, date])
+  @@index([doctorId])
+  @@map("doctor_off_days")
+}
+
+model Booking {
+  id           String        @id @default(uuid())
+  
+  patientId    String
+  doctorId     String
+  serviceId    String
+  bookingDate  DateTime      @db.Date
+  startTime    String
+  endTime      String
+  
+  status       BookingStatus @default(PENDING)
+  
+  patientNotes String?
+  doctorNotes  String?
+  
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  
+  patient      User          @relation("PatientBookings", fields: [patientId], references: [id])
+  doctor       User          @relation("DoctorBookings", fields: [doctorId], references: [id])
+  service      Service       @relation(fields: [serviceId], references: [id])
+  statusHistory BookingStatusHistory[]
+  queueRecord  BookingQueue?
+  
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([bookingDate])
+  @@index([status])
+  @@index([doctorId, bookingDate, startTime])
+  @@map("bookings")
+}
+
+model BookingQueue {
+  id              String   @id @default(uuid())
+  bookingId       String   @unique
+  queuePosition   Int
+  estimatedWaitMinutes Int
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  booking         Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  
+  @@index([queuePosition])
+  @@index([bookingId])
+  @@map("booking_queue")
+}
+
+model BookingStatusHistory {
+  id          String        @id @default(uuid())
+  bookingId   String
+  oldStatus   BookingStatus?
+  newStatus   BookingStatus
+  changedById String
+  reason      String?
+  
+  createdAt   DateTime      @default(now())
+  
+  booking     Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  changedBy   User          @relation("ChangedByUser", fields: [changedById], references: [id])
+  
+  @@index([bookingId])
+  @@index([createdAt])
+  @@map("booking_status_history")
+}
