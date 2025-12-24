@@ -7,6 +7,9 @@ CREATE TYPE "BookingStatus" AS ENUM ('PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_P
 -- CreateEnum
 CREATE TYPE "DayOfWeek" AS ENUM ('MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY');
 
+-- CreateEnum
+CREATE TYPE "VerificationType" AS ENUM ('EMAIL_VERIFICATION', 'PASSWORD_RESET');
+
 -- CreateTable
 CREATE TABLE "users" (
     "id" TEXT NOT NULL,
@@ -16,11 +19,24 @@ CREATE TABLE "users" (
     "fullName" TEXT NOT NULL,
     "phone" TEXT,
     "avatar" TEXT,
-    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "isActive" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "users_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "verification_codes" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "code" TEXT NOT NULL,
+    "type" "VerificationType" NOT NULL,
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "isUsed" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "verification_codes_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -128,6 +144,12 @@ CREATE INDEX "users_email_idx" ON "users"("email");
 CREATE INDEX "users_role_idx" ON "users"("role");
 
 -- CreateIndex
+CREATE INDEX "verification_codes_userId_type_isUsed_idx" ON "verification_codes"("userId", "type", "isUsed");
+
+-- CreateIndex
+CREATE INDEX "verification_codes_code_idx" ON "verification_codes"("code");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "services_name_key" ON "services"("name");
 
 -- CreateIndex
@@ -177,6 +199,9 @@ CREATE INDEX "booking_status_history_bookingId_idx" ON "booking_status_history"(
 
 -- CreateIndex
 CREATE INDEX "booking_status_history_createdAt_idx" ON "booking_status_history"("createdAt");
+
+-- AddForeignKey
+ALTER TABLE "verification_codes" ADD CONSTRAINT "verification_codes_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "doctor_working_hours" ADD CONSTRAINT "doctor_working_hours_doctorId_fkey" FOREIGN KEY ("doctorId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
