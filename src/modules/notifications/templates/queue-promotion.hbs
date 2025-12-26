@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        margin: 0;
+        padding: 0;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .header {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        color: white;
+        padding: 30px;
+        text-align: center;
+        border-radius: 10px 10px 0 0;
+      }
+      .content {
+        background: #f9f9f9;
+        padding: 30px;
+        border-radius: 0 0 10px 10px;
+      }
+      .success-icon {
+        font-size: 64px;
+        text-align: center;
+        margin: 20px 0;
+      }
+      .booking-card {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        margin: 20px 0;
+      }
+      .booking-detail {
+        display: flex;
+        padding: 12px 0;
+        border-bottom: 1px solid #eee;
+      }
+      .booking-detail:last-child {
+        border-bottom: none;
+      }
+      .label {
+        font-weight: bold;
+        width: 150px;
+        color: #28a745;
+      }
+      .value {
+        flex: 1;
+        color: #333;
+      }
+      .highlight-box {
+        background: #d4edda;
+        border: 2px solid #28a745;
+        padding: 20px;
+        margin: 20px 0;
+        border-radius: 8px;
+        text-align: center;
+      }
+      .footer {
+        text-align: center;
+        margin-top: 20px;
+        font-size: 12px;
+        color: #888;
+      }
+      .button {
+        background: #28a745;
+        color: white;
+        padding: 12px 30px;
+        text-decoration: none;
+        border-radius: 5px;
+        display: inline-block;
+        margin: 10px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🏥 Smart Clinic</h1>
+        <p>Appointment Available!</p>
+      </div>
+
+      <div class="content">
+        <div class="success-icon">🎉</div>
+
+        <h2>Great News, {{patientName}}!</h2>
+
+        <div class="highlight-box">
+          <h3 style="margin: 0; color: #28a745;">
+            ✅ Your Appointment Has Been Confirmed!
+          </h3>
+          <p style="margin: 10px 0 0 0;">
+            A slot has become available and your booking has been automatically
+            promoted from the queue.
+          </p>
+        </div>
+
+        <div class="booking-card">
+          <h3>📋 Confirmed Appointment Details</h3>
+
+          <div class="booking-detail">
+            <span class="label">Booking ID:</span>
+            <span class="value">{{bookingId}}</span>
+          </div>
+
+          <div class="booking-detail">
+            <span class="label">Status:</span>
+            <span class="value">
+              <strong style="color: #28a745;">CONFIRMED</strong>
+            </span>
+          </div>
+
+          <div class="booking-detail">
+            <span class="label">Doctor:</span>
+            <span class="value">{{doctorName}}</span>
+          </div>
+
+          <div class="booking-detail">
+            <span class="label">Service:</span>
+            <span class="value">{{serviceName}}</span>
+          </div>
+
+          <div class="booking-detail">
+            <span class="label">Date:</span>
+            <span class="value">{{bookingDate}}</span>
+          </div>
+
+          <div class="booking-detail">
+            <span class="label">Time:</span>
+            <span class="value">{{startTime}} - {{endTime}}</span>
+          </div>
+
+          <div class="booking-detail">
+            <span class="label">Duration:</span>
+            <span class="value">{{duration}} minutes</span>
+          </div>
+
+          {{#if price}}
+            <div class="booking-detail">
+              <span class="label">Price:</span>
+              <span class="value">${{price}}</span>
+            </div>
+          {{/if}}
+        </div>
+
+        <div
+          style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;"
+        >
+          <strong>📌 Important Reminders:</strong>
+          <ul style="margin: 10px 0;">
+            <li>Please arrive 10 minutes before your appointment time</li>
+            <li>Bring your ID and any relevant medical documents</li>
+            <li>
+              If you cannot make this appointment, please cancel as soon as
+              possible
+            </li>
+          </ul>
+        </div>
+
+        <p style="text-align: center; margin: 30px 0;">
+          
+            href="#"
+            class="button"
+            style="background: #28a745; color: white; text-decoration: none; padding: 12px 30px; border-radius: 5px; display: inline-block;"
+          >View My Appointments</a>
+        </p>
+
+        <p>
+          We're looking forward to seeing you! If you have any questions, please
+          don't hesitate to contact us.
+        </p>
+
+        <p>Best regards,<br />Smart Clinic Team</p>
+      </div>
+
+      <div class="footer">
+        <p>This is an automated email. Please do not reply.</p>
+        <p>&copy; 2025 Smart Clinic. All rights reserved.</p>
+      </div>
+    </div>
+  </body>
+</html>

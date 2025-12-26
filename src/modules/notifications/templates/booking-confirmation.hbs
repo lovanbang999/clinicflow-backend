@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        margin: 0;
+        padding: 0;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        text-align: center;
+        border-radius: 10px 10px 0 0;
+      }
+      .content {
+        background: #f9f9f9;
+        padding: 30px;
+        border-radius: 0 0 10px 10px;
+      }
+      .booking-card {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        margin: 20px 0;
+      }
+      .booking-detail {
+        display: flex;
+        padding: 12px 0;
+        border-bottom: 1px solid #eee;
+      }
+      .booking-detail:last-child {
+        border-bottom: none;
+      }
+      .label {
+        font-weight: bold;
+        width: 150px;
+        color: #667eea;
+      }
+      .value {
+        flex: 1;
+        color: #333;
+      }
+      .status-badge {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: bold;
+        text-transform: uppercase;
+      }
+      .status-pending {
+        background: #fff3cd;
+        color: #856404;
+      }
+      .status-confirmed {
+        background: #d4edda;
+        color: #155724;
+      }
+      .status-queued {
+        background: #d1ecf1;
+        color: #0c5460;
+      }
+      .alert-box {
+        background: #fff3cd;
+        border-left: 4px solid #ffc107;
+        padding: 15px;
+        margin: 20px 0;
+        border-radius: 4px;
+      }
+      .footer {
+        text-align: center;
+        margin-top: 20px;
+        font-size: 12px;
+        color: #888;
+      }
+      .button {
+        background: #667eea;
+        color: white;
+        padding: 12px 30px;
+        text-decoration: none;
+        border-radius: 5px;
+        display: inline-block;
+        margin: 10px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🏥 Smart Clinic</h1>
+        <p>Booking Confirmation</p>
+      </div>
+
+      <div class="content">
+        <h2>Hello {{patientName}}! 👋</h2>
+
+        {{#if isQueued}}
+          <div class="alert-box">
+            <strong>⏳ Your booking is currently in queue</strong><br />
+            You will be notified when a slot becomes available.
+          </div>
+        {{else}}
+          <p>
+            Your appointment has been successfully
+            {{#if isPending}}scheduled{{else}}confirmed{{/if}}!
+          </p>
+        {{/if}}
+
+        <div class="booking-card">
+          <h3>📋 Booking Details</h3>
+
+          <div class="booking-detail">
+            <span class="label">Booking ID:</span>
+            <span class="value">{{bookingId}}</span>
+          </div>
+
+          <div class="booking-detail">
+            <span class="label">Status:</span>
+            <span class="value">
+              <span
+                class="status-badge status-{{statusClass}}"
+              >{{status}}</span>
+            </span>
+          </div>
+
+          <div class="booking-detail">
+            <span class="label">Doctor:</span>
+            <span class="value">{{doctorName}}</span>
+          </div>
+
+          <div class="booking-detail">
+            <span class="label">Service:</span>
+            <span class="value">{{serviceName}}</span>
+          </div>
+
+          <div class="booking-detail">
+            <span class="label">Duration:</span>
+            <span class="value">{{duration}} minutes</span>
+          </div>
+
+          {{#unless isQueued}}
+            <div class="booking-detail">
+              <span class="label">Date:</span>
+              <span class="value">{{bookingDate}}</span>
+            </div>
+
+            <div class="booking-detail">
+              <span class="label">Time:</span>
+              <span class="value">{{startTime}} - {{endTime}}</span>
+            </div>
+          {{/unless}}
+
+          {{#if queuePosition}}
+            <div class="booking-detail">
+              <span class="label">Queue Position:</span>
+              <span class="value">#{{queuePosition}}</span>
+            </div>
+
+            <div class="booking-detail">
+              <span class="label">Est. Wait Time:</span>
+              <span class="value">{{estimatedWaitTime}} minutes</span>
+            </div>
+          {{/if}}
+
+          {{#if price}}
+            <div class="booking-detail">
+              <span class="label">Price:</span>
+              <span class="value">${{price}}</span>
+            </div>
+          {{/if}}
+
+          {{#if patientNotes}}
+            <div class="booking-detail">
+              <span class="label">Notes:</span>
+              <span class="value">{{patientNotes}}</span>
+            </div>
+          {{/if}}
+        </div>
+
+        {{#unless isQueued}}
+          <div class="alert-box">
+            <strong>📌 Important Reminders:</strong>
+            <ul style="margin: 10px 0;">
+              <li>Please arrive 10 minutes before your appointment time</li>
+              <li>Bring your ID and any relevant medical documents</li>
+              <li>
+                If you need to cancel, please do so at least 24 hours in
+                advance
+              </li>
+            </ul>
+          </div>
+        {{/unless}}
+
+        <p>
+          If you have any questions or need to reschedule, please contact us.
+        </p>
+
+        <p>Best regards,<br />Smart Clinic Team</p>
+      </div>
+
+      <div class="footer">
+        <p>This is an automated email. Please do not reply.</p>
+        <p>&copy; 2025 Smart Clinic. All rights reserved.</p>
+      </div>
+    </div>
+  </body>
+</html>

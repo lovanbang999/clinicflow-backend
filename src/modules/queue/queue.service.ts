@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PromoteQueueDto } from './dto/promote-queue.dto';
 import { QueueFilterDto } from './dto/queue-filter.dto';
 import { BookingStatus, Prisma } from '@prisma/client';
@@ -7,9 +8,38 @@ import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 
+// Type for booking with relations
+interface BookingWithRelations {
+  id: string;
+  bookingDate: Date;
+  startTime: string;
+  endTime: string;
+  status: BookingStatus;
+  patient: {
+    id: string;
+    email: string;
+    fullName: string;
+    phone: string | null;
+  };
+  doctor: {
+    id: string;
+    email: string;
+    fullName: string;
+  };
+  service: {
+    id: string;
+    name: string;
+    durationMinutes: number;
+    price: Prisma.Decimal;
+  };
+}
+
 @Injectable()
 export class QueueService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   /**
    * Get all queued bookings with filters
@@ -377,9 +407,29 @@ export class QueueService {
         include: {
           booking: {
             include: {
-              patient: true,
-              doctor: true,
-              service: true,
+              patient: {
+                select: {
+                  id: true,
+                  email: true,
+                  fullName: true,
+                  phone: true,
+                },
+              },
+              doctor: {
+                select: {
+                  id: true,
+                  email: true,
+                  fullName: true,
+                },
+              },
+              service: {
+                select: {
+                  id: true,
+                  name: true,
+                  durationMinutes: true,
+                  price: true,
+                },
+              },
             },
           },
         },
@@ -401,9 +451,29 @@ export class QueueService {
           status: BookingStatus.CONFIRMED,
         },
         include: {
-          patient: true,
-          doctor: true,
-          service: true,
+          patient: {
+            select: {
+              id: true,
+              email: true,
+              fullName: true,
+              phone: true,
+            },
+          },
+          doctor: {
+            select: {
+              id: true,
+              email: true,
+              fullName: true,
+            },
+          },
+          service: {
+            select: {
+              id: true,
+              name: true,
+              durationMinutes: true,
+              price: true,
+            },
+          },
         },
       });
 
@@ -437,8 +507,10 @@ export class QueueService {
       };
     });
 
-    // TODO: Send notification to patient
-    // await this.notificationService.sendQueuePromotion(result.booking);
+    // Send queue promotion notification (non-blocking)
+    this.sendQueuePromotionNotification(result.booking).catch((error) => {
+      console.error('Failed to send queue promotion notification:', error);
+    });
 
     return result;
   }
@@ -506,5 +578,44 @@ export class QueueService {
     });
 
     return confirmedBookings < maxSlotsPerHour;
+  }
+
+  /**
+   * Send queue promotion notification email
+   */
+  private async sendQueuePromotionNotification(
+    booking: BookingWithRelations,
+  ): Promise<void> {
+    try {
+      await this.notificationsService.sendQueuePromotion({
+        bookingId: booking.id,
+        patientName: booking.patient.fullName,
+        patientEmail: booking.patient.email,
+        doctorName: booking.doctor.fullName,
+        serviceName: booking.service.name,
+        bookingDate: this.formatDate(booking.bookingDate),
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        duration: booking.service.durationMinutes,
+        status: booking.status,
+        price: booking.service.price
+          ? Number(booking.service.price)
+          : undefined,
+      });
+    } catch (error) {
+      console.error('Failed to send queue promotion notification:', error);
+    }
+  }
+
+  /**
+   * Format date to readable string
+   */
+  private formatDate(date: Date): string {
+    return new Date(date).toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
   }
 }
