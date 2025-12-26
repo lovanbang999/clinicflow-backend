@@ -1,14 +1,18 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-  ConflictException,
-} from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { FilterBookingDto } from './dto/filter-booking.dto';
-import { BookingStatus, UserRole, DayOfWeek, Prisma } from '@prisma/client';
+import {
+  BookingStatus,
+  UserRole,
+  DayOfWeek,
+  Prisma,
+  Booking,
+} from '@prisma/client';
+import { ResponseHelper } from '../../common/interfaces/api-response.interface';
+import { MessageCodes } from '../../common/constants/message-codes.const';
+import { ApiException } from '../../common/exceptions/api.exception';
 
 @Injectable()
 export class BookingsService {
@@ -36,7 +40,12 @@ export class BookingsService {
     });
 
     if (!service) {
-      throw new NotFoundException('Service not found');
+      throw new ApiException(
+        MessageCodes.SERVICE_NOT_FOUND,
+        'Service not found',
+        404,
+        'Booking creation failed',
+      );
     }
 
     const endTime = this.calculateEndTime(startTime, service.durationMinutes);
@@ -50,7 +59,7 @@ export class BookingsService {
       service.maxSlotsPerHour,
     );
 
-    // Step 4: Determine initial status (CONFIRMED or QUEUED)
+    // Step 4: Determine initial status (PENDING or QUEUED)
     const initialStatus = isSlotAvailable
       ? BookingStatus.PENDING
       : BookingStatus.QUEUED;
@@ -128,13 +137,17 @@ export class BookingsService {
       return newBooking;
     });
 
-    return {
-      ...booking,
-      message:
-        initialStatus === BookingStatus.QUEUED
-          ? 'Booking added to queue. You will be notified when a slot becomes available.'
-          : 'Booking created successfully.',
-    };
+    const message =
+      initialStatus === BookingStatus.QUEUED
+        ? 'Booking added to queue. You will be notified when a slot becomes available.'
+        : 'Booking created successfully';
+
+    return ResponseHelper.success(
+      booking,
+      MessageCodes.BOOKING_CREATED,
+      message,
+      201,
+    );
   }
 
   /**
@@ -196,15 +209,20 @@ export class BookingsService {
       this.prisma.booking.count({ where }),
     ]);
 
-    return {
-      data: bookings,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+    return ResponseHelper.success(
+      {
+        bookings,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
       },
-    };
+      MessageCodes.BOOKING_LIST_RETRIEVED,
+      'Bookings retrieved successfully',
+      200,
+    );
   }
 
   /**
@@ -255,10 +273,20 @@ export class BookingsService {
     });
 
     if (!booking) {
-      throw new NotFoundException('Booking not found');
+      throw new ApiException(
+        MessageCodes.BOOKING_NOT_FOUND,
+        'Booking not found',
+        404,
+        'Booking retrieval failed',
+      );
     }
 
-    return booking;
+    return ResponseHelper.success(
+      booking,
+      MessageCodes.BOOKING_RETRIEVED,
+      'Booking retrieved successfully',
+      200,
+    );
   }
 
   /**
@@ -271,7 +299,18 @@ export class BookingsService {
   ) {
     const { status, reason, doctorNotes } = updateStatusDto;
 
-    const booking = await this.findOne(id);
+    // Get booking (will throw if not found)
+    const bookingResponse = await this.findOne(id);
+    const booking = bookingResponse.data;
+
+    if (!booking) {
+      throw new ApiException(
+        MessageCodes.BOOKING_NOT_FOUND,
+        'Booking not found',
+        404,
+        'Status update failed',
+      );
+    }
 
     // Validate status transition
     this.validateStatusTransition(booking.status, status);
@@ -286,9 +325,29 @@ export class BookingsService {
           doctorNotes: doctorNotes || booking.doctorNotes,
         },
         include: {
-          patient: true,
-          doctor: true,
-          service: true,
+          patient: {
+            select: {
+              id: true,
+              email: true,
+              fullName: true,
+              phone: true,
+            },
+          },
+          doctor: {
+            select: {
+              id: true,
+              email: true,
+              fullName: true,
+            },
+          },
+          service: {
+            select: {
+              id: true,
+              name: true,
+              durationMinutes: true,
+              price: true,
+            },
+          },
         },
       });
 
@@ -314,14 +373,19 @@ export class BookingsService {
       return updated;
     });
 
-    return updatedBooking;
+    return ResponseHelper.success(
+      updatedBooking,
+      MessageCodes.BOOKING_UPDATED,
+      'Booking status updated successfully',
+      200,
+    );
   }
 
   /**
    * Cancel booking
    */
   async cancel(id: string, userId: string, reason?: string) {
-    return this.updateStatus(
+    const result = await this.updateStatus(
       id,
       {
         status: BookingStatus.CANCELLED,
@@ -329,13 +393,27 @@ export class BookingsService {
       },
       userId,
     );
+
+    return ResponseHelper.success(
+      result.data,
+      MessageCodes.BOOKING_CANCELLED,
+      'Booking cancelled successfully',
+      200,
+    );
   }
 
   /**
    * Delete booking (soft delete - actually just cancel)
    */
   async remove(id: string, userId: string) {
-    return this.cancel(id, userId, 'Booking deleted');
+    const result = await this.cancel(id, userId, 'Booking deleted');
+
+    return ResponseHelper.success(
+      result.data,
+      MessageCodes.BOOKING_DELETED,
+      'Booking deleted successfully',
+      200,
+    );
   }
 
   // ============================================
@@ -354,8 +432,11 @@ export class BookingsService {
     const requestedDate = new Date(bookingDate);
 
     if (requestedDate < today) {
-      throw new BadRequestException(
+      throw new ApiException(
+        MessageCodes.BOOKING_INVALID_DATE,
         'Booking date must be today or in the future',
+        400,
+        'Booking validation failed',
       );
     }
 
@@ -365,7 +446,12 @@ export class BookingsService {
     });
 
     if (!patient) {
-      throw new NotFoundException('Patient not found');
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'Patient not found',
+        404,
+        'Booking validation failed',
+      );
     }
 
     if (patient.role !== UserRole.PATIENT) {
@@ -378,7 +464,12 @@ export class BookingsService {
     });
 
     if (!doctor) {
-      throw new NotFoundException('Doctor not found');
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'Doctor not found',
+        404,
+        'Booking validation failed',
+      );
     }
 
     if (doctor.role !== UserRole.DOCTOR) {
@@ -395,7 +486,12 @@ export class BookingsService {
     });
 
     if (!service || !service.isActive) {
-      throw new NotFoundException('Service not found or inactive');
+      throw new ApiException(
+        MessageCodes.SERVICE_NOT_FOUND,
+        'Service not found or inactive',
+        404,
+        'Booking validation failed',
+      );
     }
 
     // 5. Check doctor working hours
@@ -467,8 +563,11 @@ export class BookingsService {
     });
 
     if (existingBooking) {
-      throw new ConflictException(
+      throw new ApiException(
+        MessageCodes.BOOKING_DUPLICATE,
         'You already have a booking with this doctor on this date',
+        409,
+        'Booking validation failed',
       );
     }
   }
@@ -584,8 +683,11 @@ export class BookingsService {
     };
 
     if (!validTransitions[currentStatus]?.includes(newStatus)) {
-      throw new BadRequestException(
+      throw new ApiException(
+        MessageCodes.BOOKING_INVALID_STATUS_TRANSITION,
         `Invalid status transition from ${currentStatus} to ${newStatus}`,
+        400,
+        'Status update failed',
       );
     }
   }
@@ -593,8 +695,8 @@ export class BookingsService {
   /**
    * Handle booking completion (for queue promotion)
    */
-  private handleBookingCompletion(booking: { id: string }) {
-    // This will be enhanced when we implement queue module
+  private handleBookingCompletion(booking: Booking) {
+    // This will be enhanced when we integrate queue module
     // For now, just a placeholder
     console.log(
       `Booking ${booking.id} completed/cancelled. Check queue for promotion.`,
