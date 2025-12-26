@@ -166,9 +166,9 @@ export class MailService {
   }
 
   /**
-   * Internal method to send email
+   * Public method to send email (for NotificationsService)
    */
-  private async sendMail(
+  async sendMail(
     to: string,
     subject: string,
     html: string,

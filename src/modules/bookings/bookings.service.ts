@@ -1,22 +1,47 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { FilterBookingDto } from './dto/filter-booking.dto';
-import {
-  BookingStatus,
-  UserRole,
-  DayOfWeek,
-  Prisma,
-  Booking,
-} from '@prisma/client';
+import { BookingStatus, UserRole, DayOfWeek, Prisma } from '@prisma/client';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 
+// Type for booking with relations
+interface BookingWithRelations {
+  id: string;
+  bookingDate: Date;
+  startTime: string;
+  endTime: string;
+  status: BookingStatus;
+  patientNotes: string | null;
+  patient: {
+    id: string;
+    email: string;
+    fullName: string;
+    phone: string | null;
+  };
+  doctor: {
+    id: string;
+    email: string;
+    fullName: string;
+  };
+  service: {
+    id: string;
+    name: string;
+    durationMinutes: number;
+    price: Prisma.Decimal;
+  };
+}
+
 @Injectable()
 export class BookingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   /**
    * Create a new booking
@@ -141,6 +166,11 @@ export class BookingsService {
       initialStatus === BookingStatus.QUEUED
         ? 'Booking added to queue. You will be notified when a slot becomes available.'
         : 'Booking created successfully';
+
+    // Send booking confirmation email (non-blocking)
+    this.sendBookingNotification(booking).catch((error) => {
+      console.error('Failed to send booking notification:', error);
+    });
 
     return ResponseHelper.success(
       booking,
@@ -367,11 +397,23 @@ export class BookingsService {
         status === BookingStatus.CANCELLED ||
         status === BookingStatus.COMPLETED
       ) {
-        this.handleBookingCompletion(booking);
+        this.handleBookingCompletion({
+          id: booking.id,
+          doctorId: booking.doctor.id,
+          bookingDate: booking.bookingDate,
+          startTime: booking.startTime,
+        });
       }
 
       return updated;
     });
+
+    // Send notification for cancellation (non-blocking)
+    if (status === BookingStatus.CANCELLED) {
+      this.sendCancellationNotification(updatedBooking).catch((error) => {
+        console.error('Failed to send cancellation notification:', error);
+      });
+    }
 
     return ResponseHelper.success(
       updatedBooking,
@@ -694,12 +736,86 @@ export class BookingsService {
 
   /**
    * Handle booking completion (for queue promotion)
+   * Remove async since no await is used currently
    */
-  private handleBookingCompletion(booking: Booking) {
+  private handleBookingCompletion(booking: {
+    id: string;
+    doctorId: string;
+    bookingDate: Date;
+    startTime: string;
+  }): void {
     // This will be enhanced when we integrate queue module
     // For now, just a placeholder
     console.log(
       `Booking ${booking.id} completed/cancelled. Check queue for promotion.`,
     );
+    // TODO: Call queueService.autoPromote(booking.doctorId, booking.bookingDate, booking.startTime)
+  }
+
+  /**
+   * Send booking notification email
+   */
+  private async sendBookingNotification(
+    booking: BookingWithRelations,
+  ): Promise<void> {
+    try {
+      await this.notificationsService.sendBookingConfirmation({
+        bookingId: booking.id,
+        patientName: booking.patient.fullName,
+        patientEmail: booking.patient.email,
+        doctorName: booking.doctor.fullName,
+        serviceName: booking.service.name,
+        bookingDate: this.formatDate(booking.bookingDate),
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        duration: booking.service.durationMinutes,
+        status: booking.status,
+        price: booking.service.price
+          ? Number(booking.service.price)
+          : undefined,
+        patientNotes: booking.patientNotes ?? undefined,
+      });
+    } catch (error) {
+      console.error('Failed to send booking notification:', error);
+    }
+  }
+
+  /**
+   * Send cancellation notification email
+   */
+  private async sendCancellationNotification(
+    booking: BookingWithRelations,
+  ): Promise<void> {
+    try {
+      await this.notificationsService.sendBookingCancellation({
+        bookingId: booking.id,
+        patientName: booking.patient.fullName,
+        patientEmail: booking.patient.email,
+        doctorName: booking.doctor.fullName,
+        serviceName: booking.service.name,
+        bookingDate: this.formatDate(booking.bookingDate),
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        duration: booking.service.durationMinutes,
+        status: booking.status,
+        price: booking.service.price
+          ? Number(booking.service.price)
+          : undefined,
+      });
+    } catch (error) {
+      console.error('Failed to send cancellation notification:', error);
+    }
+  }
+
+  /**
+   * Format date to readable string
+   */
+  private formatDate(date: Date): string {
+    return new Date(date).toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
   }
 }
