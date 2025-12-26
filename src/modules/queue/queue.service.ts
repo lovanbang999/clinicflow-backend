@@ -1,12 +1,11 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PromoteQueueDto } from './dto/promote-queue.dto';
 import { QueueFilterDto } from './dto/queue-filter.dto';
 import { BookingStatus, Prisma } from '@prisma/client';
+import { ResponseHelper } from '../../common/interfaces/api-response.interface';
+import { MessageCodes } from '../../common/constants/message-codes.const';
+import { ApiException } from '../../common/exceptions/api.exception';
 
 @Injectable()
 export class QueueService {
@@ -82,15 +81,20 @@ export class QueueService {
       this.prisma.bookingQueue.count({ where }),
     ]);
 
-    return {
-      data: queueRecords,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+    return ResponseHelper.success(
+      {
+        queueRecords,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
       },
-    };
+      MessageCodes.QUEUE_LIST_RETRIEVED,
+      'Queue records retrieved successfully',
+      200,
+    );
   }
 
   /**
@@ -123,7 +127,7 @@ export class QueueService {
                 name: true,
                 durationMinutes: true,
                 price: true,
-                maxSlotsPerHour: true, // Add this field
+                maxSlotsPerHour: true,
               },
             },
           },
@@ -132,10 +136,20 @@ export class QueueService {
     });
 
     if (!queueRecord) {
-      throw new NotFoundException('Queue record not found');
+      throw new ApiException(
+        MessageCodes.QUEUE_NOT_FOUND,
+        'Queue record not found',
+        404,
+        'Queue retrieval failed',
+      );
     }
 
-    return queueRecord;
+    return ResponseHelper.success(
+      queueRecord,
+      MessageCodes.QUEUE_RETRIEVED,
+      'Queue record retrieved successfully',
+      200,
+    );
   }
 
   /**
@@ -178,13 +192,18 @@ export class QueueService {
       }),
     ]);
 
-    return {
-      totalQueued,
-      averageWaitTimeMinutes: Math.round(
-        avgWaitTime._avg.estimatedWaitMinutes || 0,
-      ),
-      longestQueuePosition: longestQueue?.queuePosition || 0,
-    };
+    return ResponseHelper.success(
+      {
+        totalQueued,
+        averageWaitTimeMinutes: Math.round(
+          avgWaitTime._avg.estimatedWaitMinutes || 0,
+        ),
+        longestQueuePosition: longestQueue?.queuePosition || 0,
+      },
+      MessageCodes.QUEUE_STATISTICS_RETRIEVED,
+      'Queue statistics retrieved successfully',
+      200,
+    );
   }
 
   /**
@@ -193,8 +212,18 @@ export class QueueService {
   async promoteManually(promoteDto: PromoteQueueDto, promotedBy: string) {
     const { bookingId, reason } = promoteDto;
 
-    // Get queue record
-    const queueRecord = await this.findByBookingId(bookingId);
+    // Get queue record (will throw if not found)
+    const queueResponse = await this.findByBookingId(bookingId);
+    const queueRecord = queueResponse.data;
+
+    if (!queueRecord) {
+      throw new ApiException(
+        MessageCodes.QUEUE_NOT_FOUND,
+        'Queue record not found',
+        404,
+        'Queue promotion failed',
+      );
+    }
 
     // Check if booking is actually queued
     if (queueRecord.booking.status !== BookingStatus.QUEUED) {
@@ -210,16 +239,26 @@ export class QueueService {
     );
 
     if (!isSlotAvailable) {
-      throw new BadRequestException(
+      throw new ApiException(
+        MessageCodes.QUEUE_SLOT_FULL,
         'Slot is still full. Cannot promote at this time.',
+        400,
+        'Queue promotion failed',
       );
     }
 
     // Promote booking
-    return this.promoteBooking(
+    const result = await this.promoteBooking(
       bookingId,
       promotedBy,
       reason || 'Manual promotion by staff',
+    );
+
+    return ResponseHelper.success(
+      result.booking,
+      MessageCodes.QUEUE_PROMOTED,
+      'Booking promoted from queue successfully',
+      200,
     );
   }
 
@@ -253,7 +292,7 @@ export class QueueService {
                 name: true,
                 durationMinutes: true,
                 price: true,
-                maxSlotsPerHour: true, // Add this field
+                maxSlotsPerHour: true,
               },
             },
           },
@@ -347,7 +386,12 @@ export class QueueService {
       });
 
       if (!queueRecord) {
-        throw new NotFoundException('Queue record not found');
+        throw new ApiException(
+          MessageCodes.QUEUE_NOT_FOUND,
+          'Queue record not found',
+          404,
+          'Queue promotion failed',
+        );
       }
 
       // Update booking status to CONFIRMED
@@ -390,7 +434,6 @@ export class QueueService {
 
       return {
         booking: updatedBooking,
-        message: 'Booking promoted from queue successfully',
       };
     });
 
