@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { UploadService } from '../upload/upload.service';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { Prisma } from '@prisma/client';
@@ -9,14 +10,23 @@ import { ApiException } from '../../common/exceptions/api.exception';
 
 @Injectable()
 export class ServicesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly uploadService: UploadService,
+  ) {}
 
   /**
    * Create a new service
    */
   async create(createServiceDto: CreateServiceDto) {
-    const { name, description, durationMinutes, price, maxSlotsPerHour } =
-      createServiceDto;
+    const {
+      name,
+      description,
+      iconUrl,
+      durationMinutes,
+      price,
+      maxSlotsPerHour,
+    } = createServiceDto;
 
     // Check for duplicate service name
     const existingService = await this.prisma.service.findFirst({
@@ -60,6 +70,7 @@ export class ServicesService {
       data: {
         name,
         description,
+        iconUrl,
         durationMinutes,
         price,
         maxSlotsPerHour,
@@ -160,7 +171,8 @@ export class ServicesService {
       );
     }
 
-    const { name, durationMinutes, price, maxSlotsPerHour } = updateServiceDto;
+    const { name, iconUrl, durationMinutes, price, maxSlotsPerHour } =
+      updateServiceDto;
 
     // If updating name, check for duplicates
     if (name) {
@@ -185,6 +197,15 @@ export class ServicesService {
           'Service update failed',
         );
       }
+    }
+
+    // If updating icon, delete old icon
+    if (
+      iconUrl &&
+      existingService.iconUrl &&
+      iconUrl !== existingService.iconUrl
+    ) {
+      await this.uploadService.deleteIcon(existingService.iconUrl);
     }
 
     // Validate business rules if provided
@@ -257,6 +278,11 @@ export class ServicesService {
         400,
         'Service deletion failed',
       );
+    }
+
+    // Delete icon if exists
+    if (service.iconUrl) {
+      await this.uploadService.deleteIcon(service.iconUrl);
     }
 
     // Soft delete

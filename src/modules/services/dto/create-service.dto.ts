@@ -36,6 +36,15 @@ export class CreateServiceDto {
   description?: string;
 
   @ApiProperty({
+    description: 'Icon URL',
+    example: '/uploads/icons/abc-123.png',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  iconUrl?: string;
+
+  @ApiProperty({
     description: 'Duration in minutes',
     example: 30,
     minimum: 1,
