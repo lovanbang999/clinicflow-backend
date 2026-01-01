@@ -52,29 +52,29 @@ enum VerificationType {
 // ============================================
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  role      UserRole @default(PATIENT)
-  
-  fullName  String
-  phone     String?
-  avatar    String?
-  
+  id       String   @id @default(uuid())
+  email    String   @unique
+  password String
+  role     UserRole @default(PATIENT)
+
+  fullName String
+  phone    String?
+  avatar   String?
+
   isActive  Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Relations
-  bookingsAsPatient   Booking[]                @relation("PatientBookings")
-  bookingsAsDoctor    Booking[]                @relation("DoctorBookings")
-  workingHours        DoctorWorkingHours[]
-  breakTimes          DoctorBreakTime[]
-  offDays             DoctorOffDay[]
-  statusChanges       BookingStatusHistory[]   @relation("ChangedByUser")
-  verificationCodes   VerificationCode[]
-  refreshTokens       RefreshToken[]
-  
+  bookingsAsPatient Booking[]              @relation("PatientBookings")
+  bookingsAsDoctor  Booking[]              @relation("DoctorBookings")
+  workingHours      DoctorWorkingHours[]
+  breakTimes        DoctorBreakTime[]
+  offDays           DoctorOffDay[]
+  statusChanges     BookingStatusHistory[] @relation("ChangedByUser")
+  verificationCodes VerificationCode[]
+  refreshTokens     RefreshToken[]
+
   @@index([email])
   @@index([role])
   @@map("users")
@@ -87,9 +87,9 @@ model RefreshToken {
   expiresAt DateTime
   isRevoked Boolean  @default(false)
   createdAt DateTime @default(now())
-  
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   @@index([userId])
   @@index([token])
   @@map("refresh_tokens")
@@ -103,104 +103,105 @@ model VerificationCode {
   expiresAt DateTime
   isUsed    Boolean          @default(false)
   createdAt DateTime         @default(now())
-  
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   @@index([userId, type, isUsed])
   @@index([code])
   @@map("verification_codes")
 }
 
 model Service {
-  id                String   @id @default(uuid())
-  name              String   @unique
-  description       String?
-  durationMinutes   Int
-  price             Decimal  @db.Decimal(10, 2)
-  maxSlotsPerHour   Int      @default(2)
-  
-  isActive          Boolean  @default(true)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  
-  bookings          Booking[]
-  
+  id              String  @id @default(uuid())
+  name            String  @unique
+  description     String?
+  iconUrl         String?
+  durationMinutes Int
+  price           Decimal @db.Decimal(10, 2)
+  maxSlotsPerHour Int     @default(2)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bookings Booking[]
+
   @@index([isActive])
   @@map("services")
 }
 
 model DoctorWorkingHours {
-  id         String    @id @default(uuid())
-  doctorId   String
-  dayOfWeek  DayOfWeek
-  startTime  String
-  endTime    String
-  
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  
-  doctor     User      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  
+  id        String    @id @default(uuid())
+  doctorId  String
+  dayOfWeek DayOfWeek
+  startTime String
+  endTime   String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
   @@unique([doctorId, dayOfWeek])
   @@index([doctorId])
   @@map("doctor_working_hours")
 }
 
 model DoctorBreakTime {
-  id         String   @id @default(uuid())
-  doctorId   String
-  date       DateTime @db.Date
-  startTime  String
-  endTime    String
-  reason     String?
-  
-  createdAt  DateTime @default(now())
-  
-  doctor     User     @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  
+  id        String   @id @default(uuid())
+  doctorId  String
+  date      DateTime @db.Date
+  startTime String
+  endTime   String
+  reason    String?
+
+  createdAt DateTime @default(now())
+
+  doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
   @@index([doctorId, date])
   @@map("doctor_break_times")
 }
 
 model DoctorOffDay {
-  id        String   @id @default(uuid())
-  doctorId  String
-  date      DateTime @db.Date
-  reason    String?
-  
+  id       String   @id @default(uuid())
+  doctorId String
+  date     DateTime @db.Date
+  reason   String?
+
   createdAt DateTime @default(now())
-  
-  doctor    User     @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  
+
+  doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
   @@unique([doctorId, date])
   @@index([doctorId])
   @@map("doctor_off_days")
 }
 
 model Booking {
-  id           String        @id @default(uuid())
-  
-  patientId    String
-  doctorId     String
-  serviceId    String
-  bookingDate  DateTime      @db.Date
-  startTime    String
-  endTime      String
-  
-  status       BookingStatus @default(PENDING)
-  
+  id String @id @default(uuid())
+
+  patientId   String
+  doctorId    String
+  serviceId   String
+  bookingDate DateTime @db.Date
+  startTime   String
+  endTime     String
+
+  status BookingStatus @default(PENDING)
+
   patientNotes String?
   doctorNotes  String?
-  
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  
-  patient      User          @relation("PatientBookings", fields: [patientId], references: [id])
-  doctor       User          @relation("DoctorBookings", fields: [doctorId], references: [id])
-  service      Service       @relation(fields: [serviceId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient       User                   @relation("PatientBookings", fields: [patientId], references: [id])
+  doctor        User                   @relation("DoctorBookings", fields: [doctorId], references: [id])
+  service       Service                @relation(fields: [serviceId], references: [id])
   statusHistory BookingStatusHistory[]
-  queueRecord  BookingQueue?
-  
+  queueRecord   BookingQueue?
+
   @@index([patientId])
   @@index([doctorId])
   @@index([bookingDate])
@@ -210,34 +211,34 @@ model Booking {
 }
 
 model BookingQueue {
-  id              String   @id @default(uuid())
-  bookingId       String   @unique
-  queuePosition   Int
+  id                   String @id @default(uuid())
+  bookingId            String @unique
+  queuePosition        Int
   estimatedWaitMinutes Int
-  
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  
-  booking         Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
   @@index([queuePosition])
   @@index([bookingId])
   @@map("booking_queue")
 }
 
 model BookingStatusHistory {
-  id          String        @id @default(uuid())
+  id          String         @id @default(uuid())
   bookingId   String
   oldStatus   BookingStatus?
   newStatus   BookingStatus
   changedById String
   reason      String?
-  
-  createdAt   DateTime      @default(now())
-  
-  booking     Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  changedBy   User          @relation("ChangedByUser", fields: [changedById], references: [id])
-  
+
+  createdAt DateTime @default(now())
+
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  changedBy User    @relation("ChangedByUser", fields: [changedById], references: [id])
+
   @@index([bookingId])
   @@index([createdAt])
   @@map("booking_status_history")
