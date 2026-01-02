@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { FilterUserDto } from './dto/filter-user.dto';
-import { Prisma } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
@@ -67,10 +67,21 @@ export class UsersService {
         email: true,
         fullName: true,
         phone: true,
+        avatar: true,
         role: true,
         isActive: true,
         createdAt: true,
         updatedAt: true,
+        doctorProfile: {
+          select: {
+            specialties: true,
+            qualifications: true,
+            yearsOfExperience: true,
+            bio: true,
+            rating: true,
+            reviewCount: true,
+          },
+        },
       },
     });
 
@@ -114,10 +125,21 @@ export class UsersService {
           email: true,
           fullName: true,
           phone: true,
+          avatar: true,
           role: true,
           isActive: true,
           createdAt: true,
           updatedAt: true,
+          doctorProfile: {
+            select: {
+              specialties: true,
+              qualifications: true,
+              yearsOfExperience: true,
+              bio: true,
+              rating: true,
+              reviewCount: true,
+            },
+          },
         },
         skip: (page - 1) * limit,
         take: limit,
@@ -143,6 +165,81 @@ export class UsersService {
   }
 
   /**
+   * Find public doctors (no auth required)
+   */
+  async findPublicDoctors(filters: {
+    specialty?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const { specialty, page = 1, limit = 100 } = filters;
+
+    // Build where clause
+    const where: Prisma.UserWhereInput = {
+      role: UserRole.DOCTOR,
+      isActive: true, // Only active doctors
+    };
+
+    // Filter by specialty if provided
+    if (specialty && specialty !== 'all') {
+      where.doctorProfile = {
+        specialties: {
+          hasSome: [specialty],
+        },
+      };
+    }
+
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          phone: true,
+          avatar: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+          doctorProfile: {
+            select: {
+              specialties: true,
+              qualifications: true,
+              yearsOfExperience: true,
+              bio: true,
+              rating: true,
+              reviewCount: true,
+            },
+          },
+        },
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: [
+          { doctorProfile: { rating: 'desc' } }, // Sort by rating first
+          { fullName: 'asc' },
+        ],
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return ResponseHelper.success(
+      {
+        users,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      },
+      MessageCodes.USER_LIST_RETRIEVED,
+      'Doctors retrieved successfully',
+      200,
+    );
+  }
+
+  /**
    * Find one user by ID
    */
   async findOne(id: string) {
@@ -153,10 +250,21 @@ export class UsersService {
         email: true,
         fullName: true,
         phone: true,
+        avatar: true,
         role: true,
         isActive: true,
         createdAt: true,
         updatedAt: true,
+        doctorProfile: {
+          select: {
+            specialties: true,
+            qualifications: true,
+            yearsOfExperience: true,
+            bio: true,
+            rating: true,
+            reviewCount: true,
+          },
+        },
       },
     });
 
@@ -183,6 +291,9 @@ export class UsersService {
   async findByEmail(email: string) {
     return this.prisma.user.findUnique({
       where: { email },
+      include: {
+        doctorProfile: true,
+      },
     });
   }
 
@@ -248,10 +359,21 @@ export class UsersService {
         email: true,
         fullName: true,
         phone: true,
+        avatar: true,
         role: true,
         isActive: true,
         createdAt: true,
         updatedAt: true,
+        doctorProfile: {
+          select: {
+            specialties: true,
+            qualifications: true,
+            yearsOfExperience: true,
+            bio: true,
+            rating: true,
+            reviewCount: true,
+          },
+        },
       },
     });
 
@@ -305,14 +427,16 @@ export class UsersService {
    * Get user statistics
    */
   async getStatistics() {
-    const [totalUsers, activeUsers, usersByRole] = await Promise.all([
-      this.prisma.user.count(),
-      this.prisma.user.count({ where: { isActive: true } }),
-      this.prisma.user.groupBy({
-        by: ['role'],
-        _count: true,
-      }),
-    ]);
+    const [totalUsers, activeUsers, usersByRole, doctorProfileCount] =
+      await Promise.all([
+        this.prisma.user.count(),
+        this.prisma.user.count({ where: { isActive: true } }),
+        this.prisma.user.groupBy({
+          by: ['role'],
+          _count: true,
+        }),
+        this.prisma.doctorProfile.count(),
+      ]);
 
     const roleStats = usersByRole.reduce(
       (acc, item) => {
@@ -328,6 +452,7 @@ export class UsersService {
         activeUsers,
         inactiveUsers: totalUsers - activeUsers,
         usersByRole: roleStats,
+        doctorProfileCount,
       },
       MessageCodes.USER_LIST_RETRIEVED,
       'User statistics retrieved successfully',
