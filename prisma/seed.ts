@@ -48,57 +48,126 @@ async function main() {
   });
   console.log('  ✅ Admin created:', admin.email);
 
-  // DOCTORS
-  const doctors = [
+  // DOCTORS WITH PROFILES
+  const doctorsData = [
     {
-      email: 'bs.nguyenvana@clinic.com',
-      fullName: 'BS. Nguyễn Văn An',
-      phone: '0901111111',
-      specialty: 'Khám tổng quát',
+      user: {
+        email: 'bs.nguyenvana@clinic.com',
+        fullName: 'BS. Nguyễn Văn An',
+        phone: '0901111111',
+      },
+      profile: {
+        specialties: ['Nội tổng quát', 'Khám sức khỏe định kỳ'],
+        qualifications: ['Bác sĩ CK1', 'Thạc sĩ Y khoa'],
+        yearsOfExperience: 15,
+        rating: 4.8,
+        reviewCount: 120,
+        bio: 'Bác sĩ có 15 năm kinh nghiệm trong lĩnh vực nội tổng quát, tận tâm với bệnh nhân',
+      },
     },
     {
-      email: 'bs.lethib@clinic.com',
-      fullName: 'BS. Lê Thị Bình',
-      phone: '0902222222',
-      specialty: 'Tim mạch',
+      user: {
+        email: 'bs.lethib@clinic.com',
+        fullName: 'BS. Lê Thị Bình',
+        phone: '0902222222',
+      },
+      profile: {
+        specialties: ['Tim mạch', 'Điều trị bệnh mạch vành'],
+        qualifications: ['Bác sĩ CK2', 'Tiến sĩ Y khoa'],
+        yearsOfExperience: 12,
+        rating: 4.9,
+        reviewCount: 89,
+        bio: 'Chuyên gia tim mạch với 12 năm kinh nghiệm, từng tu nghiệp tại Nhật Bản',
+      },
     },
     {
-      email: 'bs.tranthic@clinic.com',
-      fullName: 'BS. Trần Thị Cẩm',
-      phone: '0903333333',
-      specialty: 'Da liễu',
+      user: {
+        email: 'bs.tranthic@clinic.com',
+        fullName: 'BS. Trần Thị Cẩm',
+        phone: '0903333333',
+      },
+      profile: {
+        specialties: ['Da liễu', 'Thẩm mỹ da'],
+        qualifications: ['Bác sĩ CK1', 'Chứng chỉ Thẩm mỹ Da'],
+        yearsOfExperience: 10,
+        rating: 4.7,
+        reviewCount: 156,
+        bio: 'Bác sĩ da liễu với chuyên môn sâu về điều trị mụn và thẩm mỹ da',
+      },
     },
     {
-      email: 'bs.phamvand@clinic.com',
-      fullName: 'BS. Phạm Văn Dũng',
-      phone: '0904444444',
-      specialty: 'Răng hàm mặt',
+      user: {
+        email: 'bs.phamvand@clinic.com',
+        fullName: 'BS. Phạm Văn Dũng',
+        phone: '0904444444',
+      },
+      profile: {
+        specialties: ['Răng hàm mặt', 'Nha khoa thẩm mỹ'],
+        qualifications: ['Bác sĩ CK1', 'Bác sĩ nội trú'],
+        yearsOfExperience: 8,
+        rating: 4.6,
+        reviewCount: 95,
+        bio: 'Chuyên gia răng hàm mặt, tập trung vào nha khoa thẩm mỹ và implant',
+      },
     },
     {
-      email: 'bs.hoangthie@clinic.com',
-      fullName: 'BS. Hoàng Thị Em',
-      phone: '0905555555',
-      specialty: 'Mắt',
+      user: {
+        email: 'bs.hoangthie@clinic.com',
+        fullName: 'BS. Hoàng Thị Em',
+        phone: '0905555555',
+      },
+      profile: {
+        specialties: ['Mắt', 'Phẫu thuật khúc xạ'],
+        qualifications: ['Bác sĩ CK2', 'Thạc sĩ Nhãn khoa'],
+        yearsOfExperience: 14,
+        rating: 4.9,
+        reviewCount: 203,
+        bio: 'Bác sĩ mắt giàu kinh nghiệm, chuyên về phẫu thuật khúc xạ và điều trị bệnh lý võng mạc',
+      },
     },
   ];
 
   const createdDoctors: User[] = [];
-  for (const doctor of doctors) {
-    const created = await prisma.user.upsert({
-      where: { email: doctor.email },
-      update: {},
-      create: {
-        email: doctor.email,
-        password: await hashPassword('doctor123'),
-        role: UserRole.DOCTOR,
-        fullName: doctor.fullName,
-        phone: doctor.phone,
-        isActive: true,
-      },
+  for (const doctorData of doctorsData) {
+    const existingDoctor = await prisma.user.findUnique({
+      where: { email: doctorData.user.email },
     });
-    createdDoctors.push(created);
+
+    let doctor: User;
+
+    if (existingDoctor) {
+      // Update existing doctor
+      doctor = await prisma.user.update({
+        where: { email: doctorData.user.email },
+        data: {
+          doctorProfile: {
+            upsert: {
+              create: doctorData.profile,
+              update: doctorData.profile,
+            },
+          },
+        },
+      });
+    } else {
+      // Create new doctor with profile
+      doctor = await prisma.user.create({
+        data: {
+          email: doctorData.user.email,
+          password: await hashPassword('doctor123'),
+          role: UserRole.DOCTOR,
+          fullName: doctorData.user.fullName,
+          phone: doctorData.user.phone,
+          isActive: true,
+          doctorProfile: {
+            create: doctorData.profile,
+          },
+        },
+      });
+    }
+
+    createdDoctors.push(doctor);
     console.log(
-      `  ✅ Doctor created: ${created.fullName} (${doctor.specialty})`,
+      `  ✅ Doctor created: ${doctor.fullName} (${doctorData.profile.specialties[0]})`,
     );
   }
 
@@ -392,6 +461,7 @@ async function main() {
   const serviceCount = await prisma.service.count();
   const workingHoursCount2 = await prisma.doctorWorkingHours.count();
   const breakTimeCount2 = await prisma.doctorBreakTime.count();
+  const doctorProfileCount = await prisma.doctorProfile.count();
 
   const adminCount = await prisma.user.count({
     where: { role: UserRole.ADMIN },
@@ -411,6 +481,7 @@ async function main() {
   console.log(`   - Doctors: ${doctorCount}`);
   console.log(`   - Receptionists: ${receptionistCount}`);
   console.log(`   - Patients: ${patientCount}`);
+  console.log(`👨‍⚕️ Doctor Profiles: ${doctorProfileCount}`);
   console.log(`🏥 Services: ${serviceCount}`);
   console.log(`⏰ Working Hours: ${workingHoursCount2}`);
   console.log(`🍽️ Break Times: ${breakTimeCount2}`);
@@ -421,11 +492,15 @@ async function main() {
   console.log('ADMIN:');
   console.log('  admin@clinic.com / admin123');
   console.log('\nDOCTORS:');
-  console.log('  bs.nguyenvana@clinic.com / doctor123 (Khám tổng quát)');
-  console.log('  bs.lethib@clinic.com / doctor123 (Tim mạch)');
-  console.log('  bs.tranthic@clinic.com / doctor123 (Da liễu)');
-  console.log('  bs.phamvand@clinic.com / doctor123 (Răng hàm mặt)');
-  console.log('  bs.hoangthie@clinic.com / doctor123 (Mắt)');
+  console.log(
+    '  bs.nguyenvana@clinic.com / doctor123 (Nội tổng quát - 15 years exp)',
+  );
+  console.log('  bs.lethib@clinic.com / doctor123 (Tim mạch - 12 years exp)');
+  console.log('  bs.tranthic@clinic.com / doctor123 (Da liễu - 10 years exp)');
+  console.log(
+    '  bs.phamvand@clinic.com / doctor123 (Răng hàm mặt - 8 years exp)',
+  );
+  console.log('  bs.hoangthie@clinic.com / doctor123 (Mắt - 14 years exp)');
   console.log('\nRECEPTIONISTS:');
   console.log('  letan.huong@clinic.com / receptionist123');
   console.log('  letan.lan@clinic.com / receptionist123');

@@ -25,6 +25,7 @@ import { FilterUserDto } from './dto/filter-user.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '@prisma/client';
 
@@ -34,6 +35,80 @@ import { UserRole } from '@prisma/client';
 @ApiBearerAuth('JWT-auth')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  // ============================================
+  // PUBLIC ENDPOINTS
+  // ============================================
+
+  @Get('public/doctors')
+  @Public()
+  @ApiOperation({
+    summary: 'Get all doctors (Public - No auth required)',
+    description: 'Retrieve list of active doctors for public viewing',
+  })
+  @ApiQuery({
+    name: 'specialty',
+    required: false,
+    description: 'Filter by specialty',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 100 })
+  @ApiResponse({
+    status: 200,
+    description: 'Doctors retrieved successfully',
+    schema: {
+      example: {
+        success: true,
+        statusCode: 200,
+        message: 'Doctors retrieved successfully',
+        messageCode: 'USER.LIST.SUCCESS',
+        data: {
+          users: [
+            {
+              id: 'uuid',
+              email: 'doctor@example.com',
+              fullName: 'Dr. John Smith',
+              phone: '+84912345678',
+              avatar: null,
+              role: 'DOCTOR',
+              isActive: true,
+              doctorProfile: {
+                specialties: ['Nội tổng quát', 'Khám sức khỏe định kỳ'],
+                qualifications: ['Bác sĩ CK1', 'Thạc sĩ Y khoa'],
+                yearsOfExperience: 15,
+                bio: 'Bác sĩ có 15 năm kinh nghiệm...',
+                rating: 4.8,
+                reviewCount: 120,
+              },
+              createdAt: '2024-12-26T10:00:00Z',
+              updatedAt: '2024-12-26T10:00:00Z',
+            },
+          ],
+          pagination: {
+            total: 5,
+            page: 1,
+            limit: 100,
+            totalPages: 1,
+          },
+        },
+      },
+    },
+  })
+  getPublicDoctors(
+    @Query('specialty') specialty?: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.usersService.findPublicDoctors({
+      specialty,
+      page: page || 1,
+      limit: limit || 100,
+    });
+  }
+
+  // ============================================
+  // AUTHENTICATED ENDPOINTS
+  // ============================================
 
   @Post()
   @Roles(UserRole.ADMIN)
@@ -93,35 +168,6 @@ export class UsersController {
   @ApiResponse({
     status: 200,
     description: 'Users retrieved successfully',
-    schema: {
-      example: {
-        success: true,
-        statusCode: 200,
-        message: 'Users retrieved successfully',
-        messageCode: 'USER.LIST.SUCCESS',
-        data: {
-          users: [
-            {
-              id: 'uuid',
-              email: 'doctor@example.com',
-              fullName: 'Dr. John Smith',
-              phone: '+84912345678',
-              role: 'DOCTOR',
-              isActive: true,
-              isVerified: true,
-              createdAt: '2024-12-26T10:00:00Z',
-              updatedAt: '2024-12-26T10:00:00Z',
-            },
-          ],
-          pagination: {
-            total: 50,
-            page: 1,
-            limit: 10,
-            totalPages: 5,
-          },
-        },
-      },
-    },
   })
   findAll(@Query() filterDto: FilterUserDto) {
     return this.usersService.findAll(filterDto);
@@ -136,27 +182,6 @@ export class UsersController {
   @ApiResponse({
     status: 200,
     description: 'Statistics retrieved successfully',
-    schema: {
-      example: {
-        success: true,
-        statusCode: 200,
-        message: 'User statistics retrieved successfully',
-        messageCode: 'USER.LIST.SUCCESS',
-        data: {
-          totalUsers: 100,
-          activeUsers: 85,
-          verifiedUsers: 90,
-          inactiveUsers: 15,
-          unverifiedUsers: 10,
-          usersByRole: {
-            ADMIN: 2,
-            DOCTOR: 20,
-            RECEPTIONIST: 5,
-            PATIENT: 73,
-          },
-        },
-      },
-    },
   })
   getStatistics() {
     return this.usersService.getStatistics();
@@ -183,25 +208,6 @@ export class UsersController {
   @ApiResponse({
     status: 200,
     description: 'User retrieved successfully',
-    schema: {
-      example: {
-        success: true,
-        statusCode: 200,
-        message: 'User retrieved successfully',
-        messageCode: 'USER.GET.SUCCESS',
-        data: {
-          id: 'uuid',
-          email: 'doctor@example.com',
-          fullName: 'Dr. John Smith',
-          phone: '+84912345678',
-          role: 'DOCTOR',
-          isActive: true,
-          isVerified: true,
-          createdAt: '2024-12-26T10:00:00Z',
-          updatedAt: '2024-12-26T10:00:00Z',
-        },
-      },
-    },
   })
   @ApiResponse({
     status: 404,
@@ -239,25 +245,6 @@ export class UsersController {
   @ApiResponse({
     status: 200,
     description: 'User updated successfully',
-    schema: {
-      example: {
-        success: true,
-        statusCode: 200,
-        message: 'User updated successfully',
-        messageCode: 'USER.UPDATE.SUCCESS',
-        data: {
-          id: 'uuid',
-          email: 'doctor@example.com',
-          fullName: 'Dr. John Smith Updated',
-          phone: '+84912345678',
-          role: 'DOCTOR',
-          isActive: true,
-          isVerified: true,
-          createdAt: '2024-12-26T10:00:00Z',
-          updatedAt: '2024-12-26T11:00:00Z',
-        },
-      },
-    },
   })
   @ApiResponse({
     status: 404,
@@ -281,21 +268,6 @@ export class UsersController {
   @ApiResponse({
     status: 200,
     description: 'User deleted successfully',
-    schema: {
-      example: {
-        success: true,
-        statusCode: 200,
-        message: 'User deleted successfully',
-        messageCode: 'USER.DELETE.SUCCESS',
-        data: {
-          id: 'uuid',
-          email: 'doctor@example.com',
-          fullName: 'Dr. John Smith',
-          role: 'DOCTOR',
-          isActive: false,
-        },
-      },
-    },
   })
   @ApiResponse({
     status: 404,
