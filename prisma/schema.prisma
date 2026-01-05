@@ -21,6 +21,12 @@ enum UserRole {
   ADMIN
 }
 
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
 enum BookingStatus {
   PENDING
   CONFIRMED
@@ -57,9 +63,12 @@ model User {
   password String
   role     UserRole @default(PATIENT)
 
-  fullName String
-  phone    String?
-  avatar   String?
+  fullName    String
+  phone       String?
+  avatar      String?
+  dateOfBirth DateTime? @db.Date
+  gender      Gender?
+  address     String?
 
   isActive  Boolean  @default(false)
   createdAt DateTime @default(now())

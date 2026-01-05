@@ -21,6 +21,7 @@ import {
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { FilterUserDto } from './dto/filter-user.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -56,43 +57,6 @@ export class UsersController {
   @ApiResponse({
     status: 200,
     description: 'Doctors retrieved successfully',
-    schema: {
-      example: {
-        success: true,
-        statusCode: 200,
-        message: 'Doctors retrieved successfully',
-        messageCode: 'USER.LIST.SUCCESS',
-        data: {
-          users: [
-            {
-              id: 'uuid',
-              email: 'doctor@example.com',
-              fullName: 'Dr. John Smith',
-              phone: '+84912345678',
-              avatar: null,
-              role: 'DOCTOR',
-              isActive: true,
-              doctorProfile: {
-                specialties: ['Nội tổng quát', 'Khám sức khỏe định kỳ'],
-                qualifications: ['Bác sĩ CK1', 'Thạc sĩ Y khoa'],
-                yearsOfExperience: 15,
-                bio: 'Bác sĩ có 15 năm kinh nghiệm...',
-                rating: 4.8,
-                reviewCount: 120,
-              },
-              createdAt: '2024-12-26T10:00:00Z',
-              updatedAt: '2024-12-26T10:00:00Z',
-            },
-          ],
-          pagination: {
-            total: 5,
-            page: 1,
-            limit: 100,
-            totalPages: 1,
-          },
-        },
-      },
-    },
   })
   getPublicDoctors(
     @Query('specialty') specialty?: string,
@@ -120,25 +84,6 @@ export class UsersController {
   @ApiResponse({
     status: 201,
     description: 'User created successfully',
-    schema: {
-      example: {
-        success: true,
-        statusCode: 201,
-        message: 'User created successfully',
-        messageCode: 'USER.CREATE.SUCCESS',
-        data: {
-          id: 'uuid',
-          email: 'doctor@example.com',
-          fullName: 'Dr. John Smith',
-          phone: '+84912345678',
-          role: 'DOCTOR',
-          isActive: true,
-          isVerified: true,
-          createdAt: '2024-12-26T10:00:00Z',
-          updatedAt: '2024-12-26T10:00:00Z',
-        },
-      },
-    },
   })
   @ApiResponse({
     status: 409,
@@ -200,23 +145,6 @@ export class UsersController {
     return this.usersService.findOne(userId);
   }
 
-  @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
-  @ApiOperation({
-    summary: 'Get user by ID (ADMIN/RECEPTIONIST only)',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'User retrieved successfully',
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'User not found',
-  })
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(id);
-  }
-
   @Patch('me')
   @ApiOperation({
     summary: 'Update current user profile',
@@ -234,6 +162,43 @@ export class UsersController {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { role, ...safeUpdate } = updateUserDto;
     return this.usersService.update(userId, safeUpdate);
+  }
+
+  @Patch('me/password')
+  @ApiOperation({
+    summary: 'Change password',
+    description: 'User can change their own password',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Password changed successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Current password is incorrect',
+  })
+  changePassword(
+    @CurrentUser('id') userId: string,
+    @Body() changePasswordDto: ChangePasswordDto,
+  ) {
+    return this.usersService.changePassword(userId, changePasswordDto);
+  }
+
+  @Get(':id')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ApiOperation({
+    summary: 'Get user by ID (ADMIN/RECEPTIONIST only)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User retrieved successfully',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'User not found',
+  })
+  findOne(@Param('id') id: string) {
+    return this.usersService.findOne(id);
   }
 
   @Patch(':id')

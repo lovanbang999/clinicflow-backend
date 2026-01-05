@@ -5,10 +5,12 @@ import {
   IsEnum,
   IsOptional,
   IsBoolean,
+  IsDateString,
   MaxLength,
+  MinLength,
   Matches,
 } from 'class-validator';
-import { UserRole } from '@prisma/client';
+import { UserRole, Gender } from '@prisma/client';
 
 export class UpdateUserDto {
   @ApiProperty({
@@ -32,15 +34,52 @@ export class UpdateUserDto {
 
   @ApiProperty({
     description: 'User phone number',
-    example: '+84912345678',
+    example: '0912345678',
     required: false,
   })
   @IsOptional()
   @IsString()
-  @Matches(/^\+?[1-9]\d{1,14}$/, {
-    message: 'Invalid phone number format',
+  @Matches(/^(\+84|0)[0-9]{9,10}$/, {
+    message: 'Invalid Vietnamese phone number format',
   })
   phone?: string;
+
+  @ApiProperty({
+    description: 'Avatar URL',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  avatar?: string;
+
+  @ApiProperty({
+    description: 'Date of birth (YYYY-MM-DD)',
+    example: '1990-05-15',
+    required: false,
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'Invalid date format. Use YYYY-MM-DD' })
+  dateOfBirth?: string;
+
+  @ApiProperty({
+    description: 'Gender',
+    enum: Gender,
+    example: Gender.MALE,
+    required: false,
+  })
+  @IsOptional()
+  @IsEnum(Gender, { message: 'Invalid gender value' })
+  gender?: Gender;
+
+  @ApiProperty({
+    description: 'Address',
+    example: '123 Main St, District 1, HCMC',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  address?: string;
 
   @ApiProperty({
     description: 'User role',
@@ -59,4 +98,15 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiProperty({
+    description: 'New password',
+    example: 'NewPassword123!',
+    required: false,
+    minLength: 6,
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(6, { message: 'Password must be at least 6 characters' })
+  password?: string;
 }

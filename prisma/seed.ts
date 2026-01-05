@@ -2,6 +2,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import {
   PrismaClient,
   UserRole,
+  Gender,
   DayOfWeek,
   User,
   Service,
@@ -43,6 +44,9 @@ async function main() {
       role: UserRole.ADMIN,
       fullName: 'Quản Trị Viên Hệ Thống',
       phone: '0900000000',
+      dateOfBirth: new Date('1985-01-15'),
+      gender: Gender.MALE,
+      address: '100 Nguyễn Huệ, Quận 1, TP.HCM',
       isActive: true,
     },
   });
@@ -55,6 +59,9 @@ async function main() {
         email: 'bs.nguyenvana@clinic.com',
         fullName: 'BS. Nguyễn Văn An',
         phone: '0901111111',
+        dateOfBirth: new Date('1975-03-20'),
+        gender: Gender.MALE,
+        address: '456 Lê Lợi, Quận 3, TP.HCM',
       },
       profile: {
         specialties: ['Nội tổng quát', 'Khám sức khỏe định kỳ'],
@@ -70,6 +77,9 @@ async function main() {
         email: 'bs.lethib@clinic.com',
         fullName: 'BS. Lê Thị Bình',
         phone: '0902222222',
+        dateOfBirth: new Date('1980-07-10'),
+        gender: Gender.FEMALE,
+        address: '789 Trần Hưng Đạo, Quận 5, TP.HCM',
       },
       profile: {
         specialties: ['Tim mạch', 'Điều trị bệnh mạch vành'],
@@ -85,6 +95,9 @@ async function main() {
         email: 'bs.tranthic@clinic.com',
         fullName: 'BS. Trần Thị Cẩm',
         phone: '0903333333',
+        dateOfBirth: new Date('1982-11-25'),
+        gender: Gender.FEMALE,
+        address: '321 Hai Bà Trưng, Quận 1, TP.HCM',
       },
       profile: {
         specialties: ['Da liễu', 'Thẩm mỹ da'],
@@ -100,6 +113,9 @@ async function main() {
         email: 'bs.phamvand@clinic.com',
         fullName: 'BS. Phạm Văn Dũng',
         phone: '0904444444',
+        dateOfBirth: new Date('1986-04-08'),
+        gender: Gender.MALE,
+        address: '555 Võ Văn Tần, Quận 3, TP.HCM',
       },
       profile: {
         specialties: ['Răng hàm mặt', 'Nha khoa thẩm mỹ'],
@@ -115,6 +131,9 @@ async function main() {
         email: 'bs.hoangthie@clinic.com',
         fullName: 'BS. Hoàng Thị Em',
         phone: '0905555555',
+        dateOfBirth: new Date('1978-09-15'),
+        gender: Gender.FEMALE,
+        address: '888 Pasteur, Quận 1, TP.HCM',
       },
       profile: {
         specialties: ['Mắt', 'Phẫu thuật khúc xạ'],
@@ -140,6 +159,11 @@ async function main() {
       doctor = await prisma.user.update({
         where: { email: doctorData.user.email },
         data: {
+          fullName: doctorData.user.fullName,
+          phone: doctorData.user.phone,
+          dateOfBirth: doctorData.user.dateOfBirth,
+          gender: doctorData.user.gender,
+          address: doctorData.user.address,
           doctorProfile: {
             upsert: {
               create: doctorData.profile,
@@ -157,6 +181,9 @@ async function main() {
           role: UserRole.DOCTOR,
           fullName: doctorData.user.fullName,
           phone: doctorData.user.phone,
+          dateOfBirth: doctorData.user.dateOfBirth,
+          gender: doctorData.user.gender,
+          address: doctorData.user.address,
           isActive: true,
           doctorProfile: {
             create: doctorData.profile,
@@ -177,11 +204,17 @@ async function main() {
       email: 'letan.huong@clinic.com',
       fullName: 'Nguyễn Thị Hương',
       phone: '0906666666',
+      dateOfBirth: new Date('1992-06-10'),
+      gender: Gender.FEMALE,
+      address: '234 Lý Thái Tổ, Quận 10, TP.HCM',
     },
     {
       email: 'letan.lan@clinic.com',
       fullName: 'Trần Thị Lan',
       phone: '0907777777',
+      dateOfBirth: new Date('1994-03-22'),
+      gender: Gender.FEMALE,
+      address: '567 Nguyễn Thị Minh Khai, Quận 3, TP.HCM',
     },
   ];
 
@@ -195,6 +228,9 @@ async function main() {
         role: UserRole.RECEPTIONIST,
         fullName: receptionist.fullName,
         phone: receptionist.phone,
+        dateOfBirth: receptionist.dateOfBirth,
+        gender: receptionist.gender,
+        address: receptionist.address,
         isActive: true,
       },
     });
@@ -207,41 +243,65 @@ async function main() {
       email: 'patient.nam@gmail.com',
       fullName: 'Nguyễn Văn Nam',
       phone: '0908888888',
+      dateOfBirth: new Date('1988-12-05'),
+      gender: Gender.MALE,
+      address: '111 Cách Mạng Tháng 8, Quận 10, TP.HCM',
     },
     {
       email: 'patient.linh@gmail.com',
       fullName: 'Lê Thị Linh',
       phone: '0909999999',
+      dateOfBirth: new Date('1995-08-20'),
+      gender: Gender.FEMALE,
+      address: '222 Phan Xích Long, Phú Nhuận, TP.HCM',
     },
     {
       email: 'patient.tuan@gmail.com',
       fullName: 'Trần Anh Tuấn',
       phone: '0911111111',
+      dateOfBirth: new Date('1990-02-14'),
+      gender: Gender.MALE,
+      address: '333 Hoàng Văn Thụ, Tân Bình, TP.HCM',
     },
     {
       email: 'patient.mai@gmail.com',
       fullName: 'Phạm Thị Mai',
       phone: '0912222222',
+      dateOfBirth: new Date('1993-05-18'),
+      gender: Gender.FEMALE,
+      address: '444 Điện Biên Phủ, Bình Thạnh, TP.HCM',
     },
     {
       email: 'patient.hung@gmail.com',
       fullName: 'Hoàng Văn Hùng',
       phone: '0913333333',
+      dateOfBirth: new Date('1987-11-30'),
+      gender: Gender.MALE,
+      address: '555 Lý Thường Kiệt, Quận 11, TP.HCM',
     },
     {
       email: 'patient.thu@gmail.com',
       fullName: 'Võ Thị Thu',
       phone: '0914444444',
+      dateOfBirth: new Date('1991-07-25'),
+      gender: Gender.FEMALE,
+      address: '666 Trường Chinh, Tân Bình, TP.HCM',
     },
     {
       email: 'patient.dat@gmail.com',
       fullName: 'Đặng Minh Đạt',
       phone: '0915555555',
+      dateOfBirth: new Date('1989-04-12'),
+      gender: Gender.MALE,
+      address: '777 Xô Viết Nghệ Tĩnh, Bình Thạnh, TP.HCM',
     },
     {
       email: 'patient.nhi@gmail.com',
       fullName: 'Bùi Thị Nhi',
       phone: '0916666666',
+      dateOfBirth: new Date('1996-09-08'),
+      gender: Gender.FEMALE,
+      address: '888 Ba Tháng Hai, Quận 10, TP.HCM',
     },
   ];
 
@@ -255,6 +315,9 @@ async function main() {
         role: UserRole.PATIENT,
         fullName: patient.fullName,
         phone: patient.phone,
+        dateOfBirth: patient.dateOfBirth,
+        gender: patient.gender,
+        address: patient.address,
         isActive: true,
       },
     });
@@ -493,23 +556,23 @@ async function main() {
   console.log('  admin@clinic.com / admin123');
   console.log('\nDOCTORS:');
   console.log(
-    '  bs.nguyenvana@clinic.com / doctor123 (Nội tổng quát - 15 years exp)',
+    '  bs.nguyenvana@clinic.com / doctor123 (Nội tổng quát - Male, 1975)',
   );
-  console.log('  bs.lethib@clinic.com / doctor123 (Tim mạch - 12 years exp)');
-  console.log('  bs.tranthic@clinic.com / doctor123 (Da liễu - 10 years exp)');
+  console.log('  bs.lethib@clinic.com / doctor123 (Tim mạch - Female, 1980)');
+  console.log('  bs.tranthic@clinic.com / doctor123 (Da liễu - Female, 1982)');
   console.log(
-    '  bs.phamvand@clinic.com / doctor123 (Răng hàm mặt - 8 years exp)',
+    '  bs.phamvand@clinic.com / doctor123 (Răng hàm mặt - Male, 1986)',
   );
-  console.log('  bs.hoangthie@clinic.com / doctor123 (Mắt - 14 years exp)');
+  console.log('  bs.hoangthie@clinic.com / doctor123 (Mắt - Female, 1978)');
   console.log('\nRECEPTIONISTS:');
-  console.log('  letan.huong@clinic.com / receptionist123');
-  console.log('  letan.lan@clinic.com / receptionist123');
+  console.log('  letan.huong@clinic.com / receptionist123 (Female, 1992)');
+  console.log('  letan.lan@clinic.com / receptionist123 (Female, 1994)');
   console.log('\nPATIENTS:');
-  console.log('  patient.nam@gmail.com / patient123');
-  console.log('  patient.linh@gmail.com / patient123');
-  console.log('  patient.tuan@gmail.com / patient123');
-  console.log('  patient.mai@gmail.com / patient123');
-  console.log('  (... và 4 bệnh nhân khác)');
+  console.log('  patient.nam@gmail.com / patient123 (Male, 1988)');
+  console.log('  patient.linh@gmail.com / patient123 (Female, 1995)');
+  console.log('  patient.tuan@gmail.com / patient123 (Male, 1990)');
+  console.log('  patient.mai@gmail.com / patient123 (Female, 1993)');
+  console.log('  (... và 4 bệnh nhân khác với đầy đủ thông tin)');
   console.log('==========================================');
 
   console.log('\n🎉 Seed completed successfully!');
