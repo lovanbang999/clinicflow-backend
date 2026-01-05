@@ -133,4 +133,50 @@ export class BookingsController {
   remove(@Param('id') id: string, @CurrentUser('id') userId: string) {
     return this.bookingsService.remove(id, userId);
   }
+
+  @Get('dashboard/stats')
+  @Roles(UserRole.PATIENT)
+  @ApiOperation({
+    summary: 'Get patient dashboard statistics',
+    description: 'Get booking statistics for current patient',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Statistics retrieved successfully',
+    schema: {
+      example: {
+        success: true,
+        statusCode: 200,
+        message: 'Dashboard statistics retrieved successfully',
+        messageCode: 'BOOKING.LIST.SUCCESS',
+        data: {
+          stats: {
+            upcomingBookings: 2,
+            completedBookings: 12,
+            waitingBookings: 1,
+            totalBookings: 15,
+          },
+          nextBooking: {
+            id: 'uuid',
+            bookingDate: '2024-12-30',
+            startTime: '09:00',
+            endTime: '09:30',
+            status: 'CONFIRMED',
+            service: {
+              id: 'uuid',
+              name: 'Khám tổng quát',
+            },
+            doctor: {
+              id: 'uuid',
+              fullName: 'BS. Nguyễn Văn An',
+              avatar: null,
+            },
+          },
+        },
+      },
+    },
+  })
+  getPatientDashboardStats(@CurrentUser('id') patientId: string) {
+    return this.bookingsService.getPatientDashboardStats(patientId);
+  }
 }
