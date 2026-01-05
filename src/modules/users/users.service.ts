@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { FilterUserDto } from './dto/filter-user.dto';
 import { Prisma, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
@@ -68,6 +69,9 @@ export class UsersService {
         fullName: true,
         phone: true,
         avatar: true,
+        dateOfBirth: true,
+        gender: true,
+        address: true,
         role: true,
         isActive: true,
         createdAt: true,
@@ -126,6 +130,9 @@ export class UsersService {
           fullName: true,
           phone: true,
           avatar: true,
+          dateOfBirth: true,
+          gender: true,
+          address: true,
           role: true,
           isActive: true,
           createdAt: true,
@@ -198,6 +205,9 @@ export class UsersService {
           fullName: true,
           phone: true,
           avatar: true,
+          dateOfBirth: true,
+          gender: true,
+          address: true,
           role: true,
           isActive: true,
           createdAt: true,
@@ -251,6 +261,9 @@ export class UsersService {
         fullName: true,
         phone: true,
         avatar: true,
+        dateOfBirth: true,
+        gender: true,
+        address: true,
         role: true,
         isActive: true,
         createdAt: true,
@@ -336,7 +349,7 @@ export class UsersService {
       const phoneExists = await this.prisma.user.findFirst({
         where: {
           phone: updateUserDto.phone,
-          NOT: { id }, // Exclude current user
+          NOT: { id },
         },
       });
 
@@ -350,16 +363,49 @@ export class UsersService {
       }
     }
 
+    // Prepare update data with proper typing
+    const updateData: Prisma.UserUpdateInput = {};
+
+    // Copy allowed fields
+    if (updateUserDto.email !== undefined)
+      updateData.email = updateUserDto.email;
+    if (updateUserDto.fullName !== undefined)
+      updateData.fullName = updateUserDto.fullName;
+    if (updateUserDto.phone !== undefined)
+      updateData.phone = updateUserDto.phone;
+    if (updateUserDto.avatar !== undefined)
+      updateData.avatar = updateUserDto.avatar;
+    if (updateUserDto.gender !== undefined)
+      updateData.gender = updateUserDto.gender;
+    if (updateUserDto.address !== undefined)
+      updateData.address = updateUserDto.address;
+    if (updateUserDto.role !== undefined) updateData.role = updateUserDto.role;
+    if (updateUserDto.isActive !== undefined)
+      updateData.isActive = updateUserDto.isActive;
+
+    // Hash password if provided
+    if (updateUserDto.password) {
+      updateData.password = await bcrypt.hash(updateUserDto.password, 10);
+    }
+
+    // Convert dateOfBirth to Date if provided
+    if (updateUserDto.dateOfBirth) {
+      updateData.dateOfBirth = new Date(updateUserDto.dateOfBirth);
+    }
+
     // Update user
     const updatedUser = await this.prisma.user.update({
       where: { id },
-      data: updateUserDto,
+      data: updateData,
       select: {
         id: true,
         email: true,
         fullName: true,
         phone: true,
         avatar: true,
+        dateOfBirth: true,
+        gender: true,
+        address: true,
         role: true,
         isActive: true,
         createdAt: true,
@@ -381,6 +427,59 @@ export class UsersService {
       updatedUser,
       MessageCodes.USER_UPDATED,
       'User updated successfully',
+      200,
+    );
+  }
+
+  /**
+   * Change password
+   */
+  async changePassword(userId: string, changePasswordDto: ChangePasswordDto) {
+    const { currentPassword, newPassword } = changePasswordDto;
+
+    // Get user with password
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, password: true },
+    });
+
+    if (!user) {
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'User not found',
+        404,
+        'Password change failed',
+      );
+    }
+
+    // Verify current password
+    const isPasswordValid = await bcrypt.compare(
+      currentPassword,
+      user.password,
+    );
+
+    if (!isPasswordValid) {
+      throw new ApiException(
+        MessageCodes.INVALID_CREDENTIALS, // Fixed: AUTH_INVALID_CREDENTIALS -> INVALID_CREDENTIALS
+        'Current password is incorrect',
+        400,
+        'Password change failed',
+      );
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update password
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword },
+    });
+
+    return ResponseHelper.success(
+      null,
+      MessageCodes.USER_UPDATED,
+      'Password changed successfully',
       200,
     );
   }
