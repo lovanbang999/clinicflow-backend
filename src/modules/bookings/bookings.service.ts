@@ -458,6 +458,96 @@ export class BookingsService {
     );
   }
 
+  /**
+   * Get patient dashboard statistics
+   */
+  async getPatientDashboardStats(patientId: string) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [
+      upcomingBookings,
+      completedBookings,
+      waitingBookings,
+      totalBookings,
+    ] = await Promise.all([
+      // Upcoming bookings (confirmed, not yet today)
+      this.prisma.booking.count({
+        where: {
+          patientId,
+          status: BookingStatus.CONFIRMED,
+          bookingDate: {
+            gte: today,
+          },
+        },
+      }),
+      // Completed bookings
+      this.prisma.booking.count({
+        where: {
+          patientId,
+          status: BookingStatus.COMPLETED,
+        },
+      }),
+      // Waiting in queue
+      this.prisma.booking.count({
+        where: {
+          patientId,
+          status: {
+            in: [BookingStatus.QUEUED, BookingStatus.CHECKED_IN],
+          },
+        },
+      }),
+      // Total bookings
+      this.prisma.booking.count({
+        where: {
+          patientId,
+        },
+      }),
+    ]);
+
+    // Get next upcoming booking
+    const nextBooking = await this.prisma.booking.findFirst({
+      where: {
+        patientId,
+        status: BookingStatus.CONFIRMED,
+        bookingDate: {
+          gte: today,
+        },
+      },
+      include: {
+        service: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        doctor: {
+          select: {
+            id: true,
+            fullName: true,
+            avatar: true,
+          },
+        },
+      },
+      orderBy: [{ bookingDate: 'asc' }, { startTime: 'asc' }],
+    });
+
+    return ResponseHelper.success(
+      {
+        stats: {
+          upcomingBookings,
+          completedBookings,
+          waitingBookings,
+          totalBookings,
+        },
+        nextBooking,
+      },
+      MessageCodes.BOOKING_LIST_RETRIEVED,
+      'Dashboard statistics retrieved successfully',
+      200,
+    );
+  }
+
   // ============================================
   // PRIVATE HELPER METHODS
   // ============================================
