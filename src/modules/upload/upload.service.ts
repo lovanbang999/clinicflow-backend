@@ -1,11 +1,19 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject } from '@nestjs/common';
 import { extname } from 'path';
 import { promises as fs } from 'fs';
-import { v4 as uuidv4 } from 'uuid';
+import * as streamifier from 'streamifier';
+import { v2 as CloudinaryType } from 'cloudinary';
+import { CLOUDINARY } from 'src/providers/cloudinary.provider';
+
+type UploadResult = {
+  url: string; // secure URL of the uploaded image
+  publicId: string; // Cloudinary public ID of the uploaded image
+};
 
 @Injectable()
 export class UploadService {
-  private readonly uploadDir = './uploads/icons';
+  private readonly iconUploadDir = './uploads/icons';
+  private readonly avatarUploadDir = './uploads/avatars';
   private readonly allowedExtensions = [
     '.png',
     '.jpg',
@@ -15,7 +23,13 @@ export class UploadService {
   ];
   private readonly maxFileSize = 5 * 1024 * 1024; // 5MB
 
-  async uploadIcon(file: Express.Multer.File | undefined): Promise<string> {
+  constructor(
+    @Inject(CLOUDINARY) private readonly cloudinary: typeof CloudinaryType,
+  ) {}
+
+  async uploadIcon(
+    file: Express.Multer.File | undefined,
+  ): Promise<UploadResult> {
     // Validate file
     this.validateFile(file);
 
@@ -24,40 +38,88 @@ export class UploadService {
       throw new BadRequestException('No file provided');
     }
 
-    // Ensure upload directory exists
-    await this.ensureUploadDir();
-
-    // Generate unique filename
-    const fileExtension = extname(file.originalname).toLowerCase();
-    const filename = `${uuidv4()}${fileExtension}`;
-    const filepath = `${this.uploadDir}/${filename}`;
-
-    // Save file
-    await fs.writeFile(filepath, file.buffer);
-
-    // Return URL path (relative to server)
-    return `/uploads/icons/${filename}`;
+    // Put icons in a folder (helps management in Cloudinary dashboard)
+    return this.uploadBufferToCloudinary(file, 'smart-clinic/icons');
   }
 
-  async deleteIcon(iconUrl: string): Promise<void> {
-    if (!iconUrl) return;
+  async deleteIcon(publicId: string | null | undefined): Promise<void> {
+    if (!publicId) return;
 
     try {
-      // Extract filename from URL
-      const filename = iconUrl.split('/').pop();
-      if (!filename) return;
-
-      const filepath = `${this.uploadDir}/${filename}`;
-
-      // Check if file exists
-      await fs.access(filepath);
-
-      // Delete file
-      await fs.unlink(filepath);
-    } catch {
-      // File doesn't exist or already deleted - ignore
-      console.log('Icon file not found or already deleted:', iconUrl);
+      await this.cloudinary.uploader.destroy(publicId, {
+        // for images, resource_type defaults to 'image'
+        invalidate: true, // invalidates CDN caches
+      });
+    } catch (e) {
+      // ignore if already deleted / not found
+      console.log('Cloudinary delete failed:', publicId, e);
     }
+  }
+
+  async uploadAvatar(
+    file: Express.Multer.File | undefined,
+  ): Promise<UploadResult> {
+    // Validate file
+    this.validateFile(file);
+
+    // Type guard ensures file is defined after validation
+    if (!file) {
+      throw new BadRequestException('No file provided');
+    }
+
+    return this.uploadBufferToCloudinary(file, 'smart-clinic/avatars');
+  }
+
+  async deleteAvatar(publicId: string | null | undefined): Promise<void> {
+    if (!publicId) return;
+
+    try {
+      await this.cloudinary.uploader.destroy(publicId, {
+        // for images, resource_type defaults to 'image'
+        invalidate: true, // invalidates CDN caches
+      });
+    } catch (e) {
+      // ignore if already deleted / not found
+      console.log('Cloudinary delete failed:', publicId, e);
+    }
+  }
+
+  // --- HELPER METHODS ---
+  private async uploadBufferToCloudinary(
+    file: Express.Multer.File,
+    folder: string,
+  ): Promise<UploadResult> {
+    const toError = (e: unknown, fallback: string) =>
+      e instanceof Error ? e : new Error(typeof e === 'string' ? e : fallback);
+
+    return new Promise<UploadResult>((resolve, reject) => {
+      const uploadStream = this.cloudinary.uploader.upload_stream(
+        {
+          folder,
+          resource_type: 'image',
+          unique_filename: true,
+          overwrite: false,
+        },
+        (error, result) => {
+          if (error) {
+            reject(toError(error, 'Cloudinary upload failed'));
+            return;
+          }
+
+          if (!result) {
+            reject(new Error('Cloudinary upload failed: empty result'));
+            return;
+          }
+
+          resolve({
+            url: result.secure_url,
+            publicId: result.public_id,
+          });
+        },
+      );
+
+      streamifier.createReadStream(file.buffer).pipe(uploadStream);
+    });
   }
 
   private validateFile(file: Express.Multer.File | undefined): void {
@@ -91,12 +153,12 @@ export class UploadService {
     }
   }
 
-  private async ensureUploadDir(): Promise<void> {
+  private async ensureUploadDir(uploadDir: string): Promise<void> {
     try {
-      await fs.access(this.uploadDir);
+      await fs.access(uploadDir);
     } catch {
       // Directory doesn't exist, create it
-      await fs.mkdir(this.uploadDir, { recursive: true });
+      await fs.mkdir(uploadDir, { recursive: true });
     }
   }
 }
