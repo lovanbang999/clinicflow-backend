@@ -36,14 +36,7 @@ export class NotificationsService {
    */
   private loadTemplates() {
     try {
-      const templatesDir = path.join(
-        __dirname,
-        '..',
-        '..',
-        'modules',
-        'notifications',
-        'templates',
-      );
+      const templatesDir = path.join(__dirname, 'templates');
 
       // Load booking confirmation template
       const bookingConfirmationPath = path.join(
@@ -66,6 +59,9 @@ export class NotificationsService {
       this.logger.log('Email templates loaded successfully');
     } catch (error) {
       this.logger.error('Failed to load email templates:', error);
+      this.logger.warn(
+        'Email notifications will not be sent with custom templates',
+      );
     }
   }
 

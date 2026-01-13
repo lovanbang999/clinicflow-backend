@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsUUID, IsDateString, IsNotEmpty } from 'class-validator';
+import { IsUUID, IsDateString, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class AvailableSlotsQueryDto {
   @ApiProperty({
@@ -25,4 +25,14 @@ export class AvailableSlotsQueryDto {
   @IsDateString()
   @IsNotEmpty()
   date: string;
+
+  @ApiProperty({
+    description:
+      'Patient ID (optional) - to exclude slots already booked by this patient',
+    example: 'uuid-patient-id',
+    required: false,
+  })
+  @IsUUID('4')
+  @IsOptional()
+  patientId?: string;
 }
