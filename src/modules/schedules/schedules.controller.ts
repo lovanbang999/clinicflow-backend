@@ -269,11 +269,16 @@ export class SchedulesController {
     summary:
       'Get available time slots for a doctor on a specific date (public)',
     description:
-      'Returns available time slots considering working hours, break times, off days, and existing bookings',
+      'Returns available time slots considering working hours, break times, off days, and existing bookings. Optionally excludes slots already booked by a specific patient.',
   })
   @ApiQuery({ name: 'doctorId', required: true })
   @ApiQuery({ name: 'serviceId', required: true })
   @ApiQuery({ name: 'date', required: true, example: '2024-12-26' })
+  @ApiQuery({
+    name: 'patientId',
+    required: false,
+    description: 'Patient ID to exclude their already booked slots',
+  })
   @ApiResponse({
     status: 200,
     description: 'Available slots retrieved successfully',

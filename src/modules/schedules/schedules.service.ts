@@ -489,6 +489,7 @@ export class SchedulesService {
       doctorId,
       date,
       service.maxSlotsPerHour,
+      queryDto.patientId,
     );
 
     return ResponseHelper.success(
@@ -551,27 +552,56 @@ export class SchedulesService {
     doctorId: string,
     date: string,
     maxSlotsPerHour: number,
+    patientId?: string,
   ): Promise<string[]> {
     const availableSlots: string[] = [];
 
-    for (const slot of slots) {
-      const bookingCount = await this.prisma.booking.count({
-        where: {
-          doctorId,
-          bookingDate: new Date(date),
-          startTime: slot,
-          status: {
-            in: [
-              BookingStatus.PENDING,
-              BookingStatus.CONFIRMED,
-              BookingStatus.CHECKED_IN,
-              BookingStatus.IN_PROGRESS,
-            ],
+    // Get all active bookings for this doctor on this date
+    const existingBookings = await this.prisma.booking.findMany({
+      where: {
+        doctorId,
+        bookingDate: new Date(date),
+        status: {
+          in: [
+            BookingStatus.PENDING,
+            BookingStatus.CONFIRMED,
+            BookingStatus.CHECKED_IN,
+            BookingStatus.IN_PROGRESS,
+          ],
+        },
+      },
+      include: {
+        service: {
+          select: {
+            durationMinutes: true,
           },
         },
-      });
+      },
+    });
 
-      if (bookingCount < maxSlotsPerHour) {
+    // Get patient's existing bookings for this date if patientId is provided
+    const patientBookings = patientId
+      ? existingBookings.filter((booking) => booking.patientId === patientId)
+      : [];
+
+    for (const slot of slots) {
+      // Check if patient already has a booking at this slot
+      const patientHasBooking = patientBookings.some(
+        (booking) => booking.startTime === slot,
+      );
+
+      // Skip this slot if patient already booked it
+      if (patientHasBooking) {
+        continue;
+      }
+
+      // Count bookings that start at this exact slot time
+      const exactMatchCount = existingBookings.filter(
+        (booking) => booking.startTime === slot,
+      ).length;
+
+      // Only add slot if it hasn't reached maximum capacity
+      if (exactMatchCount < maxSlotsPerHour) {
         availableSlots.push(slot);
       }
     }
