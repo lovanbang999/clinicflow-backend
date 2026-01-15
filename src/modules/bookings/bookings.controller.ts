@@ -57,6 +57,7 @@ export class BookingsController {
   }
 
   @Get()
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
   @ApiOperation({ summary: 'Get all bookings with filters' })
   @ApiQuery({ name: 'patientId', required: false })
   @ApiQuery({ name: 'doctorId', required: false })
@@ -71,6 +72,45 @@ export class BookingsController {
   })
   findAll(@Query() filterDto: FilterBookingDto) {
     return this.bookingsService.findAll(filterDto);
+  }
+
+  @Get('my-bookings')
+  @Roles(UserRole.PATIENT)
+  @ApiOperation({
+    summary: 'Get my bookings',
+    description:
+      'Get all bookings for the current patient with optional filters',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    description: 'Filter by booking status',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    description: 'Page number (default: 1)',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Items per page (default: 10)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'My bookings retrieved successfully',
+  })
+  getMyBookings(
+    @CurrentUser('id') patientId: string,
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.bookingsService.getMyBookings(patientId, {
+      status,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 10,
+    });
   }
 
   @Get(':id')

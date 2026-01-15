@@ -459,6 +459,74 @@ export class BookingsService {
   }
 
   /**
+   * Get my bookings (for current patient)
+   */
+  async getMyBookings(
+    patientId: string,
+    options: {
+      status?: string;
+      page?: number;
+      limit?: number;
+    },
+  ) {
+    const { status, page = 1, limit = 10 } = options;
+
+    // Build where clause
+    const where: Prisma.BookingWhereInput = {
+      patientId,
+    };
+
+    if (status) {
+      where.status = status as BookingStatus;
+    }
+
+    const [bookings, total] = await Promise.all([
+      this.prisma.booking.findMany({
+        where,
+        include: {
+          service: {
+            select: {
+              id: true,
+              name: true,
+              durationMinutes: true,
+              price: true,
+              iconUrl: true,
+            },
+          },
+          doctor: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+              avatar: true,
+            },
+          },
+          queueRecord: true,
+        },
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: [{ bookingDate: 'desc' }, { startTime: 'desc' }],
+      }),
+      this.prisma.booking.count({ where }),
+    ]);
+
+    return ResponseHelper.success(
+      {
+        bookings,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      },
+      MessageCodes.BOOKING_LIST_RETRIEVED,
+      'My bookings retrieved successfully',
+      200,
+    );
+  }
+
+  /**
    * Get patient dashboard statistics
    */
   async getPatientDashboardStats(patientId: string) {
