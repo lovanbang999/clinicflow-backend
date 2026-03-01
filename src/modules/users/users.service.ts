@@ -250,6 +250,57 @@ export class UsersService {
   }
 
   /**
+   * Find public doctor by ID
+   */
+  async findPublicDoctor(id: string) {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id,
+        role: UserRole.DOCTOR,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        phone: true,
+        avatar: true,
+        gender: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+        doctorProfile: {
+          select: {
+            specialties: true,
+            qualifications: true,
+            yearsOfExperience: true,
+            bio: true,
+            rating: true,
+            reviewCount: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'Doctor not found',
+        404,
+        'Doctor retrieval failed',
+      );
+    }
+
+    return ResponseHelper.success(
+      user,
+      MessageCodes.USER_RETRIEVED,
+      'Doctor retrieved successfully',
+      200,
+    );
+  }
+
+  /**
    * Find one user by ID
    */
   async findOne(id: string) {

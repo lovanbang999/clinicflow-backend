@@ -70,6 +70,25 @@ export class UsersController {
     });
   }
 
+  @Get('public/doctors/:id')
+  @Public()
+  @ApiOperation({
+    summary: 'Get doctor by ID (Public - No auth required)',
+    description:
+      'Retrieve detailed information of a specific doctor based on their ID without authentication',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Doctor retrieved successfully',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Doctor not found',
+  })
+  getPublicDoctor(@Param('id') id: string) {
+    return this.usersService.findPublicDoctor(id);
+  }
+
   // ============================================
   // AUTHENTICATED ENDPOINTS
   // ============================================
