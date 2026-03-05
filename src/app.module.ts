@@ -12,6 +12,7 @@ import { SuggestionsModule } from './modules/suggestions/suggestions.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { UploadModule } from './modules/upload/upload.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { UploadModule } from './modules/upload/upload.module';
     QueueModule,
     SuggestionsModule,
     NotificationsModule,
+    AdminModule,
   ],
   providers: [
     // Global guard - apply JWT auth to all routes by default
