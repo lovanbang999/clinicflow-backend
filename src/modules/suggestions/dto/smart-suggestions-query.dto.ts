@@ -10,7 +10,7 @@ import {
   IsString,
   Matches,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 
 export class SmartSuggestionsQueryDto {
   @ApiProperty({
@@ -61,7 +61,10 @@ export class SmartSuggestionsQueryDto {
     default: false,
   })
   @IsOptional()
-  @Type(() => Boolean)
+  @Transform(({ obj, key }) => {
+    const value = (obj as Record<string, unknown>)[key];
+    return value === 'true' || value === true;
+  })
   @IsBoolean()
   preferMorning?: boolean = false;
 
@@ -71,7 +74,10 @@ export class SmartSuggestionsQueryDto {
     default: false,
   })
   @IsOptional()
-  @Type(() => Boolean)
+  @Transform(({ obj, key }) => {
+    const value = (obj as Record<string, unknown>)[key];
+    return value === 'true' || value === true;
+  })
   @IsBoolean()
   preferAfternoon?: boolean = false;
 

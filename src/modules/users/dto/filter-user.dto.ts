@@ -20,7 +20,10 @@ export class FilterUserDto {
     required: false,
   })
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
+  @Transform(({ obj, key }) => {
+    const value = (obj as Record<string, unknown>)[key];
+    return value === 'true' || value === true;
+  })
   @IsBoolean()
   isActive?: boolean;
 
@@ -30,7 +33,10 @@ export class FilterUserDto {
     required: false,
   })
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
+  @Transform(({ obj, key }) => {
+    const value = (obj as Record<string, unknown>)[key];
+    return value === 'true' || value === true;
+  })
   @IsBoolean()
   isVerified?: boolean;
 
@@ -50,7 +56,7 @@ export class FilterUserDto {
     example: 1,
   })
   @IsOptional()
-  @Transform(({ value }) => parseInt(value, 10))
+  @Transform(({ value }) => parseInt(String(value), 10))
   page?: number = 1;
 
   @ApiProperty({
@@ -60,6 +66,6 @@ export class FilterUserDto {
     example: 10,
   })
   @IsOptional()
-  @Transform(({ value }) => parseInt(value, 10))
+  @Transform(({ value }) => parseInt(String(value), 10))
   limit?: number = 10;
 }
