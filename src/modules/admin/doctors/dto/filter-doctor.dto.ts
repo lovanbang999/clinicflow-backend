@@ -29,7 +29,10 @@ export class FilterDoctorDto {
     example: true,
   })
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
+  @Transform(({ obj, key }) => {
+    const value = (obj as Record<string, unknown>)[key];
+    return value === 'true' || value === true;
+  })
   @IsBoolean()
   isActive?: boolean;
 
