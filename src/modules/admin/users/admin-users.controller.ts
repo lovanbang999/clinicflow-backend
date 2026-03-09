@@ -30,7 +30,7 @@ import { RolesGuard } from 'src/common/guards/roles.guard';
 import { UpdateUserDto } from 'src/modules/users/dto/update-user.dto';
 
 @ApiTags('admin - users')
-@ApiBearerAuth()
+@ApiBearerAuth('JWT-auth')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN)
 @Controller('admin')

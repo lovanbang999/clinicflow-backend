@@ -48,8 +48,6 @@ export class AdminDoctorsService {
         totalDoctors,
         activeDoctors,
         inactiveDoctors: totalDoctors - activeDoctors,
-        // "On Leave" is not a DB concept yet; expose 0 until a leave-management
-        // feature is added. The frontend stat card may be hidden or hard-coded.
         onLeaveDoctors: 0,
         newThisMonth,
         bySpecialty,
