@@ -78,6 +78,7 @@ model User {
   bookingsAsPatient Booking[]              @relation("PatientBookings")
   bookingsAsDoctor  Booking[]              @relation("DoctorBookings")
   workingHours      DoctorWorkingHours[]
+  scheduleSlots     DoctorScheduleSlot[]   @relation("DoctorScheduleSlots")
   breakTimes        DoctorBreakTime[]
   offDays           DoctorOffDay[]
   statusChanges     BookingStatusHistory[] @relation("ChangedByUser")
@@ -102,7 +103,7 @@ model DoctorProfile {
   qualifications    String[] @default([])
   yearsOfExperience Int      @default(0)
   bio               String?
-  
+
   // Statistics (can be computed or cached)
   rating      Float @default(0)
   reviewCount Int   @default(0)
@@ -212,6 +213,28 @@ model DoctorOffDay {
   @@unique([doctorId, date])
   @@index([doctorId])
   @@map("doctor_off_days")
+}
+
+model DoctorScheduleSlot {
+  id          String   @id @default(uuid())
+  doctorId    String
+  date        DateTime @db.Date
+  startTime   String
+  endTime     String
+  maxPatients Int      @default(1)
+  room        String?
+  type        String?
+  notes       String?
+  status      String   @default("SCHEDULED")
+  isActive    Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  doctor User @relation("DoctorScheduleSlots", fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, date])
+  @@map("doctor_schedule_slots")
 }
 
 model Booking {
