@@ -117,12 +117,41 @@ jobs:
             echo "📥 Pulling latest code..."
             git pull origin ${{ github.ref_name }}
 
+            echo "📝 Writing .env file from secrets..."
+            cat > .env << 'ENVEOF'
+            POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+            POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+            DATABASE_URL=postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/${{ secrets.POSTGRES_DB }}
+            PORT=8080
+            NODE_ENV=production
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            JWT_EXPIRES_IN=${{ secrets.JWT_EXPIRES_IN }}
+            JWT_REFRESH_SECRET=${{ secrets.JWT_REFRESH_SECRET }}
+            JWT_REFRESH_EXPIRES_IN=${{ secrets.JWT_REFRESH_EXPIRES_IN }}
+            FRONTEND_URL=${{ secrets.FRONTEND_URL }}
+            MAIL_HOST=${{ secrets.MAIL_HOST }}
+            MAIL_PORT=${{ secrets.MAIL_PORT }}
+            MAIL_USER=${{ secrets.MAIL_USER }}
+            MAIL_PASSWORD=${{ secrets.MAIL_PASSWORD }}
+            MAIL_FROM=${{ secrets.MAIL_FROM }}
+            CLOUDINARY_CLOUD_NAME=${{ secrets.CLOUDINARY_CLOUD_NAME }}
+            CLOUDINARY_API_KEY=${{ secrets.CLOUDINARY_API_KEY }}
+            CLOUDINARY_API_SECRET=${{ secrets.CLOUDINARY_API_SECRET }}
+            CLOUDIARY_FOLDER=${{ secrets.CLOUDIARY_FOLDER }}
+            ENVEOF
+
             echo "🔐 Logging into GitHub Container Registry..."
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
             echo "📦 Pulling latest Docker image..."
             export BACKEND_IMAGE=ghcr.io/${{ github.repository_owner }}/smartclinic-backend:latest
             docker compose pull backend
+
+            echo "🗄️ Ensuring PostgreSQL is running..."
+            docker compose up -d postgres
+            echo "⏳ Waiting for PostgreSQL to be healthy..."
+            timeout 60 sh -c 'until docker compose exec postgres pg_isready -U ${{ secrets.POSTGRES_USER }} -d ${{ secrets.POSTGRES_DB }} 2>/dev/null; do sleep 2; done'
 
             echo "🚀 Restarting backend service..."
             docker compose up -d --no-deps --remove-orphans backend
