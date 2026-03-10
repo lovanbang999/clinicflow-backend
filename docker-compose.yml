@@ -24,10 +24,7 @@ services:
   # NestJS Backend
   # ──────────────────────────────────────────────
   backend:
-    image: ${BACKEND_IMAGE:-smartclinic-backend:latest}
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${BACKEND_IMAGE:-ghcr.io/lovanbang999/smartclinic-backend:latest}
     container_name: smartclinic_backend
     restart: unless-stopped
     env_file:
