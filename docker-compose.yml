@@ -1,0 +1,53 @@
+services:
+  # ──────────────────────────────────────────────
+  # PostgreSQL Database
+  # ──────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: smartclinic_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-smartclinic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartclinic_password}
+      POSTGRES_DB: ${POSTGRES_DB:-smart_clinic_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - smartclinic_backend_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartclinic} -d ${POSTGRES_DB:-smart_clinic_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────
+  # NestJS Backend
+  # ──────────────────────────────────────────────
+  backend:
+    image: ${BACKEND_IMAGE:-smartclinic-backend:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smartclinic_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-smartclinic}:${POSTGRES_PASSWORD:-smartclinic_password}@postgres:5432/${POSTGRES_DB:-smart_clinic_db}
+      PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - smartclinic_backend_net
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  smartclinic_backend_net:
+    driver: bridge
