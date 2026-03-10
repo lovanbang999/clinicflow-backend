@@ -45,10 +45,11 @@ RUN yarn install --frozen-lockfile --production && yarn cache clean
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist
 
-# Copy Prisma schema and generated client
+# Copy Prisma schema, config and generated client
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY prisma ./prisma
+COPY prisma.config.ts ./
 
 # Copy entrypoint script
 COPY docker-entrypoint.sh ./
