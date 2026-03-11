@@ -180,7 +180,7 @@ export class SchedulesService {
     const breakTime = await this.prisma.doctorBreakTime.create({
       data: {
         doctorId,
-        date: new Date(date),
+        breakDate: new Date(date),
         startTime,
         endTime,
         reason,
@@ -202,19 +202,19 @@ export class SchedulesService {
     const where: Prisma.DoctorBreakTimeWhereInput = { doctorId };
 
     if (startDate && endDate) {
-      where.date = {
+      where.breakDate = {
         gte: new Date(startDate),
         lte: new Date(endDate),
       };
     } else if (startDate) {
-      where.date = {
+      where.breakDate = {
         gte: new Date(startDate),
       };
     }
 
     const breakTimes = await this.prisma.doctorBreakTime.findMany({
       where,
-      orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+      orderBy: [{ breakDate: 'asc' }, { startTime: 'asc' }],
     });
 
     return ResponseHelper.success(
@@ -286,9 +286,9 @@ export class SchedulesService {
     // Check if off day already exists
     const existing = await this.prisma.doctorOffDay.findUnique({
       where: {
-        doctorId_date: {
+        doctorId_offDate: {
           doctorId,
-          date: new Date(date),
+          offDate: new Date(date),
         },
       },
     });
@@ -306,7 +306,7 @@ export class SchedulesService {
     const offDay = await this.prisma.doctorOffDay.create({
       data: {
         doctorId,
-        date: new Date(date),
+        offDate: new Date(date),
         reason,
       },
     });
@@ -326,19 +326,19 @@ export class SchedulesService {
     const where: Prisma.DoctorOffDayWhereInput = { doctorId };
 
     if (startDate && endDate) {
-      where.date = {
+      where.offDate = {
         gte: new Date(startDate),
         lte: new Date(endDate),
       };
     } else if (startDate) {
-      where.date = {
+      where.offDate = {
         gte: new Date(startDate),
       };
     }
 
     const offDays = await this.prisma.doctorOffDay.findMany({
       where,
-      orderBy: { date: 'asc' },
+      orderBy: { offDate: 'asc' },
     });
 
     return ResponseHelper.success(
@@ -355,9 +355,9 @@ export class SchedulesService {
   async deleteOffDay(doctorId: string, date: string) {
     const offDay = await this.prisma.doctorOffDay.findUnique({
       where: {
-        doctorId_date: {
+        doctorId_offDate: {
           doctorId,
-          date: new Date(date),
+          offDate: new Date(date),
         },
       },
     });
@@ -373,9 +373,9 @@ export class SchedulesService {
 
     await this.prisma.doctorOffDay.delete({
       where: {
-        doctorId_date: {
+        doctorId_offDate: {
           doctorId,
-          date: new Date(date),
+          offDate: new Date(date),
         },
       },
     });
@@ -437,9 +437,9 @@ export class SchedulesService {
     // Check if date is an off day
     const offDay = await this.prisma.doctorOffDay.findUnique({
       where: {
-        doctorId_date: {
+        doctorId_offDate: {
           doctorId,
-          date: new Date(date),
+          offDate: new Date(date),
         },
       },
     });
@@ -460,7 +460,7 @@ export class SchedulesService {
     const breakTimes = await this.prisma.doctorBreakTime.findMany({
       where: {
         doctorId,
-        date: new Date(date),
+        breakDate: new Date(date),
       },
     });
 
