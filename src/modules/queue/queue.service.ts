@@ -49,7 +49,7 @@ export class QueueService {
 
     // Build booking where clause properly
     const bookingWhere: Prisma.BookingWhereInput = {
-      status: BookingStatus.QUEUED,
+      status: BookingStatus.CHECKED_IN,
     };
 
     if (doctorId) {
@@ -188,7 +188,7 @@ export class QueueService {
   async getStatistics(doctorId?: string, date?: string) {
     // Build booking where clause properly
     const bookingWhere: Prisma.BookingWhereInput = {
-      status: BookingStatus.QUEUED,
+      status: BookingStatus.CHECKED_IN,
     };
 
     if (doctorId) {
@@ -256,7 +256,7 @@ export class QueueService {
     }
 
     // Check if booking is actually queued
-    if (queueRecord.booking.status !== BookingStatus.QUEUED) {
+    if (queueRecord.booking.status !== BookingStatus.CHECKED_IN) {
       throw new BadRequestException('Booking is not in queue');
     }
 
@@ -307,7 +307,7 @@ export class QueueService {
           doctorId,
           bookingDate: new Date(bookingDate),
           startTime: timeSlot,
-          status: BookingStatus.QUEUED,
+          status: BookingStatus.CHECKED_IN,
         },
       },
       orderBy: {
@@ -481,7 +481,7 @@ export class QueueService {
       await tx.bookingStatusHistory.create({
         data: {
           bookingId,
-          oldStatus: BookingStatus.QUEUED,
+          oldStatus: BookingStatus.CHECKED_IN,
           newStatus: BookingStatus.CONFIRMED,
           changedById: promotedBy,
           reason,
@@ -532,7 +532,7 @@ export class QueueService {
           doctorId,
           bookingDate: new Date(bookingDate),
           startTime: timeSlot,
-          status: BookingStatus.QUEUED,
+          status: BookingStatus.CHECKED_IN,
         },
         queuePosition: {
           gt: removedPosition,
