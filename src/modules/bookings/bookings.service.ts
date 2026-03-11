@@ -75,21 +75,20 @@ export class BookingsService {
 
     const endTime = this.calculateEndTime(startTime, service.durationMinutes);
 
-    // Step 3: Check slot availability
-    const isSlotAvailable = await this.checkSlotAvailability(
+    // Note: Slot availability check removed from create flow.
+    // BookingQueue is now managed separately during check-in.
+    // Kept for potential future validation but not used for status.
+    void (await this.checkSlotAvailability(
       doctorId,
       bookingDate,
       startTime,
       endTime,
       service.maxSlotsPerHour,
-    );
+    ));
 
-    // Step 4: Determine initial status (PENDING or QUEUED)
-    const initialStatus = isSlotAvailable
-      ? BookingStatus.PENDING
-      : BookingStatus.QUEUED;
-
-    // Step 5: Create booking with transaction
+    // Step 4: Create booking with PENDING status
+    // Note: Slot-full queue logic removed. BookingQueue is managed separately
+    // during check-in flow (CONFIRMED → CHECKED_IN creates queue entry)
     const booking = await this.prisma.$transaction(async (tx) => {
       // Create booking
       const newBooking = await tx.booking.create({
@@ -100,8 +99,10 @@ export class BookingsService {
           bookingDate: new Date(bookingDate),
           startTime,
           endTime,
-          status: initialStatus,
+          status: BookingStatus.PENDING,
           patientNotes,
+          // bookedBy is set if receptionist created this booking
+          bookedBy: createdById !== patientId ? createdById : null,
         },
         include: {
           patient: {
@@ -135,37 +136,16 @@ export class BookingsService {
         data: {
           bookingId: newBooking.id,
           oldStatus: null,
-          newStatus: initialStatus,
+          newStatus: BookingStatus.PENDING,
           changedById: createdById,
           reason: 'Booking created',
         },
       });
 
-      // If queued, create queue record
-      if (initialStatus === BookingStatus.QUEUED) {
-        const queuePosition = await this.calculateQueuePosition(
-          tx,
-          doctorId,
-          bookingDate,
-          startTime,
-        );
-
-        await tx.bookingQueue.create({
-          data: {
-            bookingId: newBooking.id,
-            queuePosition,
-            estimatedWaitMinutes: queuePosition * service.durationMinutes,
-          },
-        });
-      }
-
       return newBooking;
     });
 
-    const message =
-      initialStatus === BookingStatus.QUEUED
-        ? 'Booking added to queue. You will be notified when a slot becomes available.'
-        : 'Booking created successfully';
+    const message = 'Booking created successfully';
 
     // Send booking confirmation email (non-blocking)
     this.sendBookingNotification(booking).catch((error) => {
@@ -561,7 +541,7 @@ export class BookingsService {
         where: {
           patientId,
           status: {
-            in: [BookingStatus.QUEUED, BookingStatus.CHECKED_IN],
+            in: [BookingStatus.CHECKED_IN],
           },
         },
       }),
@@ -722,7 +702,7 @@ export class BookingsService {
     const breakTime = await this.prisma.doctorBreakTime.findFirst({
       where: {
         doctorId,
-        date: new Date(bookingDate),
+        breakDate: new Date(bookingDate),
         AND: [
           { startTime: { lte: startTime } },
           { endTime: { gt: startTime } },
@@ -739,9 +719,9 @@ export class BookingsService {
     // 7. Check for off days
     const offDay = await this.prisma.doctorOffDay.findUnique({
       where: {
-        doctorId_date: {
+        doctorId_offDate: {
           doctorId,
-          date: new Date(bookingDate),
+          offDate: new Date(bookingDate),
         },
       },
     });
@@ -876,10 +856,7 @@ export class BookingsService {
       [BookingStatus.COMPLETED]: [],
       [BookingStatus.CANCELLED]: [],
       [BookingStatus.NO_SHOW]: [],
-      [BookingStatus.QUEUED]: [
-        BookingStatus.CONFIRMED,
-        BookingStatus.CANCELLED,
-      ],
+      [BookingStatus.QUEUED]: [], // deprecated, kept for type completeness
     };
 
     if (!validTransitions[currentStatus]?.includes(newStatus)) {
