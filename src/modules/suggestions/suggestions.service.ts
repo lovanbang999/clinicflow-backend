@@ -149,7 +149,7 @@ export class SuggestionsService {
       this.prisma.doctorBreakTime.findMany({
         where: {
           doctorId,
-          date: {
+          breakDate: {
             gte: startDate,
             lte: endDate,
           },
@@ -158,7 +158,7 @@ export class SuggestionsService {
       this.prisma.doctorOffDay.findMany({
         where: {
           doctorId,
-          date: {
+          offDate: {
             gte: startDate,
             lte: endDate,
           },
@@ -168,12 +168,12 @@ export class SuggestionsService {
 
     // Create maps for quick lookup
     const offDaysSet = new Set(
-      offDays.map((od) => od.date.toISOString().split('T')[0]),
+      offDays.map((od) => od.offDate.toISOString().split('T')[0]),
     );
 
     const breakTimesMap = new Map<string, DoctorBreakTime[]>();
     breakTimes.forEach((bt) => {
-      const dateKey = bt.date.toISOString().split('T')[0];
+      const dateKey = bt.breakDate.toISOString().split('T')[0];
       if (!breakTimesMap.has(dateKey)) {
         breakTimesMap.set(dateKey, []);
       }
