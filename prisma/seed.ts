@@ -502,7 +502,7 @@ async function main() {
       await prisma.doctorBreakTime.create({
         data: {
           doctorId: doctor.id,
-          date: breakDate,
+          breakDate: breakDate,
           startTime: '12:00',
           endTime: '13:00',
           reason: 'Lunch break',
