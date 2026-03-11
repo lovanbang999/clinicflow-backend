@@ -19,6 +19,9 @@ import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
@@ -76,6 +79,63 @@ export class AuthController {
   })
   async resendOtp(@Body() resendOtpDto: ResendOtpDto) {
     return this.authService.resendOtp(resendOtpDto);
+  }
+
+  @Public()
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Request password reset' })
+  @ApiResponse({
+    status: 200,
+    description: 'Password reset instructions sent if email exists',
+  })
+  async forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
+    return await this.authService.forgotPassword(forgotPasswordDto);
+  }
+
+  @Public()
+  @Post('verify-reset-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verify password-reset OTP (step 2 of forgot-password flow)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'OTP is valid — proceed to reset-password',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid or expired OTP',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'User not found',
+  })
+  async verifyResetOtp(@Body() verifyOtpDto: VerifyOtpDto) {
+    return await this.authService.verifyResetOtp(verifyOtpDto);
+  }
+
+  @Public()
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Set new password using verified OTP (step 3 of forgot-password flow)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Password reset successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid or expired OTP',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'User not found',
+  })
+  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+    return await this.authService.resetPassword(resetPasswordDto);
   }
 
   @Public()
