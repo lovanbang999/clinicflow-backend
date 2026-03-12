@@ -569,8 +569,17 @@ export class UsersService {
 
     if (!isPasswordValid) {
       throw new ApiException(
-        MessageCodes.INVALID_CREDENTIALS, // Fixed: AUTH_INVALID_CREDENTIALS -> INVALID_CREDENTIALS
+        MessageCodes.INVALID_CREDENTIALS,
         'Current password is incorrect',
+        400,
+        'Password change failed',
+      );
+    }
+
+    if (newPassword === currentPassword) {
+      throw new ApiException(
+        MessageCodes.USER_PASSWORD_SAME_AS_OLD,
+        'New password must be different from current password',
         400,
         'Password change failed',
       );
