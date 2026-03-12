@@ -220,7 +220,7 @@ export class AuthService {
       }),
       this.prisma.user.update({
         where: { id: user.id },
-        data: { isActive: true },
+        data: { isActive: true, isVerified: true },
       }),
     ]);
 
@@ -473,10 +473,19 @@ export class AuthService {
     }
 
     // Check if email is verified
-    if (!user.isActive) {
+    if (!user.isVerified) {
       throw new ApiException(
         MessageCodes.ACCOUNT_NOT_VERIFIED,
         'Please verify your email first',
+        401,
+        'Login failed',
+      );
+    }
+
+    if (!user.isActive) {
+      throw new ApiException(
+        MessageCodes.ACCOUNT_INACTIVE,
+        'Account is inactive',
         401,
         'Login failed',
       );

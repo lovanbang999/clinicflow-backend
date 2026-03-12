@@ -104,7 +104,7 @@ export class UsersService {
     const { role, isActive, search, page = 1, limit = 10 } = filterDto;
 
     // Build where clause
-    const where: Prisma.UserWhereInput = {};
+    const where: Prisma.UserWhereInput = { deletedAt: null };
 
     if (role) {
       where.role = role;
@@ -304,8 +304,8 @@ export class UsersService {
    * Find one user by ID
    */
   async findOne(id: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
+    const user = await this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
       select: {
         id: true,
         email: true,
@@ -603,11 +603,11 @@ export class UsersService {
   }
 
   /**
-   * Delete user (soft delete by setting isActive to false)
+   * Delete user (soft delete: sets deletedAt timestamp + deactivates account)
    */
   async remove(id: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
+    const user = await this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
     });
 
     if (!user) {
@@ -619,16 +619,20 @@ export class UsersService {
       );
     }
 
-    // Soft delete by setting isActive to false
+    // Soft delete: stamp deletedAt and deactivate
     const deletedUser = await this.prisma.user.update({
       where: { id },
-      data: { isActive: false },
+      data: {
+        deletedAt: new Date(),
+        isActive: false,
+      },
       select: {
         id: true,
         email: true,
         fullName: true,
         role: true,
         isActive: true,
+        deletedAt: true,
       },
     });
 
@@ -646,10 +650,11 @@ export class UsersService {
   async getStatistics() {
     const [totalUsers, activeUsers, usersByRole, doctorProfileCount] =
       await Promise.all([
-        this.prisma.user.count(),
-        this.prisma.user.count({ where: { isActive: true } }),
+        this.prisma.user.count({ where: { deletedAt: null } }),
+        this.prisma.user.count({ where: { isActive: true, deletedAt: null } }),
         this.prisma.user.groupBy({
           by: ['role'],
+          where: { deletedAt: null },
           _count: true,
         }),
         this.prisma.doctorProfile.count(),
