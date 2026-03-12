@@ -37,9 +37,7 @@ import { UserRole } from '@prisma/client';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  // ============================================
   // PUBLIC ENDPOINTS
-  // ============================================
 
   @Get('public/doctors')
   @Public()
@@ -89,9 +87,7 @@ export class UsersController {
     return this.usersService.findPublicDoctor(id);
   }
 
-  // ============================================
   // AUTHENTICATED ENDPOINTS
-  // ============================================
 
   @Post()
   @Roles(UserRole.ADMIN)

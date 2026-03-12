@@ -418,29 +418,52 @@ export class UsersService {
     const updateData: Prisma.UserUpdateInput = {};
 
     // Copy allowed fields
-    if (updateUserDto.email !== undefined)
+    if (
+      updateUserDto.email !== undefined &&
+      updateUserDto.email !== null &&
+      updateUserDto.email !== ''
+    )
       updateData.email = updateUserDto.email;
-    if (updateUserDto.fullName !== undefined)
+    if (
+      updateUserDto.fullName !== undefined &&
+      updateUserDto.fullName !== null &&
+      updateUserDto.fullName !== ''
+    )
       updateData.fullName = updateUserDto.fullName;
-    if (updateUserDto.phone !== undefined)
+    if (
+      updateUserDto.phone !== undefined &&
+      updateUserDto.phone !== null &&
+      updateUserDto.phone !== ''
+    )
       updateData.phone = updateUserDto.phone;
-    if (updateUserDto.avatar !== undefined)
-      updateData.avatar = updateUserDto.avatar;
-    if (updateUserDto.gender !== undefined)
+    if (updateUserDto.gender !== undefined && updateUserDto.gender !== null)
       updateData.gender = updateUserDto.gender;
-    if (updateUserDto.address !== undefined)
+    if (
+      updateUserDto.address !== undefined &&
+      updateUserDto.address !== null &&
+      updateUserDto.address !== ''
+    )
       updateData.address = updateUserDto.address;
-    if (updateUserDto.role !== undefined) updateData.role = updateUserDto.role;
-    if (updateUserDto.isActive !== undefined)
+    if (updateUserDto.role !== undefined && updateUserDto.role !== null)
+      updateData.role = updateUserDto.role;
+    if (updateUserDto.isActive !== undefined && updateUserDto.isActive !== null)
       updateData.isActive = updateUserDto.isActive;
 
     // Hash password if provided
-    if (updateUserDto.password) {
+    if (
+      updateUserDto.password !== undefined &&
+      updateUserDto.password !== null &&
+      updateUserDto.password !== ''
+    ) {
       updateData.password = await bcrypt.hash(updateUserDto.password, 10);
     }
 
     // Convert dateOfBirth to Date if provided
-    if (updateUserDto.dateOfBirth) {
+    if (
+      updateUserDto.dateOfBirth !== undefined &&
+      updateUserDto.dateOfBirth !== null &&
+      updateUserDto.dateOfBirth !== ''
+    ) {
       updateData.dateOfBirth = new Date(updateUserDto.dateOfBirth);
     }
 
@@ -480,6 +503,41 @@ export class UsersService {
       'User updated successfully',
       200,
     );
+  }
+
+  /**
+   * Update user avatar
+   */
+  async updateAvatar(id: string, avatarUrl: string) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+
+    if (!user) {
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'User not found',
+        404,
+        'Avatar update failed',
+      );
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id },
+      data: { avatar: avatarUrl },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        phone: true,
+        avatar: true,
+        dateOfBirth: true,
+        gender: true,
+        address: true,
+        role: true,
+        isActive: true,
+      },
+    });
+
+    return updatedUser;
   }
 
   /**
