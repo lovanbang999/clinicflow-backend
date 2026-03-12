@@ -3,7 +3,7 @@ import {
   IsEmail,
   IsString,
   IsEnum,
-  IsOptional,
+  ValidateIf,
   IsBoolean,
   IsDateString,
   MaxLength,
@@ -18,7 +18,7 @@ export class UpdateUserDto {
     example: 'john.doe@example.com',
     required: false,
   })
-  @IsOptional()
+  @ValidateIf((o, v) => v !== undefined && v !== null && v !== '')
   @IsEmail({}, { message: 'Invalid email format' })
   email?: string;
 
@@ -27,7 +27,7 @@ export class UpdateUserDto {
     example: 'John Doe',
     required: false,
   })
-  @IsOptional()
+  @ValidateIf((o, v) => v !== undefined && v !== null && v !== '')
   @IsString()
   @MaxLength(100)
   fullName?: string;
@@ -37,7 +37,7 @@ export class UpdateUserDto {
     example: '0912345678',
     required: false,
   })
-  @IsOptional()
+  @ValidateIf((o, v) => v !== undefined && v !== null && v !== '')
   @IsString()
   @Matches(/^(\+84|0)[0-9]{9,10}$/, {
     message: 'Invalid Vietnamese phone number format',
@@ -45,19 +45,11 @@ export class UpdateUserDto {
   phone?: string;
 
   @ApiProperty({
-    description: 'Avatar URL',
-    required: false,
-  })
-  @IsOptional()
-  @IsString()
-  avatar?: string;
-
-  @ApiProperty({
     description: 'Date of birth (YYYY-MM-DD)',
     example: '1990-05-15',
     required: false,
   })
-  @IsOptional()
+  @ValidateIf((o, v) => v !== undefined && v !== null && v !== '')
   @IsDateString({}, { message: 'Invalid date format. Use YYYY-MM-DD' })
   dateOfBirth?: string;
 
@@ -67,7 +59,7 @@ export class UpdateUserDto {
     example: Gender.MALE,
     required: false,
   })
-  @IsOptional()
+  @ValidateIf((o, v) => v !== undefined && v !== null && v !== '')
   @IsEnum(Gender, { message: 'Invalid gender value' })
   gender?: Gender;
 
@@ -76,7 +68,7 @@ export class UpdateUserDto {
     example: '123 Main St, District 1, HCMC',
     required: false,
   })
-  @IsOptional()
+  @ValidateIf((o, v) => v !== undefined && v !== null && v !== '')
   @IsString()
   @MaxLength(500)
   address?: string;
@@ -86,7 +78,7 @@ export class UpdateUserDto {
     enum: UserRole,
     required: false,
   })
-  @IsOptional()
+  @ValidateIf((o, v) => v !== undefined && v !== null && v !== '')
   @IsEnum(UserRole)
   role?: UserRole;
 
@@ -95,7 +87,7 @@ export class UpdateUserDto {
     example: true,
     required: false,
   })
-  @IsOptional()
+  @ValidateIf((o, v) => v !== undefined && v !== null && v !== '')
   @IsBoolean()
   isActive?: boolean;
 
@@ -105,7 +97,7 @@ export class UpdateUserDto {
     required: false,
     minLength: 6,
   })
-  @IsOptional()
+  @ValidateIf((o, v) => v !== undefined && v !== null && v !== '')
   @IsString()
   @MinLength(6, { message: 'Password must be at least 6 characters' })
   password?: string;
