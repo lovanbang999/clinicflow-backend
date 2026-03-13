@@ -1,10 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { FilterScheduleDto } from './dto/filter-schedule.dto';
 import { Prisma } from '@prisma/client';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
+import { MessageCodes } from '../../../common/constants/message-codes.const';
+import { ApiException } from '../../../common/exceptions/api.exception';
 
 @Injectable()
 export class AdminSchedulesService {
@@ -53,7 +55,7 @@ export class AdminSchedulesService {
         canceledToday: canceledBookings,
         avgWaitTime: Math.round(queuedBookings._avg.estimatedWaitMinutes || 0),
       },
-      'ADMIN.SCHEDULES.STATISTICS',
+      MessageCodes.SCHEDULE_STATISTICS_RETRIEVED,
       'Schedule statistics retrieved successfully',
       200,
     );
@@ -104,13 +106,13 @@ export class AdminSchedulesService {
           total: slots.length,
         },
       },
-      'ADMIN.SCHEDULES.LIST',
+      MessageCodes.SCHEDULE_LIST_RETRIEVED,
       'Schedules retrieved successfully',
       200,
     );
   }
 
-  async findOne(id: string) {
+  private async findById(id: string) {
     const slot = await this.prisma.doctorScheduleSlot.findUnique({
       where: { id },
       include: {
@@ -121,12 +123,23 @@ export class AdminSchedulesService {
     });
 
     if (!slot) {
-      throw new NotFoundException('Schedule slot not found');
+      throw new ApiException(
+        MessageCodes.SCHEDULE_NOT_FOUND,
+        'Schedule slot not found',
+        404,
+        'Schedule lookup failed',
+      );
     }
+
+    return slot;
+  }
+
+  async findOne(id: string) {
+    const slot = await this.findById(id);
 
     return ResponseHelper.success(
       slot,
-      'ADMIN.SCHEDULES.DETAIL',
+      MessageCodes.SCHEDULE_RETRIEVED,
       'Schedule slot retrieved successfully',
       200,
     );
@@ -137,7 +150,12 @@ export class AdminSchedulesService {
       where: { id: createDto.doctorId, role: 'DOCTOR' },
     });
     if (!doctor) {
-      throw new NotFoundException('Doctor not found');
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'Doctor not found',
+        404,
+        'Schedule creation failed',
+      );
     }
 
     const newSlot = await this.prisma.doctorScheduleSlot.create({
@@ -149,14 +167,14 @@ export class AdminSchedulesService {
 
     return ResponseHelper.success(
       newSlot,
-      'ADMIN.SCHEDULES.CREATE',
+      MessageCodes.SCHEDULE_CREATED,
       'Schedule slot created successfully',
       201,
     );
   }
 
   async update(id: string, updateDto: UpdateScheduleDto) {
-    await this.findOne(id); // Check exists
+    await this.findById(id); // Check exists
 
     // Format date string to Date object if updating
     const updateData: Prisma.DoctorScheduleSlotUpdateInput = { ...updateDto };
@@ -171,16 +189,15 @@ export class AdminSchedulesService {
 
     return ResponseHelper.success(
       updatedSlot,
-      'ADMIN.SCHEDULES.UPDATE',
+      MessageCodes.SCHEDULE_UPDATED,
       'Schedule slot updated successfully',
       200,
     );
   }
 
   async remove(id: string) {
-    await this.findOne(id);
-    // Soft delete mechanism by marking inactive, or hard delete. Let's hard delete for simplicity or soft delete if required.
-    // I will soft delete:
+    await this.findById(id);
+
     const deletedSlot = await this.prisma.doctorScheduleSlot.update({
       where: { id },
       data: { isActive: false },
@@ -188,14 +205,14 @@ export class AdminSchedulesService {
 
     return ResponseHelper.success(
       deletedSlot,
-      'ADMIN.SCHEDULES.DELETE',
+      MessageCodes.SCHEDULE_DELETED,
       'Schedule slot deleted successfully',
       200,
     );
   }
 
   async restore(id: string) {
-    await this.findOne(id);
+    await this.findById(id);
     const restoredSlot = await this.prisma.doctorScheduleSlot.update({
       where: { id },
       data: { isActive: true },
@@ -203,7 +220,7 @@ export class AdminSchedulesService {
 
     return ResponseHelper.success(
       restoredSlot,
-      'ADMIN.SCHEDULES.RESTORE',
+      MessageCodes.SCHEDULE_RESTORED,
       'Schedule slot restored successfully',
       200,
     );
