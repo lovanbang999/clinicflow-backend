@@ -60,6 +60,7 @@ async function bootstrap() {
     .addTag('admin - doctors', 'Admin doctors')
     .addTag('admin - services', 'Admin services')
     .addTag('admin - schedules', 'Admin schedules')
+    .addTag('admin - patients', 'Admin patients')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
