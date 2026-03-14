@@ -294,7 +294,7 @@ model PatientProfile {
   id     String @id @default(uuid())
   userId String @unique
 
-  bloodType String?  // "A+", "B-", "O+", "AB+"
+  bloodType String?  // "A+", "B-", "O+", "AB+, "unknown"
   heightCm  Decimal? @db.Decimal(5, 1)
   weightKg  Decimal? @db.Decimal(5, 1)
 

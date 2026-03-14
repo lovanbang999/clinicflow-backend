@@ -22,12 +22,20 @@ export class AdminPatientsService {
       gender,
       dateOfBirth,
       address,
+      bloodType,
       ...profileData
     } = dto;
 
+    const normalizedPhone = phone?.trim() || null;
+
+    const queryOr: any[] = [{ email }];
+    if (normalizedPhone) {
+      queryOr.push({ phone: normalizedPhone });
+    }
+
     const existingUser = await this.prisma.user.findFirst({
       where: {
-        OR: [{ email }, { phone: phone || undefined }],
+        OR: queryOr,
       },
     });
 
@@ -47,10 +55,10 @@ export class AdminPatientsService {
         data: {
           email,
           fullName,
-          phone,
+          phone: normalizedPhone,
           gender,
-          dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-          address,
+          dateOfBirth: dateOfBirth?.trim() ? new Date(dateOfBirth) : null,
+          address: address?.trim() || null,
           password: hashedPassword,
           role: UserRole.PATIENT,
           isActive: true,
@@ -61,14 +69,15 @@ export class AdminPatientsService {
       const profile = await tx.patientProfile.create({
         data: {
           userId: user.id,
-          insuranceNumber: profileData.insuranceNumber,
-          insuranceProvider: profileData.insuranceProvider,
-          insuranceExpiry: profileData.insuranceExpiry
+          bloodType: bloodType?.trim() || null,
+          insuranceNumber: profileData.insuranceNumber?.trim() || null,
+          insuranceProvider: profileData.insuranceProvider?.trim() || null,
+          insuranceExpiry: profileData.insuranceExpiry?.trim()
             ? new Date(profileData.insuranceExpiry)
             : null,
-          allergies: profileData.allergies,
-          chronicConditions: profileData.chronicConditions,
-          familyHistory: profileData.familyHistory,
+          allergies: profileData.allergies?.trim() || null,
+          chronicConditions: profileData.chronicConditions?.trim() || null,
+          familyHistory: profileData.familyHistory?.trim() || null,
         },
       });
 
@@ -397,6 +406,7 @@ export class AdminPatientsService {
       gender,
       dateOfBirth,
       address,
+      bloodType,
       ...profileData
     } = dto;
 
@@ -406,24 +416,49 @@ export class AdminPatientsService {
         data: {
           email,
           fullName,
-          phone,
+          phone: phone !== undefined ? phone?.trim() || null : undefined,
           gender,
-          dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
-          address,
+          dateOfBirth:
+            dateOfBirth !== undefined
+              ? dateOfBirth?.trim()
+                ? new Date(dateOfBirth)
+                : null
+              : undefined,
+          address: address !== undefined ? address?.trim() || null : undefined,
         },
       });
 
       const updatedProfile = await tx.patientProfile.update({
         where: { userId: id },
         data: {
-          insuranceNumber: profileData.insuranceNumber,
-          insuranceProvider: profileData.insuranceProvider,
-          insuranceExpiry: profileData.insuranceExpiry
-            ? new Date(profileData.insuranceExpiry)
-            : undefined,
-          allergies: profileData.allergies,
-          chronicConditions: profileData.chronicConditions,
-          familyHistory: profileData.familyHistory,
+          bloodType:
+            bloodType !== undefined ? bloodType?.trim() || null : undefined,
+          insuranceNumber:
+            profileData.insuranceNumber !== undefined
+              ? profileData.insuranceNumber?.trim() || null
+              : undefined,
+          insuranceProvider:
+            profileData.insuranceProvider !== undefined
+              ? profileData.insuranceProvider?.trim() || null
+              : undefined,
+          insuranceExpiry:
+            profileData.insuranceExpiry !== undefined
+              ? profileData.insuranceExpiry?.trim()
+                ? new Date(profileData.insuranceExpiry)
+                : null
+              : undefined,
+          allergies:
+            profileData.allergies !== undefined
+              ? profileData.allergies?.trim() || null
+              : undefined,
+          chronicConditions:
+            profileData.chronicConditions !== undefined
+              ? profileData.chronicConditions?.trim() || null
+              : undefined,
+          familyHistory:
+            profileData.familyHistory !== undefined
+              ? profileData.familyHistory?.trim() || null
+              : undefined,
         },
       });
 
