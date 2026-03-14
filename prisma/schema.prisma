@@ -206,7 +206,8 @@ model DoctorProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  services DoctorService[] // Services this doctor can provide
 
   @@index([userId])
   @@map("doctor_profiles")
@@ -341,12 +342,30 @@ model Service {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  bookings     Booking[]
-  invoiceItems InvoiceItem[]
+  bookings      Booking[]
+  invoiceItems  InvoiceItem[]
+  doctorServices DoctorService[] // Doctors who can provide this service
 
   @@index([isActive])
   @@index([category])
   @@map("services")
+}
+
+// Join table: Doctor ↔ Service (many-to-many)
+model DoctorService {
+  id              String @id @default(uuid())
+  doctorProfileId String
+  serviceId       String
+
+  createdAt DateTime @default(now())
+
+  doctorProfile DoctorProfile @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
+  service       Service       @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorProfileId, serviceId])
+  @@index([doctorProfileId])
+  @@index([serviceId])
+  @@map("doctor_services")
 }
 
 model Booking {
