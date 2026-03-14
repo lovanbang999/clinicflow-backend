@@ -8,6 +8,7 @@ import {
   Matches,
   IsNotEmpty,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { Gender } from '@prisma/client';
 
@@ -24,9 +25,12 @@ export class AdminCreatePatientDto {
   fullName: string;
 
   @ApiProperty({ example: '+84912345678', required: false })
-  @IsOptional()
+  @ValidateIf(
+    (o: AdminCreatePatientDto) =>
+      o.phone !== undefined && o.phone !== null && o.phone !== '',
+  )
   @IsString()
-  @Matches(/^\+?[1-9]\d{1,14}$/)
+  @Matches(/^\+?[0-9]{9,15}$/)
   phone?: string;
 
   @ApiProperty({ enum: Gender, example: Gender.MALE, required: false })
@@ -35,7 +39,12 @@ export class AdminCreatePatientDto {
   gender?: Gender;
 
   @ApiProperty({ example: '1990-01-01', required: false })
-  @IsOptional()
+  @ValidateIf(
+    (o: AdminCreatePatientDto) =>
+      o.dateOfBirth !== undefined &&
+      o.dateOfBirth !== null &&
+      o.dateOfBirth !== '',
+  )
   @IsDateString()
   dateOfBirth?: string;
 
@@ -43,6 +52,11 @@ export class AdminCreatePatientDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @ApiProperty({ example: 'O+', required: false })
+  @IsOptional()
+  @IsString()
+  bloodType?: string;
 
   // Patient Profile Specifics
   @ApiProperty({ example: 'HI12345678', required: false })
@@ -56,7 +70,12 @@ export class AdminCreatePatientDto {
   insuranceProvider?: string;
 
   @ApiProperty({ example: '2025-12-31', required: false })
-  @IsOptional()
+  @ValidateIf(
+    (o: AdminCreatePatientDto) =>
+      o.insuranceExpiry !== undefined &&
+      o.insuranceExpiry !== null &&
+      o.insuranceExpiry !== '',
+  )
   @IsDateString()
   insuranceExpiry?: string;
 

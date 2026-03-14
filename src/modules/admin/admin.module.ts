@@ -11,7 +11,7 @@ import { AdminSchedulesService } from './schedules/admin-schedules.service';
 import { AdminSchedulesController } from './schedules/admin-schedules.controller';
 import { AdminUsersController } from './users/admin-users.controller';
 
-import { AdminPatientsModule } from './patients/patients.module';
+import { AdminPatientsModule } from './patients/admin-patients.module';
 
 @Module({
   imports: [PrismaModule, UsersModule, AdminPatientsModule],

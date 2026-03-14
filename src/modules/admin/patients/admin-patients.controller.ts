@@ -18,7 +18,7 @@ import {
   ApiQuery,
   ApiResponse,
 } from '@nestjs/swagger';
-import { AdminPatientsService } from './patients.service';
+import { AdminPatientsService } from './admin-patients.service';
 import { AdminCreatePatientDto } from './dto/create-patient.dto';
 import { AdminUpdatePatientDto } from './dto/update-patient.dto';
 import { PatientSearchQueryDto } from './dto/patient-query.dto';
