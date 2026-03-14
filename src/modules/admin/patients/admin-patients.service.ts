@@ -428,37 +428,43 @@ export class AdminPatientsService {
         },
       });
 
-      const updatedProfile = await tx.patientProfile.update({
+      const profileDataToSave = {
+        bloodType:
+          bloodType !== undefined ? bloodType?.trim() || null : undefined,
+        insuranceNumber:
+          profileData.insuranceNumber !== undefined
+            ? profileData.insuranceNumber?.trim() || null
+            : undefined,
+        insuranceProvider:
+          profileData.insuranceProvider !== undefined
+            ? profileData.insuranceProvider?.trim() || null
+            : undefined,
+        insuranceExpiry:
+          profileData.insuranceExpiry !== undefined
+            ? profileData.insuranceExpiry?.trim()
+              ? new Date(profileData.insuranceExpiry)
+              : null
+            : undefined,
+        allergies:
+          profileData.allergies !== undefined
+            ? profileData.allergies?.trim() || null
+            : undefined,
+        chronicConditions:
+          profileData.chronicConditions !== undefined
+            ? profileData.chronicConditions?.trim() || null
+            : undefined,
+        familyHistory:
+          profileData.familyHistory !== undefined
+            ? profileData.familyHistory?.trim() || null
+            : undefined,
+      };
+
+      const updatedProfile = await tx.patientProfile.upsert({
         where: { userId: id },
-        data: {
-          bloodType:
-            bloodType !== undefined ? bloodType?.trim() || null : undefined,
-          insuranceNumber:
-            profileData.insuranceNumber !== undefined
-              ? profileData.insuranceNumber?.trim() || null
-              : undefined,
-          insuranceProvider:
-            profileData.insuranceProvider !== undefined
-              ? profileData.insuranceProvider?.trim() || null
-              : undefined,
-          insuranceExpiry:
-            profileData.insuranceExpiry !== undefined
-              ? profileData.insuranceExpiry?.trim()
-                ? new Date(profileData.insuranceExpiry)
-                : null
-              : undefined,
-          allergies:
-            profileData.allergies !== undefined
-              ? profileData.allergies?.trim() || null
-              : undefined,
-          chronicConditions:
-            profileData.chronicConditions !== undefined
-              ? profileData.chronicConditions?.trim() || null
-              : undefined,
-          familyHistory:
-            profileData.familyHistory !== undefined
-              ? profileData.familyHistory?.trim() || null
-              : undefined,
+        update: profileDataToSave,
+        create: {
+          userId: id,
+          ...profileDataToSave,
         },
       });
 
