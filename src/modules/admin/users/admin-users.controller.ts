@@ -167,19 +167,23 @@ export class AdminUsersController {
 
   /**
    * DELETE /admin/users/:id
-   * Soft-delete a user (sets isActive = false permanently)
+   * Soft-delete a user (stamps deletedAt, sets isActive = false)
    */
   @Delete('users/:id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Delete a user (ADMIN only)',
+    summary: 'Soft-delete a user (ADMIN only)',
     description:
-      'Soft-deletes the user by setting isActive to false. ' +
-      'The record is retained in the database for audit purposes.',
+      'Soft-deletes the user by stamping deletedAt with the current timestamp and setting isActive to false. ' +
+      'The record is fully retained in the database for audit purposes and will no longer appear in any user listing. ' +
+      'This action cannot be undone from the API — contact a database admin to restore.',
   })
   @ApiParam({ name: 'id', description: 'User UUID' })
-  @ApiResponse({ status: 200, description: 'User deleted successfully' })
-  @ApiResponse({ status: 404, description: 'User not found' })
+  @ApiResponse({ status: 200, description: 'User soft-deleted successfully' })
+  @ApiResponse({
+    status: 404,
+    description: 'User not found or already deleted',
+  })
   @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required' })
   deleteUser(@Param('id') id: string) {
     return this.usersService.remove(id);

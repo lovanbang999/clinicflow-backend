@@ -37,9 +37,7 @@ import { UserRole } from '@prisma/client';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  // ============================================
   // PUBLIC ENDPOINTS
-  // ============================================
 
   @Get('public/doctors')
   @Public()
@@ -48,9 +46,10 @@ export class UsersController {
     description: 'Retrieve list of active doctors for public viewing',
   })
   @ApiQuery({
-    name: 'specialty',
+    name: 'serviceId',
     required: false,
-    description: 'Filter by specialty',
+    description:
+      'Filter by service ID to find doctors who provide that service',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 100 })
@@ -59,12 +58,12 @@ export class UsersController {
     description: 'Doctors retrieved successfully',
   })
   getPublicDoctors(
-    @Query('specialty') specialty?: string,
+    @Query('serviceId') serviceId?: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
     return this.usersService.findPublicDoctors({
-      specialty,
+      serviceId,
       page: page || 1,
       limit: limit || 100,
     });
@@ -89,9 +88,7 @@ export class UsersController {
     return this.usersService.findPublicDoctor(id);
   }
 
-  // ============================================
   // AUTHENTICATED ENDPOINTS
-  // ============================================
 
   @Post()
   @Roles(UserRole.ADMIN)

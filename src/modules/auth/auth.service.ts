@@ -9,6 +9,9 @@ import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UserRole, VerificationType } from '@prisma/client';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
@@ -217,7 +220,7 @@ export class AuthService {
       }),
       this.prisma.user.update({
         where: { id: user.id },
-        data: { isActive: true },
+        data: { isActive: true, isVerified: true },
       }),
     ]);
 
@@ -288,6 +291,168 @@ export class AuthService {
   }
 
   /**
+   * Request password reset OTP
+   */
+  async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
+    const { email } = forgotPasswordDto;
+
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      // Don't throw error to prevent email enumeration, just return success
+      return ResponseHelper.success(
+        { email },
+        'AUTH.FORGOT_PASSWORD.SUCCESS',
+        'If an account exists, a password reset OTP has been sent.',
+        200,
+      );
+    }
+
+    // Generate password reset OTP code using the correct VerificationType
+    const otpCode = await this.createVerificationCode(
+      user.id,
+      VerificationType.PASSWORD_RESET,
+    );
+
+    await this.mailService.sendPasswordResetEmail(
+      email,
+      user.fullName,
+      otpCode,
+    );
+
+    return ResponseHelper.success(
+      { email },
+      'AUTH.FORGOT_PASSWORD.SUCCESS',
+      'Password reset instructions sent successfully',
+      200,
+    );
+  }
+
+  /**
+   * Verify the password-reset OTP (Step 2 of forgot-password flow)
+   * Does NOT mark the code as used — that happens in resetPassword().
+   */
+  async verifyResetOtp(dto: VerifyOtpDto) {
+    const { email, code } = dto;
+
+    const user = await this.prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'User not found',
+        404,
+        'OTP verification failed',
+      );
+    }
+
+    const verificationCode = await this.prisma.verificationCode.findFirst({
+      where: {
+        userId: user.id,
+        code,
+        type: VerificationType.PASSWORD_RESET,
+        isUsed: false,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!verificationCode) {
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        'Invalid OTP code',
+        400,
+        'OTP verification failed',
+      );
+    }
+
+    if (new Date() > verificationCode.expiresAt) {
+      throw new ApiException(
+        MessageCodes.OTP_EXPIRED,
+        'OTP code has expired',
+        400,
+        'OTP verification failed',
+      );
+    }
+
+    return ResponseHelper.success(
+      { email },
+      MessageCodes.VERIFY_RESET_OTP_SUCCESS,
+      'OTP verified successfully. You can now reset your password.',
+      200,
+    );
+  }
+
+  /**
+   * Reset password using verified OTP (Step 3 of forgot-password flow)
+   * Re-validates the OTP, marks it as used and updates the password atomically.
+   */
+  async resetPassword(dto: ResetPasswordDto) {
+    const { email, code, newPassword } = dto;
+
+    const user = await this.prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'User not found',
+        404,
+        'Password reset failed',
+      );
+    }
+
+    const verificationCode = await this.prisma.verificationCode.findFirst({
+      where: {
+        userId: user.id,
+        code,
+        type: VerificationType.PASSWORD_RESET,
+        isUsed: false,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!verificationCode) {
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        'Invalid OTP code',
+        400,
+        'Password reset failed',
+      );
+    }
+
+    if (new Date() > verificationCode.expiresAt) {
+      throw new ApiException(
+        MessageCodes.OTP_EXPIRED,
+        'OTP code has expired',
+        400,
+        'Password reset failed',
+      );
+    }
+
+    const hashedPassword = await this.hashPassword(newPassword);
+
+    // Mark code as used and update the password in one atomic transaction
+    await this.prisma.$transaction([
+      this.prisma.verificationCode.update({
+        where: { id: verificationCode.id },
+        data: { isUsed: true },
+      }),
+      this.prisma.user.update({
+        where: { id: user.id },
+        data: { password: hashedPassword },
+      }),
+    ]);
+
+    return ResponseHelper.success(
+      { email },
+      MessageCodes.RESET_PASSWORD_SUCCESS,
+      'Password reset successfully. You can now log in with your new password.',
+      200,
+    );
+  }
+
+  /**
    * Login user
    */
   async login(loginDto: LoginDto) {
@@ -308,10 +473,19 @@ export class AuthService {
     }
 
     // Check if email is verified
-    if (!user.isActive) {
+    if (!user.isVerified) {
       throw new ApiException(
         MessageCodes.ACCOUNT_NOT_VERIFIED,
         'Please verify your email first',
+        401,
+        'Login failed',
+      );
+    }
+
+    if (!user.isActive) {
+      throw new ApiException(
+        MessageCodes.ACCOUNT_INACTIVE,
+        'Account is inactive',
         401,
         'Login failed',
       );

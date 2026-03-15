@@ -104,7 +104,7 @@ export class UsersService {
     const { role, isActive, search, page = 1, limit = 10 } = filterDto;
 
     // Build where clause
-    const where: Prisma.UserWhereInput = {};
+    const where: Prisma.UserWhereInput = { deletedAt: null };
 
     if (role) {
       where.role = role;
@@ -173,13 +173,23 @@ export class UsersService {
 
   /**
    * Find public doctors (no auth required)
+   * Filter by serviceId to find doctors who can provide a specific service
    */
   async findPublicDoctors(filters: {
-    specialty?: string;
+    serviceId?: string;
     page?: number;
     limit?: number;
   }) {
-    const { specialty, page = 1, limit = 100 } = filters;
+    const { serviceId, page = 1, limit = 100 } = filters;
+
+    if (!serviceId) {
+      throw new ApiException(
+        MessageCodes.INVALID_QUERY,
+        'serviceId query parameter is required',
+        400,
+        'Doctor retrieval failed',
+      );
+    }
 
     // Build where clause
     const where: Prisma.UserWhereInput = {
@@ -187,11 +197,13 @@ export class UsersService {
       isActive: true, // Only active doctors
     };
 
-    // Filter by specialty if provided
-    if (specialty && specialty !== 'all') {
+    // Filter by serviceId using the DoctorService join table
+    if (serviceId && serviceId !== 'all') {
       where.doctorProfile = {
-        specialties: {
-          hasSome: [specialty],
+        services: {
+          some: {
+            serviceId,
+          },
         },
       };
     }
@@ -220,6 +232,17 @@ export class UsersService {
               bio: true,
               rating: true,
               reviewCount: true,
+              services: {
+                select: {
+                  service: {
+                    select: {
+                      id: true,
+                      name: true,
+                      category: true,
+                    },
+                  },
+                },
+              },
             },
           },
         },
@@ -304,8 +327,8 @@ export class UsersService {
    * Find one user by ID
    */
   async findOne(id: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
+    const user = await this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
       select: {
         id: true,
         email: true,
@@ -418,29 +441,52 @@ export class UsersService {
     const updateData: Prisma.UserUpdateInput = {};
 
     // Copy allowed fields
-    if (updateUserDto.email !== undefined)
+    if (
+      updateUserDto.email !== undefined &&
+      updateUserDto.email !== null &&
+      updateUserDto.email !== ''
+    )
       updateData.email = updateUserDto.email;
-    if (updateUserDto.fullName !== undefined)
+    if (
+      updateUserDto.fullName !== undefined &&
+      updateUserDto.fullName !== null &&
+      updateUserDto.fullName !== ''
+    )
       updateData.fullName = updateUserDto.fullName;
-    if (updateUserDto.phone !== undefined)
+    if (
+      updateUserDto.phone !== undefined &&
+      updateUserDto.phone !== null &&
+      updateUserDto.phone !== ''
+    )
       updateData.phone = updateUserDto.phone;
-    if (updateUserDto.avatar !== undefined)
-      updateData.avatar = updateUserDto.avatar;
-    if (updateUserDto.gender !== undefined)
+    if (updateUserDto.gender !== undefined && updateUserDto.gender !== null)
       updateData.gender = updateUserDto.gender;
-    if (updateUserDto.address !== undefined)
+    if (
+      updateUserDto.address !== undefined &&
+      updateUserDto.address !== null &&
+      updateUserDto.address !== ''
+    )
       updateData.address = updateUserDto.address;
-    if (updateUserDto.role !== undefined) updateData.role = updateUserDto.role;
-    if (updateUserDto.isActive !== undefined)
+    if (updateUserDto.role !== undefined && updateUserDto.role !== null)
+      updateData.role = updateUserDto.role;
+    if (updateUserDto.isActive !== undefined && updateUserDto.isActive !== null)
       updateData.isActive = updateUserDto.isActive;
 
     // Hash password if provided
-    if (updateUserDto.password) {
+    if (
+      updateUserDto.password !== undefined &&
+      updateUserDto.password !== null &&
+      updateUserDto.password !== ''
+    ) {
       updateData.password = await bcrypt.hash(updateUserDto.password, 10);
     }
 
     // Convert dateOfBirth to Date if provided
-    if (updateUserDto.dateOfBirth) {
+    if (
+      updateUserDto.dateOfBirth !== undefined &&
+      updateUserDto.dateOfBirth !== null &&
+      updateUserDto.dateOfBirth !== ''
+    ) {
       updateData.dateOfBirth = new Date(updateUserDto.dateOfBirth);
     }
 
@@ -483,6 +529,41 @@ export class UsersService {
   }
 
   /**
+   * Update user avatar
+   */
+  async updateAvatar(id: string, avatarUrl: string) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+
+    if (!user) {
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'User not found',
+        404,
+        'Avatar update failed',
+      );
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id },
+      data: { avatar: avatarUrl },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        phone: true,
+        avatar: true,
+        dateOfBirth: true,
+        gender: true,
+        address: true,
+        role: true,
+        isActive: true,
+      },
+    });
+
+    return updatedUser;
+  }
+
+  /**
    * Change password
    */
   async changePassword(userId: string, changePasswordDto: ChangePasswordDto) {
@@ -511,8 +592,17 @@ export class UsersService {
 
     if (!isPasswordValid) {
       throw new ApiException(
-        MessageCodes.INVALID_CREDENTIALS, // Fixed: AUTH_INVALID_CREDENTIALS -> INVALID_CREDENTIALS
+        MessageCodes.INVALID_CREDENTIALS,
         'Current password is incorrect',
+        400,
+        'Password change failed',
+      );
+    }
+
+    if (newPassword === currentPassword) {
+      throw new ApiException(
+        MessageCodes.USER_PASSWORD_SAME_AS_OLD,
+        'New password must be different from current password',
         400,
         'Password change failed',
       );
@@ -536,11 +626,11 @@ export class UsersService {
   }
 
   /**
-   * Delete user (soft delete by setting isActive to false)
+   * Delete user (soft delete: sets deletedAt timestamp + deactivates account)
    */
   async remove(id: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
+    const user = await this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
     });
 
     if (!user) {
@@ -552,16 +642,20 @@ export class UsersService {
       );
     }
 
-    // Soft delete by setting isActive to false
+    // Soft delete: stamp deletedAt and deactivate
     const deletedUser = await this.prisma.user.update({
       where: { id },
-      data: { isActive: false },
+      data: {
+        deletedAt: new Date(),
+        isActive: false,
+      },
       select: {
         id: true,
         email: true,
         fullName: true,
         role: true,
         isActive: true,
+        deletedAt: true,
       },
     });
 
@@ -579,10 +673,11 @@ export class UsersService {
   async getStatistics() {
     const [totalUsers, activeUsers, usersByRole, doctorProfileCount] =
       await Promise.all([
-        this.prisma.user.count(),
-        this.prisma.user.count({ where: { isActive: true } }),
+        this.prisma.user.count({ where: { deletedAt: null } }),
+        this.prisma.user.count({ where: { isActive: true, deletedAt: null } }),
         this.prisma.user.groupBy({
           by: ['role'],
+          where: { deletedAt: null },
           _count: true,
         }),
         this.prisma.doctorProfile.count(),

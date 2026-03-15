@@ -70,8 +70,9 @@ export class NotificationsService {
    */
   async sendBookingConfirmation(data: BookingEmailData): Promise<void> {
     try {
-      const isQueued = data.status === 'QUEUED';
+      // Note: QUEUED status is deprecated — booking flow now uses PENDING → CONFIRMED
       const isPending = data.status === 'PENDING';
+      const isQueued = false; // kept for template backward compat
 
       const html = this.bookingConfirmationTemplate({
         ...data,
@@ -80,11 +81,9 @@ export class NotificationsService {
         statusClass: this.getStatusClass(data.status),
       });
 
-      const subject = isQueued
-        ? '⏳ Your Booking is in Queue - Smart Clinic'
-        : isPending
-          ? '📅 Booking Scheduled - Smart Clinic'
-          : '✅ Booking Confirmed - Smart Clinic';
+      const subject = isPending
+        ? '📅 Booking Scheduled - Smart Clinic'
+        : '✅ Booking Confirmed - Smart Clinic';
 
       await this.mailService.sendMail(data.patientEmail, subject, html);
 
@@ -252,7 +251,6 @@ export class NotificationsService {
     const statusMap: Record<string, string> = {
       PENDING: 'pending',
       CONFIRMED: 'confirmed',
-      QUEUED: 'queued',
       CHECKED_IN: 'confirmed',
       IN_PROGRESS: 'confirmed',
       COMPLETED: 'confirmed',

@@ -15,7 +15,9 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { UploadService } from './upload.service';
+import { UsersService } from '../users/users.service';
 import { UserRole } from '@prisma/client';
+import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
@@ -27,7 +29,10 @@ import { ResponseHelper } from 'src/common/interfaces/api-response.interface';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth('JWT-auth')
 export class UploadController {
-  constructor(private readonly uploadService: UploadService) {}
+  constructor(
+    private readonly uploadService: UploadService,
+    private readonly usersService: UsersService,
+  ) {}
 
   @Post('icon')
   @Roles(UserRole.ADMIN)
@@ -125,8 +130,13 @@ export class UploadController {
     status: 401,
     description: 'Unauthorized',
   })
-  async uploadAvatar(@UploadedFile() file: Express.Multer.File) {
+  async uploadAvatar(
+    @CurrentUser('id') userId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
     const { url, publicId } = await this.uploadService.uploadAvatar(file);
+
+    await this.usersService.updateAvatar(userId, url);
 
     return ResponseHelper.success(
       { url, publicId },

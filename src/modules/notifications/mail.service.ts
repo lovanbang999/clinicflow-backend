@@ -103,6 +103,58 @@ export class MailService {
   }
 
   /**
+   * Send password reset email with OTP code
+   */
+  async sendPasswordResetEmail(
+    email: string,
+    fullName: string,
+    code: string,
+  ): Promise<void> {
+    const subject = 'Password Reset - Smart Clinic';
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+            .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+            .otp-code { background: white; border: 2px dashed #667eea; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #667eea; margin: 20px 0; border-radius: 8px; }
+            .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #888; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>🏥 Smart Clinic</h1>
+              <p>Password Reset</p>
+            </div>
+            <div class="content">
+              <h2>Hello ${fullName}! 👋</h2>
+              <p>We received a request to reset your password. Please use the verification code below to proceed:</p>
+              
+              <div class="otp-code">${code}</div>
+              
+              <p><strong>This code will expire in 15 minutes.</strong></p>
+              
+              <p>If you didn't request a password reset, please ignore this email or contact support if you have concerns.</p>
+              
+              <p>Best regards,<br>Smart Clinic Team</p>
+            </div>
+            <div class="footer">
+              <p>This is an automated email. Please do not reply.</p>
+              <p>&copy; 2025 Smart Clinic. All rights reserved.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    await this.sendMail(email, subject, html, fullName, code);
+  }
+
+  /**
    * Send welcome email after verification
    */
   async sendWelcomeEmail(email: string, fullName: string): Promise<void> {

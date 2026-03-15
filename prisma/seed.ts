@@ -30,15 +30,46 @@ async function main() {
   };
 
   // ============================================
+  // 0. CLEAR ALL DATA (fresh seed)
+  // ============================================
+  console.log('\n�️  Clearing existing data...');
+
+  // Delete in order to avoid FK constraint violations
+  await prisma.payment.deleteMany();
+  await prisma.invoiceItem.deleteMany();
+  await prisma.invoice.deleteMany();
+  await prisma.labResult.deleteMany();
+  await prisma.labOrder.deleteMany();
+  await prisma.prescriptionItem.deleteMany();
+  await prisma.prescription.deleteMany();
+  await prisma.medicalRecord.deleteMany();
+  await prisma.bookingStatusHistory.deleteMany();
+  await prisma.bookingQueue.deleteMany();
+  await prisma.booking.deleteMany();
+  await prisma.doctorService.deleteMany();
+  await prisma.doctorBreakTime.deleteMany();
+  await prisma.doctorOffDay.deleteMany();
+  await prisma.doctorScheduleSlot.deleteMany();
+  await prisma.doctorWorkingHours.deleteMany();
+  await prisma.doctorProfile.deleteMany();
+  await prisma.patientProfile.deleteMany();
+  await prisma.notification.deleteMany();
+  await prisma.auditLog.deleteMany();
+  await prisma.refreshToken.deleteMany();
+  await prisma.verificationCode.deleteMany();
+  await prisma.service.deleteMany();
+  await prisma.user.deleteMany();
+
+  console.log('  ✅ All data cleared');
+
+  // ============================================
   // 1. CREATE USERS
   // ============================================
   console.log('\n👥 Creating users...');
 
   // ADMIN
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@clinic.com' },
-    update: {},
-    create: {
+  const admin = await prisma.user.create({
+    data: {
       email: 'admin@clinic.com',
       password: await hashPassword('admin123'),
       role: UserRole.ADMIN,
@@ -48,11 +79,13 @@ async function main() {
       gender: Gender.MALE,
       address: '100 Nguyễn Huệ, Quận 1, TP.HCM',
       isActive: true,
+      isVerified: true,
     },
   });
   console.log('  ✅ Admin created:', admin.email);
 
   // DOCTORS WITH PROFILES
+  // serviceKeys: tên các service sẽ được map sau khi tạo services
   const doctorsData = [
     {
       user: {
@@ -71,6 +104,13 @@ async function main() {
         reviewCount: 120,
         bio: 'Bác sĩ có 15 năm kinh nghiệm trong lĩnh vực nội tổng quát, tận tâm với bệnh nhân',
       },
+      // Tên services (phải khớp với trường name bên dưới)
+      serviceNames: [
+        'Khám tổng quát',
+        'Xét nghiệm',
+        'Siêu âm tổng quát',
+        'Nội soi',
+      ],
     },
     {
       user: {
@@ -89,6 +129,7 @@ async function main() {
         reviewCount: 89,
         bio: 'Chuyên gia tim mạch với 12 năm kinh nghiệm, từng tu nghiệp tại Nhật Bản',
       },
+      serviceNames: ['Khám tim mạch', 'Xét nghiệm', 'Siêu âm tổng quát'],
     },
     {
       user: {
@@ -107,6 +148,7 @@ async function main() {
         reviewCount: 156,
         bio: 'Bác sĩ da liễu với chuyên môn sâu về điều trị mụn và thẩm mỹ da',
       },
+      serviceNames: ['Khám da liễu', 'Xét nghiệm'],
     },
     {
       user: {
@@ -125,6 +167,7 @@ async function main() {
         reviewCount: 95,
         bio: 'Chuyên gia răng hàm mặt, tập trung vào nha khoa thẩm mỹ và implant',
       },
+      serviceNames: ['Khám răng hàm mặt'],
     },
     {
       user: {
@@ -143,54 +186,67 @@ async function main() {
         reviewCount: 203,
         bio: 'Bác sĩ mắt giàu kinh nghiệm, chuyên về phẫu thuật khúc xạ và điều trị bệnh lý võng mạc',
       },
+      serviceNames: ['Khám mắt', 'Xét nghiệm'],
+    },
+    {
+      user: {
+        email: 'bs.nguyenvantai@clinic.com',
+        fullName: 'BS. Nguyễn Văn Tài',
+        phone: '0908111111',
+        dateOfBirth: new Date('1977-06-12'),
+        gender: Gender.MALE,
+        address: '200 Nam Kỳ Khởi Nghĩa, Quận 3, TP.HCM',
+      },
+      profile: {
+        specialties: ['Tai mũi họng'],
+        qualifications: ['Bác sĩ CK2', 'Thạc sĩ Y khoa'],
+        yearsOfExperience: 16,
+        rating: 4.8,
+        reviewCount: 175,
+        bio: 'Chuyên gia tai mũi họng với hơn 16 năm kinh nghiệm điều trị các bệnh lý tai mũi họng phức tạp',
+      },
+      serviceNames: ['Khám tai mũi họng', 'Xét nghiệm'],
+    },
+    {
+      user: {
+        email: 'bs.tranthimylinh@clinic.com',
+        fullName: 'BS. Trần Thị Mỹ Linh',
+        phone: '0908222222',
+        dateOfBirth: new Date('1983-02-28'),
+        gender: Gender.FEMALE,
+        address: '300 Cộng Hòa, Tân Bình, TP.HCM',
+      },
+      profile: {
+        specialties: ['Sản phụ khoa'],
+        qualifications: ['Bác sĩ CK1', 'Chứng chỉ Siêu âm sản khoa'],
+        yearsOfExperience: 11,
+        rating: 4.85,
+        reviewCount: 210,
+        bio: 'Bác sĩ sản phụ khoa tận tâm, có kinh nghiệm chăm sóc sức khỏe phụ nữ và theo dõi thai kỳ',
+      },
+      serviceNames: ['Khám sản phụ khoa', 'Siêu âm tổng quát', 'Xét nghiệm'],
     },
   ];
 
   const createdDoctors: User[] = [];
   for (const doctorData of doctorsData) {
-    const existingDoctor = await prisma.user.findUnique({
-      where: { email: doctorData.user.email },
+    const doctor = await prisma.user.create({
+      data: {
+        email: doctorData.user.email,
+        password: await hashPassword('doctor123'),
+        role: UserRole.DOCTOR,
+        fullName: doctorData.user.fullName,
+        phone: doctorData.user.phone,
+        dateOfBirth: doctorData.user.dateOfBirth,
+        gender: doctorData.user.gender,
+        address: doctorData.user.address,
+        isActive: true,
+        isVerified: true,
+        doctorProfile: {
+          create: doctorData.profile,
+        },
+      },
     });
-
-    let doctor: User;
-
-    if (existingDoctor) {
-      // Update existing doctor
-      doctor = await prisma.user.update({
-        where: { email: doctorData.user.email },
-        data: {
-          fullName: doctorData.user.fullName,
-          phone: doctorData.user.phone,
-          dateOfBirth: doctorData.user.dateOfBirth,
-          gender: doctorData.user.gender,
-          address: doctorData.user.address,
-          doctorProfile: {
-            upsert: {
-              create: doctorData.profile,
-              update: doctorData.profile,
-            },
-          },
-        },
-      });
-    } else {
-      // Create new doctor with profile
-      doctor = await prisma.user.create({
-        data: {
-          email: doctorData.user.email,
-          password: await hashPassword('doctor123'),
-          role: UserRole.DOCTOR,
-          fullName: doctorData.user.fullName,
-          phone: doctorData.user.phone,
-          dateOfBirth: doctorData.user.dateOfBirth,
-          gender: doctorData.user.gender,
-          address: doctorData.user.address,
-          isActive: true,
-          doctorProfile: {
-            create: doctorData.profile,
-          },
-        },
-      });
-    }
 
     createdDoctors.push(doctor);
     console.log(
@@ -199,7 +255,7 @@ async function main() {
   }
 
   // RECEPTIONISTS
-  const receptionists = [
+  const receptionistsData = [
     {
       email: 'letan.huong@clinic.com',
       fullName: 'Nguyễn Thị Hương',
@@ -218,11 +274,9 @@ async function main() {
     },
   ];
 
-  for (const receptionist of receptionists) {
-    const created = await prisma.user.upsert({
-      where: { email: receptionist.email },
-      update: {},
-      create: {
+  for (const receptionist of receptionistsData) {
+    const created = await prisma.user.create({
+      data: {
         email: receptionist.email,
         password: await hashPassword('receptionist123'),
         role: UserRole.RECEPTIONIST,
@@ -232,13 +286,14 @@ async function main() {
         gender: receptionist.gender,
         address: receptionist.address,
         isActive: true,
+        isVerified: true,
       },
     });
     console.log(`  ✅ Receptionist created: ${created.fullName}`);
   }
 
   // PATIENTS
-  const patients = [
+  const patientsData = [
     {
       email: 'patient.nam@gmail.com',
       fullName: 'Nguyễn Văn Nam',
@@ -305,11 +360,9 @@ async function main() {
     },
   ];
 
-  for (const patient of patients) {
-    const created = await prisma.user.upsert({
-      where: { email: patient.email },
-      update: {},
-      create: {
+  for (const patient of patientsData) {
+    const created = await prisma.user.create({
+      data: {
         email: patient.email,
         password: await hashPassword('patient123'),
         role: UserRole.PATIENT,
@@ -319,6 +372,7 @@ async function main() {
         gender: patient.gender,
         address: patient.address,
         isActive: true,
+        isVerified: true,
       },
     });
     console.log(`  ✅ Patient created: ${created.fullName}`);
@@ -329,10 +383,11 @@ async function main() {
   // ============================================
   console.log('\n🏥 Creating services...');
 
-  const services = [
+  const servicesData = [
     {
       name: 'Khám tổng quát',
       description: 'Khám sức khỏe định kỳ, tư vấn các vấn đề sức khỏe chung',
+      category: 'Nội khoa',
       durationMinutes: 30,
       price: 200000,
       maxSlotsPerHour: 3,
@@ -340,6 +395,7 @@ async function main() {
     {
       name: 'Khám tim mạch',
       description: 'Siêu âm tim, điện tâm đồ, tư vấn điều trị bệnh tim mạch',
+      category: 'Nội khoa',
       durationMinutes: 45,
       price: 300000,
       maxSlotsPerHour: 2,
@@ -347,6 +403,7 @@ async function main() {
     {
       name: 'Khám da liễu',
       description: 'Điều trị mụn, nám, viêm da, dị ứng da',
+      category: 'Da liễu',
       durationMinutes: 30,
       price: 250000,
       maxSlotsPerHour: 2,
@@ -354,6 +411,7 @@ async function main() {
     {
       name: 'Khám răng hàm mặt',
       description: 'Khám tổng quát, lấy cao răng, nhổ răng, trám răng',
+      category: 'Nha khoa',
       durationMinutes: 45,
       price: 350000,
       maxSlotsPerHour: 2,
@@ -361,6 +419,7 @@ async function main() {
     {
       name: 'Khám mắt',
       description: 'Đo thị lực, khám bệnh về mắt, kê đơn kính',
+      category: 'Nhãn khoa',
       durationMinutes: 30,
       price: 200000,
       maxSlotsPerHour: 3,
@@ -368,6 +427,7 @@ async function main() {
     {
       name: 'Xét nghiệm',
       description: 'Xét nghiệm máu, nước tiểu, các xét nghiệm chuyên sâu',
+      category: 'Xét nghiệm',
       durationMinutes: 15,
       price: 150000,
       maxSlotsPerHour: 4,
@@ -375,6 +435,7 @@ async function main() {
     {
       name: 'Siêu âm tổng quát',
       description: 'Siêu âm bụng, siêu âm tuyến giáp, siêu âm vú',
+      category: 'Chẩn đoán hình ảnh',
       durationMinutes: 30,
       price: 280000,
       maxSlotsPerHour: 2,
@@ -382,6 +443,7 @@ async function main() {
     {
       name: 'Nội soi',
       description: 'Nội soi dạ dày, nội soi đại tràng',
+      category: 'Nội khoa',
       durationMinutes: 60,
       price: 500000,
       maxSlotsPerHour: 1,
@@ -389,6 +451,7 @@ async function main() {
     {
       name: 'Khám tai mũi họng',
       description: 'Khám và điều trị bệnh tai mũi họng',
+      category: 'Tai mũi họng',
       durationMinutes: 30,
       price: 220000,
       maxSlotsPerHour: 2,
@@ -396,6 +459,7 @@ async function main() {
     {
       name: 'Khám sản phụ khoa',
       description: 'Khám thai, tư vấn sức khỏe phụ nữ',
+      category: 'Sản phụ khoa',
       durationMinutes: 45,
       price: 300000,
       maxSlotsPerHour: 2,
@@ -403,20 +467,68 @@ async function main() {
   ];
 
   const createdServices: Service[] = [];
-  for (const service of services) {
-    const created = await prisma.service.upsert({
-      where: { name: service.name },
-      update: {},
-      create: service,
-    });
+  for (const service of servicesData) {
+    const created = await prisma.service.create({ data: service });
     createdServices.push(created);
     console.log(
-      `  ✅ Service created: ${created.name} (${created.price.toString()}đ)`,
+      `  ✅ Service created: ${created.name} — ${created.category} (${created.price.toString()}đ)`,
     );
   }
 
+  // Build lookup map: serviceName → Service object
+  const serviceMap = new Map<string, Service>();
+  for (const s of createdServices) {
+    serviceMap.set(s.name, s);
+  }
+
   // ============================================
-  // 3. CREATE DOCTOR WORKING HOURS
+  // 3. LINK DOCTORS ↔ SERVICES (DoctorService)
+  // ============================================
+  console.log('\n🔗 Linking doctors to services...');
+
+  let doctorServiceCount = 0;
+  for (let i = 0; i < doctorsData.length; i++) {
+    const doctorData = doctorsData[i];
+    const doctor = createdDoctors[i];
+
+    // Fetch the doctorProfile id
+    const profile = await prisma.doctorProfile.findUnique({
+      where: { userId: doctor.id },
+      select: { id: true },
+    });
+
+    if (!profile) {
+      console.warn(
+        `  ⚠️  No profile found for ${doctor.fullName}, skipping...`,
+      );
+      continue;
+    }
+
+    for (const serviceName of doctorData.serviceNames) {
+      const service = serviceMap.get(serviceName);
+      if (!service) {
+        console.warn(`  ⚠️  Service "${serviceName}" not found, skipping...`);
+        continue;
+      }
+
+      await prisma.doctorService.create({
+        data: {
+          doctorProfileId: profile.id,
+          serviceId: service.id,
+        },
+      });
+      doctorServiceCount++;
+    }
+
+    console.log(
+      `  ✅ ${doctor.fullName} → [${doctorData.serviceNames.join(', ')}]`,
+    );
+  }
+
+  console.log(`  ✅ Total DoctorService records: ${doctorServiceCount}`);
+
+  // ============================================
+  // 4. CREATE DOCTOR WORKING HOURS
   // ============================================
   console.log('\n⏰ Creating doctor working hours...');
 
@@ -432,18 +544,8 @@ async function main() {
   for (const doctor of createdDoctors) {
     // Weekdays: 8:00 - 17:00
     for (const day of workingDays) {
-      await prisma.doctorWorkingHours.upsert({
-        where: {
-          doctorId_dayOfWeek: {
-            doctorId: doctor.id,
-            dayOfWeek: day,
-          },
-        },
-        update: {
-          startTime: '08:00',
-          endTime: '17:00',
-        },
-        create: {
+      await prisma.doctorWorkingHours.create({
+        data: {
           doctorId: doctor.id,
           dayOfWeek: day,
           startTime: '08:00',
@@ -454,18 +556,8 @@ async function main() {
     }
 
     // Saturday: 8:00 - 12:00 (half day)
-    await prisma.doctorWorkingHours.upsert({
-      where: {
-        doctorId_dayOfWeek: {
-          doctorId: doctor.id,
-          dayOfWeek: DayOfWeek.SATURDAY,
-        },
-      },
-      update: {
-        startTime: '08:00',
-        endTime: '12:00',
-      },
-      create: {
+    await prisma.doctorWorkingHours.create({
+      data: {
         doctorId: doctor.id,
         dayOfWeek: DayOfWeek.SATURDAY,
         startTime: '08:00',
@@ -478,7 +570,7 @@ async function main() {
   console.log(`  ✅ Created ${workingHoursCount} working hour records`);
 
   // ============================================
-  // 4. CREATE BREAK TIMES (Lunch breaks)
+  // 5. CREATE BREAK TIMES (Lunch breaks)
   // ============================================
   console.log('\n🍽️ Creating break times...');
 
@@ -502,10 +594,10 @@ async function main() {
       await prisma.doctorBreakTime.create({
         data: {
           doctorId: doctor.id,
-          date: breakDate,
+          breakDate: breakDate,
           startTime: '12:00',
           endTime: '13:00',
-          reason: 'Lunch break',
+          reason: 'Nghỉ trưa',
         },
       });
       breakTimeCount++;
@@ -522,8 +614,9 @@ async function main() {
 
   const userCount = await prisma.user.count();
   const serviceCount = await prisma.service.count();
-  const workingHoursCount2 = await prisma.doctorWorkingHours.count();
-  const breakTimeCount2 = await prisma.doctorBreakTime.count();
+  const doctorServiceTotal = await prisma.doctorService.count();
+  const workingHoursTotal = await prisma.doctorWorkingHours.count();
+  const breakTimeTotal = await prisma.doctorBreakTime.count();
   const doctorProfileCount = await prisma.doctorProfile.count();
 
   const adminCount = await prisma.user.count({
@@ -546,8 +639,9 @@ async function main() {
   console.log(`   - Patients: ${patientCount}`);
   console.log(`👨‍⚕️ Doctor Profiles: ${doctorProfileCount}`);
   console.log(`🏥 Services: ${serviceCount}`);
-  console.log(`⏰ Working Hours: ${workingHoursCount2}`);
-  console.log(`🍽️ Break Times: ${breakTimeCount2}`);
+  console.log(`🔗 Doctor-Service Links: ${doctorServiceTotal}`);
+  console.log(`⏰ Working Hours: ${workingHoursTotal}`);
+  console.log(`🍽️ Break Times: ${breakTimeTotal}`);
   console.log('==========================================');
 
   console.log('\n📝 Demo Credentials:');
@@ -556,23 +650,38 @@ async function main() {
   console.log('  admin@clinic.com / admin123');
   console.log('\nDOCTORS:');
   console.log(
-    '  bs.nguyenvana@clinic.com / doctor123 (Nội tổng quát - Male, 1975)',
+    '  bs.nguyenvana@clinic.com     / doctor123 → Khám tổng quát, Xét nghiệm, Siêu âm, Nội soi',
   );
-  console.log('  bs.lethib@clinic.com / doctor123 (Tim mạch - Female, 1980)');
-  console.log('  bs.tranthic@clinic.com / doctor123 (Da liễu - Female, 1982)');
   console.log(
-    '  bs.phamvand@clinic.com / doctor123 (Răng hàm mặt - Male, 1986)',
+    '  bs.lethib@clinic.com          / doctor123 → Khám tim mạch, Xét nghiệm, Siêu âm',
   );
-  console.log('  bs.hoangthie@clinic.com / doctor123 (Mắt - Female, 1978)');
+  console.log(
+    '  bs.tranthic@clinic.com        / doctor123 → Khám da liễu, Xét nghiệm',
+  );
+  console.log(
+    '  bs.phamvand@clinic.com        / doctor123 → Khám răng hàm mặt',
+  );
+  console.log(
+    '  bs.hoangthie@clinic.com       / doctor123 → Khám mắt, Xét nghiệm',
+  );
+  console.log(
+    '  bs.nguyenvantai@clinic.com    / doctor123 → Khám tai mũi họng, Xét nghiệm',
+  );
+  console.log(
+    '  bs.tranthimylinh@clinic.com   / doctor123 → Khám sản phụ khoa, Siêu âm, Xét nghiệm',
+  );
   console.log('\nRECEPTIONISTS:');
-  console.log('  letan.huong@clinic.com / receptionist123 (Female, 1992)');
-  console.log('  letan.lan@clinic.com / receptionist123 (Female, 1994)');
+  console.log('  letan.huong@clinic.com / receptionist123');
+  console.log('  letan.lan@clinic.com   / receptionist123');
   console.log('\nPATIENTS:');
-  console.log('  patient.nam@gmail.com / patient123 (Male, 1988)');
-  console.log('  patient.linh@gmail.com / patient123 (Female, 1995)');
-  console.log('  patient.tuan@gmail.com / patient123 (Male, 1990)');
-  console.log('  patient.mai@gmail.com / patient123 (Female, 1993)');
-  console.log('  (... và 4 bệnh nhân khác với đầy đủ thông tin)');
+  console.log('  patient.nam@gmail.com   / patient123');
+  console.log('  patient.linh@gmail.com  / patient123');
+  console.log('  patient.tuan@gmail.com  / patient123');
+  console.log('  patient.mai@gmail.com   / patient123');
+  console.log('  patient.hung@gmail.com  / patient123');
+  console.log('  patient.thu@gmail.com   / patient123');
+  console.log('  patient.dat@gmail.com   / patient123');
+  console.log('  patient.nhi@gmail.com   / patient123');
   console.log('==========================================');
 
   console.log('\n🎉 Seed completed successfully!');
