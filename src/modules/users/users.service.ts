@@ -173,7 +173,8 @@ export class UsersService {
 
   /**
    * Find public doctors (no auth required)
-   * Filter by serviceId to find doctors who can provide a specific service
+   * Returns all active doctors when no serviceId is provided.
+   * When serviceId is provided, filters doctors who can perform that service.
    */
   async findPublicDoctors(filters: {
     serviceId?: string;
@@ -182,23 +183,14 @@ export class UsersService {
   }) {
     const { serviceId, page = 1, limit = 100 } = filters;
 
-    if (!serviceId) {
-      throw new ApiException(
-        MessageCodes.INVALID_QUERY,
-        'serviceId query parameter is required',
-        400,
-        'Doctor retrieval failed',
-      );
-    }
-
     // Build where clause
     const where: Prisma.UserWhereInput = {
       role: UserRole.DOCTOR,
       isActive: true, // Only active doctors
     };
 
-    // Filter by serviceId using the DoctorService join table
-    if (serviceId && serviceId !== 'all') {
+    // Filter by serviceId using the DoctorService join table (optional)
+    if (serviceId) {
       where.doctorProfile = {
         services: {
           some: {
