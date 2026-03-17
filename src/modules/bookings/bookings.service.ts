@@ -161,6 +161,112 @@ export class BookingsService {
   }
 
   /**
+   * Create a new booking by receptionist/admin (Auto CONFIRMED)
+   */
+  async createByReceptionist(
+    createBookingDto: CreateBookingDto,
+    createdById: string,
+  ) {
+    const {
+      patientId,
+      doctorId,
+      serviceId,
+      bookingDate,
+      startTime,
+      patientNotes,
+    } = createBookingDto;
+
+    // Step 1: Validate booking
+    await this.validateBooking(createBookingDto);
+
+    // Step 2: Get service to calculate end time
+    const service = await this.prisma.service.findUnique({
+      where: { id: serviceId },
+    });
+
+    if (!service) {
+      throw new ApiException(
+        MessageCodes.SERVICE_NOT_FOUND,
+        'Service not found',
+        404,
+        'Booking creation failed',
+      );
+    }
+
+    const endTime = this.calculateEndTime(startTime, service.durationMinutes);
+
+    // Step 3: Create booking with CONFIRMED status
+    const booking = await this.prisma.$transaction(async (tx) => {
+      // Create booking
+      const newBooking = await tx.booking.create({
+        data: {
+          patientId,
+          doctorId,
+          serviceId,
+          bookingDate: new Date(bookingDate),
+          startTime,
+          endTime,
+          status: BookingStatus.CONFIRMED,
+          patientNotes,
+          bookedBy: createdById,
+        },
+        include: {
+          patient: {
+            select: {
+              id: true,
+              email: true,
+              fullName: true,
+              phone: true,
+            },
+          },
+          doctor: {
+            select: {
+              id: true,
+              email: true,
+              fullName: true,
+            },
+          },
+          service: {
+            select: {
+              id: true,
+              name: true,
+              durationMinutes: true,
+              price: true,
+            },
+          },
+        },
+      });
+
+      // Create status history
+      await tx.bookingStatusHistory.create({
+        data: {
+          bookingId: newBooking.id,
+          oldStatus: null,
+          newStatus: BookingStatus.CONFIRMED,
+          changedById: createdById,
+          reason: 'Booking created by receptionist',
+        },
+      });
+
+      return newBooking;
+    });
+
+    const message = 'Booking created and confirmed successfully';
+
+    // Send booking confirmation email (non-blocking)
+    this.sendBookingNotification(booking).catch((error) => {
+      console.error('Failed to send booking notification:', error);
+    });
+
+    return ResponseHelper.success(
+      booking,
+      MessageCodes.BOOKING_CREATED,
+      message,
+      201,
+    );
+  }
+
+  /**
    * Find all bookings with filters
    */
   async findAll(filterDto: FilterBookingDto) {

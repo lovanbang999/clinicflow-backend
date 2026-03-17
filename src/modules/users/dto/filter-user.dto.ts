@@ -41,7 +41,7 @@ export class FilterUserDto {
   isVerified?: boolean;
 
   @ApiProperty({
-    description: 'Search by name or email',
+    description: 'Search by name, email, or phone',
     required: false,
     example: 'john',
   })
