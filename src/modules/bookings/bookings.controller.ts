@@ -56,6 +56,22 @@ export class BookingsController {
     return this.bookingsService.create(createBookingDto, userId);
   }
 
+  @Post('receptionist')
+  @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Create a booking as receptionist (Auto Confirmed)',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Booking created and confirmed successfully',
+  })
+  createByReceptionist(
+    @Body() createBookingDto: CreateBookingDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.bookingsService.createByReceptionist(createBookingDto, userId);
+  }
+
   @Get()
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
   @ApiOperation({ summary: 'Get all bookings with filters' })

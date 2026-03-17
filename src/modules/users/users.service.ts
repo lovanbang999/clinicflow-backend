@@ -4,6 +4,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { FilterUserDto } from './dto/filter-user.dto';
+import { QuickCreatePatientDto } from './dto/quick-create-patient.dto';
 import { Prisma, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
@@ -98,6 +99,77 @@ export class UsersService {
   }
 
   /**
+   * Quick create or find a patient by receptionist
+   */
+  async quickCreatePatient(dto: QuickCreatePatientDto) {
+    const { fullName, phone, dateOfBirth, gender } = dto;
+
+    // Check if phone exists
+    const existingUser = await this.prisma.user.findFirst({
+      where: { phone, role: UserRole.PATIENT, deletedAt: null },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        phone: true,
+        avatar: true,
+        dateOfBirth: true,
+        gender: true,
+        address: true,
+        role: true,
+      },
+    });
+
+    if (existingUser) {
+      return ResponseHelper.success(
+        existingUser,
+        MessageCodes.USER_RETRIEVED,
+        'Patient found successfully',
+        200,
+      );
+    }
+
+    // Generate dummy email and hash phone as password
+    const email = `patient_${phone}_${Math.floor(Math.random() * 10000)}@smartclinic.local`;
+    const hashedPassword = await bcrypt.hash(phone, 10);
+
+    const user = await this.prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword,
+        fullName,
+        phone,
+        role: UserRole.PATIENT,
+        isActive: true,
+        isVerified: true,
+        ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
+        ...(gender && { gender }),
+        patientProfile: {
+          create: {},
+        },
+      },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        phone: true,
+        avatar: true,
+        dateOfBirth: true,
+        gender: true,
+        address: true,
+        role: true,
+      },
+    });
+
+    return ResponseHelper.success(
+      user,
+      MessageCodes.USER_CREATED,
+      'Patient created successfully',
+      201,
+    );
+  }
+
+  /**
    * Find all users with filters and pagination
    */
   async findAll(filterDto: FilterUserDto) {
@@ -118,6 +190,7 @@ export class UsersService {
       where.OR = [
         { fullName: { contains: search, mode: 'insensitive' } },
         { email: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
       ];
     }
 

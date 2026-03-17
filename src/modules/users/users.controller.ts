@@ -20,6 +20,7 @@ import {
 } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { QuickCreatePatientDto } from './dto/quick-create-patient.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { FilterUserDto } from './dto/filter-user.dto';
@@ -109,6 +110,25 @@ export class UsersController {
     return this.usersService.create(createUserDto);
   }
 
+  @Post('receptionist/patients/quick-create')
+  @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Quick create or find a patient (RECEPTIONIST/ADMIN only)',
+    description:
+      'Find a patient by phone or create a new minimal patient profile',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Patient created successfully',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Patient found successfully',
+  })
+  quickCreatePatient(@Body() quickCreateDto: QuickCreatePatientDto) {
+    return this.usersService.quickCreatePatient(quickCreateDto);
+  }
+
   @Get()
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
   @ApiOperation({
@@ -122,7 +142,7 @@ export class UsersController {
   @ApiQuery({
     name: 'search',
     required: false,
-    description: 'Search by name or email',
+    description: 'Search by name, email, or phone',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 10 })
