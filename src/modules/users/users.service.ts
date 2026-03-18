@@ -87,6 +87,12 @@ export class UsersService {
             reviewCount: true,
           },
         },
+        patientProfile: {
+          select: {
+            id: true,
+            patientCode: true,
+          },
+        },
       },
     });
 
@@ -145,7 +151,10 @@ export class UsersService {
         ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
         ...(gender && { gender }),
         patientProfile: {
-          create: {},
+          create: {
+            patientCode: `PT-${Date.now().toString().slice(-6)}-${phone.slice(-4)}`,
+            fullName,
+          },
         },
       },
       select: {
@@ -158,6 +167,12 @@ export class UsersService {
         gender: true,
         address: true,
         role: true,
+        patientProfile: {
+          select: {
+            id: true,
+            patientCode: true,
+          },
+        },
       },
     });
 
@@ -218,6 +233,12 @@ export class UsersService {
               bio: true,
               rating: true,
               reviewCount: true,
+            },
+          },
+          patientProfile: {
+            select: {
+              id: true,
+              patientCode: true,
             },
           },
         },
@@ -417,6 +438,12 @@ export class UsersService {
             reviewCount: true,
           },
         },
+        patientProfile: {
+          select: {
+            id: true,
+            patientCode: true,
+          },
+        },
       },
     });
 
@@ -445,6 +472,12 @@ export class UsersService {
       where: { email },
       include: {
         doctorProfile: true,
+        patientProfile: {
+          select: {
+            id: true,
+            patientCode: true,
+          },
+        },
       },
     });
   }
@@ -580,6 +613,12 @@ export class UsersService {
             bio: true,
             rating: true,
             reviewCount: true,
+          },
+        },
+        patientProfile: {
+          select: {
+            id: true,
+            patientCode: true,
           },
         },
       },

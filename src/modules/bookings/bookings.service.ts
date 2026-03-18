@@ -4,12 +4,18 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { FilterBookingDto } from './dto/filter-booking.dto';
-import { BookingStatus, UserRole, DayOfWeek, Prisma } from '@prisma/client';
+import {
+  BookingStatus,
+  BookingSource,
+  BookingPriority,
+  UserRole,
+  DayOfWeek,
+  Prisma,
+} from '@prisma/client';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 
-// Type for booking with relations
 interface BookingWithRelations {
   id: string;
   bookingDate: Date;
@@ -17,11 +23,13 @@ interface BookingWithRelations {
   endTime: string;
   status: BookingStatus;
   patientNotes: string | null;
-  patient: {
+  patientProfile: {
     id: string;
-    email: string;
     fullName: string;
     phone: string | null;
+    email: string | null;
+    isGuest: boolean;
+    patientCode: string;
   };
   doctor: {
     id: string;
@@ -36,6 +44,16 @@ interface BookingWithRelations {
   };
 }
 
+// Reusable select for patientProfile in booking includes
+const patientProfileSelect = {
+  id: true,
+  fullName: true,
+  phone: true,
+  email: true,
+  isGuest: true,
+  patientCode: true,
+};
+
 @Injectable()
 export class BookingsService {
   constructor(
@@ -44,22 +62,22 @@ export class BookingsService {
   ) {}
 
   /**
-   * Create a new booking
+   * Create a new booking (by patient online)
    */
   async create(createBookingDto: CreateBookingDto, createdById: string) {
     const {
-      patientId,
+      patientProfileId,
       doctorId,
       serviceId,
       bookingDate,
       startTime,
       patientNotes,
+      source = BookingSource.ONLINE,
+      priority = BookingPriority.NORMAL,
     } = createBookingDto;
 
-    // Step 1: Validate booking
     await this.validateBooking(createBookingDto);
 
-    // Step 2: Get service to calculate end time
     const service = await this.prisma.service.findUnique({
       where: { id: serviceId },
     });
@@ -75,9 +93,6 @@ export class BookingsService {
 
     const endTime = this.calculateEndTime(startTime, service.durationMinutes);
 
-    // Note: Slot availability check removed from create flow.
-    // BookingQueue is now managed separately during check-in.
-    // Kept for potential future validation but not used for status.
     void (await this.checkSlotAvailability(
       doctorId,
       bookingDate,
@@ -86,40 +101,27 @@ export class BookingsService {
       service.maxSlotsPerHour,
     ));
 
-    // Step 4: Create booking with PENDING status
-    // Note: Slot-full queue logic removed. BookingQueue is managed separately
-    // during check-in flow (CONFIRMED → CHECKED_IN creates queue entry)
+    const bookingCode = await this.generateBookingCode(bookingDate);
+
     const booking = await this.prisma.$transaction(async (tx) => {
-      // Create booking
       const newBooking = await tx.booking.create({
         data: {
-          patientId,
+          patientProfileId,
           doctorId,
           serviceId,
+          bookingCode,
           bookingDate: new Date(bookingDate),
           startTime,
           endTime,
           status: BookingStatus.PENDING,
+          source,
+          priority,
           patientNotes,
-          // bookedBy is set if receptionist created this booking
-          bookedBy: createdById !== patientId ? createdById : null,
+          bookedBy: null,
         },
         include: {
-          patient: {
-            select: {
-              id: true,
-              email: true,
-              fullName: true,
-              phone: true,
-            },
-          },
-          doctor: {
-            select: {
-              id: true,
-              email: true,
-              fullName: true,
-            },
-          },
+          patientProfile: { select: patientProfileSelect },
+          doctor: { select: { id: true, email: true, fullName: true } },
           service: {
             select: {
               id: true,
@@ -131,23 +133,19 @@ export class BookingsService {
         },
       });
 
-      // Create status history
       await tx.bookingStatusHistory.create({
         data: {
           bookingId: newBooking.id,
           oldStatus: null,
           newStatus: BookingStatus.PENDING,
           changedById: createdById,
-          reason: 'Booking created',
+          reason: 'Booking created online',
         },
       });
 
       return newBooking;
     });
 
-    const message = 'Booking created successfully';
-
-    // Send booking confirmation email (non-blocking)
     this.sendBookingNotification(booking).catch((error) => {
       console.error('Failed to send booking notification:', error);
     });
@@ -155,31 +153,31 @@ export class BookingsService {
     return ResponseHelper.success(
       booking,
       MessageCodes.BOOKING_CREATED,
-      message,
+      'Booking created successfully',
       201,
     );
   }
 
   /**
-   * Create a new booking by receptionist/admin (Auto CONFIRMED)
+   * Create a booking by receptionist/admin (Auto CONFIRMED, source = WALK_IN or RECEPTIONIST)
    */
   async createByReceptionist(
     createBookingDto: CreateBookingDto,
     createdById: string,
   ) {
     const {
-      patientId,
+      patientProfileId,
       doctorId,
       serviceId,
       bookingDate,
       startTime,
       patientNotes,
+      source = BookingSource.RECEPTIONIST,
+      priority = BookingPriority.NORMAL,
     } = createBookingDto;
 
-    // Step 1: Validate booking
     await this.validateBooking(createBookingDto);
 
-    // Step 2: Get service to calculate end time
     const service = await this.prisma.service.findUnique({
       where: { id: serviceId },
     });
@@ -194,38 +192,28 @@ export class BookingsService {
     }
 
     const endTime = this.calculateEndTime(startTime, service.durationMinutes);
+    const bookingCode = await this.generateBookingCode(bookingDate);
 
-    // Step 3: Create booking with CONFIRMED status
     const booking = await this.prisma.$transaction(async (tx) => {
-      // Create booking
       const newBooking = await tx.booking.create({
         data: {
-          patientId,
+          patientProfileId,
           doctorId,
           serviceId,
+          bookingCode,
           bookingDate: new Date(bookingDate),
           startTime,
           endTime,
           status: BookingStatus.CONFIRMED,
+          source,
+          priority,
           patientNotes,
           bookedBy: createdById,
+          confirmedAt: new Date(),
         },
         include: {
-          patient: {
-            select: {
-              id: true,
-              email: true,
-              fullName: true,
-              phone: true,
-            },
-          },
-          doctor: {
-            select: {
-              id: true,
-              email: true,
-              fullName: true,
-            },
-          },
+          patientProfile: { select: patientProfileSelect },
+          doctor: { select: { id: true, email: true, fullName: true } },
           service: {
             select: {
               id: true,
@@ -237,7 +225,6 @@ export class BookingsService {
         },
       });
 
-      // Create status history
       await tx.bookingStatusHistory.create({
         data: {
           bookingId: newBooking.id,
@@ -251,9 +238,6 @@ export class BookingsService {
       return newBooking;
     });
 
-    const message = 'Booking created and confirmed successfully';
-
-    // Send booking confirmation email (non-blocking)
     this.sendBookingNotification(booking).catch((error) => {
       console.error('Failed to send booking notification:', error);
     });
@@ -261,7 +245,7 @@ export class BookingsService {
     return ResponseHelper.success(
       booking,
       MessageCodes.BOOKING_CREATED,
-      message,
+      'Booking created and confirmed successfully',
       201,
     );
   }
@@ -271,7 +255,7 @@ export class BookingsService {
    */
   async findAll(filterDto: FilterBookingDto) {
     const {
-      patientId,
+      patientProfileId,
       doctorId,
       serviceId,
       status,
@@ -280,10 +264,9 @@ export class BookingsService {
       limit = 10,
     } = filterDto;
 
-    // Build where clause with proper typing
     const where: Prisma.BookingWhereInput = {};
 
-    if (patientId) where.patientId = patientId;
+    if (patientProfileId) where.patientProfileId = patientProfileId;
     if (doctorId) where.doctorId = doctorId;
     if (serviceId) where.serviceId = serviceId;
     if (status) where.status = status;
@@ -293,21 +276,8 @@ export class BookingsService {
       this.prisma.booking.findMany({
         where,
         include: {
-          patient: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true,
-              phone: true,
-            },
-          },
-          doctor: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true,
-            },
-          },
+          patientProfile: { select: patientProfileSelect },
+          doctor: { select: { id: true, fullName: true, email: true } },
           service: {
             select: {
               id: true,
@@ -348,21 +318,8 @@ export class BookingsService {
     const booking = await this.prisma.booking.findUnique({
       where: { id },
       include: {
-        patient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            phone: true,
-          },
-        },
-        doctor: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-          },
-        },
+        patientProfile: { select: { ...patientProfileSelect, userId: true } },
+        doctor: { select: { id: true, fullName: true, email: true } },
         service: {
           select: {
             id: true,
@@ -376,11 +333,7 @@ export class BookingsService {
         statusHistory: {
           include: {
             changedBy: {
-              select: {
-                id: true,
-                fullName: true,
-                role: true,
-              },
+              select: { id: true, fullName: true, role: true },
             },
           },
           orderBy: { createdAt: 'desc' },
@@ -415,7 +368,6 @@ export class BookingsService {
   ) {
     const { status, reason, doctorNotes } = updateStatusDto;
 
-    // Get booking (will throw if not found)
     const bookingResponse = await this.findOne(id);
     const booking = bookingResponse.data;
 
@@ -428,34 +380,24 @@ export class BookingsService {
       );
     }
 
-    // Validate status transition
     this.validateStatusTransition(booking.status, status);
 
-    // Update booking in transaction
+    // Build extra timestamps for key transitions
+    const extraData: Prisma.BookingUpdateInput = {};
+    if (status === BookingStatus.CONFIRMED) extraData.confirmedAt = new Date();
+    if (status === BookingStatus.CHECKED_IN) extraData.checkedInAt = new Date();
+
     const updatedBooking = await this.prisma.$transaction(async (tx) => {
-      // Update booking
       const updated = await tx.booking.update({
         where: { id },
         data: {
           status,
           doctorNotes: doctorNotes || booking.doctorNotes,
+          ...extraData,
         },
         include: {
-          patient: {
-            select: {
-              id: true,
-              email: true,
-              fullName: true,
-              phone: true,
-            },
-          },
-          doctor: {
-            select: {
-              id: true,
-              email: true,
-              fullName: true,
-            },
-          },
+          patientProfile: { select: patientProfileSelect },
+          doctor: { select: { id: true, email: true, fullName: true } },
           service: {
             select: {
               id: true,
@@ -467,7 +409,6 @@ export class BookingsService {
         },
       });
 
-      // Create status history
       await tx.bookingStatusHistory.create({
         data: {
           bookingId: id,
@@ -478,7 +419,6 @@ export class BookingsService {
         },
       });
 
-      // If cancelled or completed, check queue for promotion
       if (
         status === BookingStatus.CANCELLED ||
         status === BookingStatus.COMPLETED
@@ -494,7 +434,6 @@ export class BookingsService {
       return updated;
     });
 
-    // Send notification for cancellation (non-blocking)
     if (status === BookingStatus.CANCELLED) {
       this.sendCancellationNotification(updatedBooking).catch((error) => {
         console.error('Failed to send cancellation notification:', error);
@@ -531,7 +470,7 @@ export class BookingsService {
   }
 
   /**
-   * Delete booking (soft delete - actually just cancel)
+   * Delete booking (soft delete — effectively cancel)
    */
   async remove(id: string, userId: string) {
     const result = await this.cancel(id, userId, 'Booking deleted');
@@ -545,10 +484,10 @@ export class BookingsService {
   }
 
   /**
-   * Get my bookings (for current patient)
+   * Get my bookings (for current patient — filter by patientProfile.userId)
    */
   async getMyBookings(
-    patientId: string,
+    userId: string,
     options: {
       status?: string;
       page?: number;
@@ -557,9 +496,26 @@ export class BookingsService {
   ) {
     const { status, page = 1, limit = 10 } = options;
 
-    // Build where clause
+    // Find the PatientProfile belonging to this user
+    const profile = await this.prisma.patientProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+
+    if (!profile) {
+      return ResponseHelper.success(
+        {
+          bookings: [],
+          pagination: { total: 0, page, limit, totalPages: 0 },
+        },
+        MessageCodes.BOOKING_LIST_RETRIEVED,
+        'My bookings retrieved successfully',
+        200,
+      );
+    }
+
     const where: Prisma.BookingWhereInput = {
-      patientId,
+      patientProfileId: profile.id,
     };
 
     if (status) {
@@ -615,9 +571,34 @@ export class BookingsService {
   /**
    * Get patient dashboard statistics
    */
-  async getPatientDashboardStats(patientId: string) {
+  async getPatientDashboardStats(userId: string) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
+    // Find the PatientProfile belonging to this user
+    const profile = await this.prisma.patientProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+
+    if (!profile) {
+      return ResponseHelper.success(
+        {
+          stats: {
+            upcomingBookings: 0,
+            completedBookings: 0,
+            waitingBookings: 0,
+            totalBookings: 0,
+          },
+          nextBooking: null,
+        },
+        MessageCodes.BOOKING_LIST_RETRIEVED,
+        'Dashboard statistics retrieved successfully',
+        200,
+      );
+    }
+
+    const patientProfileId = profile.id;
 
     const [
       upcomingBookings,
@@ -625,63 +606,31 @@ export class BookingsService {
       waitingBookings,
       totalBookings,
     ] = await Promise.all([
-      // Upcoming bookings (confirmed, not yet today)
       this.prisma.booking.count({
         where: {
-          patientId,
+          patientProfileId,
           status: BookingStatus.CONFIRMED,
-          bookingDate: {
-            gte: today,
-          },
+          bookingDate: { gte: today },
         },
       }),
-      // Completed bookings
       this.prisma.booking.count({
-        where: {
-          patientId,
-          status: BookingStatus.COMPLETED,
-        },
+        where: { patientProfileId, status: BookingStatus.COMPLETED },
       }),
-      // Waiting in queue
       this.prisma.booking.count({
-        where: {
-          patientId,
-          status: {
-            in: [BookingStatus.CHECKED_IN],
-          },
-        },
+        where: { patientProfileId, status: BookingStatus.CHECKED_IN },
       }),
-      // Total bookings
-      this.prisma.booking.count({
-        where: {
-          patientId,
-        },
-      }),
+      this.prisma.booking.count({ where: { patientProfileId } }),
     ]);
 
-    // Get next upcoming booking
     const nextBooking = await this.prisma.booking.findFirst({
       where: {
-        patientId,
+        patientProfileId,
         status: BookingStatus.CONFIRMED,
-        bookingDate: {
-          gte: today,
-        },
+        bookingDate: { gte: today },
       },
       include: {
-        service: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        doctor: {
-          select: {
-            id: true,
-            fullName: true,
-            avatar: true,
-          },
-        },
+        service: { select: { id: true, name: true } },
+        doctor: { select: { id: true, fullName: true, avatar: true } },
       },
       orderBy: [{ bookingDate: 'asc' }, { startTime: 'asc' }],
     });
@@ -710,9 +659,10 @@ export class BookingsService {
    * Validate booking data
    */
   private async validateBooking(dto: CreateBookingDto) {
-    const { patientId, doctorId, serviceId, bookingDate, startTime } = dto;
+    const { patientProfileId, doctorId, serviceId, bookingDate, startTime } =
+      dto;
 
-    // 1. Check booking date is in the future
+    // 1. Check booking date is today or in the future
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const requestedDate = new Date(bookingDate);
@@ -726,22 +676,18 @@ export class BookingsService {
       );
     }
 
-    // 2. Check patient exists
-    const patient = await this.prisma.user.findUnique({
-      where: { id: patientId },
+    // 2. Check patientProfile exists
+    const patientProfile = await this.prisma.patientProfile.findUnique({
+      where: { id: patientProfileId },
     });
 
-    if (!patient) {
+    if (!patientProfile) {
       throw new ApiException(
         MessageCodes.USER_NOT_FOUND,
-        'Patient not found',
+        'Patient profile not found',
         404,
         'Booking validation failed',
       );
-    }
-
-    if (patient.role !== UserRole.PATIENT) {
-      throw new BadRequestException('User is not a patient');
     }
 
     // 3. Check doctor exists and is active
@@ -766,7 +712,7 @@ export class BookingsService {
       throw new BadRequestException('Doctor is not active');
     }
 
-    // 4. Check service exists
+    // 4. Check service exists and is active
     const service = await this.prisma.service.findUnique({
       where: { id: serviceId },
     });
@@ -783,12 +729,7 @@ export class BookingsService {
     // 5. Check doctor working hours
     const dayOfWeek = this.getDayOfWeek(new Date(bookingDate));
     const workingHours = await this.prisma.doctorWorkingHours.findUnique({
-      where: {
-        doctorId_dayOfWeek: {
-          doctorId,
-          dayOfWeek,
-        },
-      },
+      where: { doctorId_dayOfWeek: { doctorId, dayOfWeek } },
     });
 
     if (!workingHours) {
@@ -836,10 +777,10 @@ export class BookingsService {
       throw new BadRequestException('Doctor is not available on this day');
     }
 
-    // 8. Check duplicate booking (same patient, same doctor, same day)
+    // 8. Check duplicate booking (same patient profile + doctor + same day)
     const existingBooking = await this.prisma.booking.findFirst({
       where: {
-        patientId,
+        patientProfileId,
         doctorId,
         bookingDate: new Date(bookingDate),
         status: {
@@ -851,11 +792,22 @@ export class BookingsService {
     if (existingBooking) {
       throw new ApiException(
         MessageCodes.BOOKING_DUPLICATE,
-        'You already have a booking with this doctor on this date',
+        'This patient already has a booking with this doctor on this date',
         409,
         'Booking validation failed',
       );
     }
+  }
+
+  /**
+   * Generate a human-readable booking code: BK-YYYYMMDD-NNNN
+   */
+  private async generateBookingCode(bookingDate: string): Promise<string> {
+    const compact = bookingDate.replace(/-/g, '');
+    const count = await this.prisma.booking.count({
+      where: { bookingCode: { startsWith: `BK-${compact}-` } },
+    });
+    return `BK-${compact}-${String(count + 1).padStart(4, '0')}`;
   }
 
   /**
@@ -868,6 +820,7 @@ export class BookingsService {
     endTime: string,
     maxSlotsPerHour: number,
   ): Promise<boolean> {
+    void endTime; // not used for count check currently
     const confirmedBookings = await this.prisma.booking.count({
       where: {
         doctorId,
@@ -897,28 +850,6 @@ export class BookingsService {
     const endMinutes = totalMinutes % 60;
 
     return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
-  }
-
-  /**
-   * Calculate queue position
-   */
-  private async calculateQueuePosition(
-    tx: Prisma.TransactionClient,
-    doctorId: string,
-    bookingDate: string,
-    startTime: string,
-  ): Promise<number> {
-    const queueCount = await tx.bookingQueue.count({
-      where: {
-        booking: {
-          doctorId,
-          bookingDate: new Date(bookingDate),
-          startTime,
-        },
-      },
-    });
-
-    return queueCount + 1;
   }
 
   /**
@@ -962,7 +893,7 @@ export class BookingsService {
       [BookingStatus.COMPLETED]: [],
       [BookingStatus.CANCELLED]: [],
       [BookingStatus.NO_SHOW]: [],
-      [BookingStatus.QUEUED]: [], // deprecated, kept for type completeness
+      [BookingStatus.QUEUED]: [], // deprecated
     };
 
     if (!validTransitions[currentStatus]?.includes(newStatus)) {
@@ -976,8 +907,7 @@ export class BookingsService {
   }
 
   /**
-   * Handle booking completion (for queue promotion)
-   * Remove async since no await is used currently
+   * Handle booking completion (queue promotion placeholder)
    */
   private handleBookingCompletion(booking: {
     id: string;
@@ -985,25 +915,26 @@ export class BookingsService {
     bookingDate: Date;
     startTime: string;
   }): void {
-    // This will be enhanced when we integrate queue module
-    // For now, just a placeholder
     console.log(
       `Booking ${booking.id} completed/cancelled. Check queue for promotion.`,
     );
-    // TODO: Call queueService.autoPromote(booking.doctorId, booking.bookingDate, booking.startTime)
   }
 
   /**
-   * Send booking notification email
+   * Send booking notification — supports both registered and guest patients
    */
   private async sendBookingNotification(
     booking: BookingWithRelations,
   ): Promise<void> {
+    // Guest patients may not have email — skip silently if no email available
+    const email = booking.patientProfile.email;
+    if (!email) return;
+
     try {
       await this.notificationsService.sendBookingConfirmation({
         bookingId: booking.id,
-        patientName: booking.patient.fullName,
-        patientEmail: booking.patient.email,
+        patientName: booking.patientProfile.fullName,
+        patientEmail: email,
         doctorName: booking.doctor.fullName,
         serviceName: booking.service.name,
         bookingDate: this.formatDate(booking.bookingDate),
@@ -1022,16 +953,19 @@ export class BookingsService {
   }
 
   /**
-   * Send cancellation notification email
+   * Send cancellation notification — supports both registered and guest patients
    */
   private async sendCancellationNotification(
     booking: BookingWithRelations,
   ): Promise<void> {
+    const email = booking.patientProfile.email;
+    if (!email) return;
+
     try {
       await this.notificationsService.sendBookingCancellation({
         bookingId: booking.id,
-        patientName: booking.patient.fullName,
-        patientEmail: booking.patient.email,
+        patientName: booking.patientProfile.fullName,
+        patientEmail: email,
         doctorName: booking.doctor.fullName,
         serviceName: booking.service.name,
         bookingDate: this.formatDate(booking.bookingDate),

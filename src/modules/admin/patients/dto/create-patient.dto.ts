@@ -58,6 +58,11 @@ export class AdminCreatePatientDto {
   @IsString()
   bloodType?: string;
 
+  @ApiProperty({ example: '012345678912', required: false })
+  @IsOptional()
+  @IsString()
+  nationalId?: string;
+
   // Patient Profile Specifics
   @ApiProperty({ example: 'HI12345678', required: false })
   @IsOptional()

@@ -38,9 +38,9 @@ export class FilterScheduleDto {
 
   @ApiPropertyOptional({
     description: 'Filter by schedule status',
-    enum: ['scheduled', 'completed', 'canceled'],
+    enum: ['scheduled', 'blocked', 'canceled'],
   })
   @IsOptional()
   @IsString()
-  status?: 'scheduled' | 'completed' | 'canceled';
+  status?: 'scheduled' | 'blocked' | 'canceled';
 }

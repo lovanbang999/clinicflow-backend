@@ -3,7 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { FilterScheduleDto } from './dto/filter-schedule.dto';
-import { Prisma } from '@prisma/client';
+import { Prisma, ScheduleSlotStatus } from '@prisma/client';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
 import { ApiException } from '../../../common/exceptions/api.exception';
@@ -71,7 +71,7 @@ export class AdminSchedulesService {
       if (filters.status === 'canceled') {
         where.isActive = false;
       } else {
-        where.status = filters.status.toUpperCase();
+        where.status = filters.status.toUpperCase() as ScheduleSlotStatus;
         where.isActive = true;
       }
     } else if (filters.isActive !== undefined) {

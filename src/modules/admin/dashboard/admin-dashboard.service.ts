@@ -38,24 +38,19 @@ export class AdminDashboardService {
       currentMonthPatients,
       lastMonthPatients,
     ] = await Promise.all([
-      this.prisma.user.count({
-        where: { role: UserRole.PATIENT, isActive: true },
-      }),
+      // v3.0: count PatientProfile to include both registered and guest patients
+      this.prisma.patientProfile.count(),
       this.prisma.user.count({
         where: { role: UserRole.DOCTOR, isActive: true },
       }),
       this.prisma.booking.count(),
-      // New patients this month
-      this.prisma.user.count({
-        where: {
-          role: UserRole.PATIENT,
-          createdAt: { gte: startOfMonth },
-        },
+      // New patient profiles this month (registered + guest)
+      this.prisma.patientProfile.count({
+        where: { createdAt: { gte: startOfMonth } },
       }),
-      // New patients last month (for trend)
-      this.prisma.user.count({
+      // New patient profiles last month (for trend)
+      this.prisma.patientProfile.count({
         where: {
-          role: UserRole.PATIENT,
           createdAt: { gte: startOfLastMonth, lt: startOfMonth },
         },
       }),
