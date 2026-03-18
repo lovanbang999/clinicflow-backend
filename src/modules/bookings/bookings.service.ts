@@ -800,14 +800,29 @@ export class BookingsService {
   }
 
   /**
-   * Generate a human-readable booking code: BK-YYYYMMDD-NNNN
+   * Generate a human-readable booking code: BK-YYYYMMDD-NNNN (Production-ready)
    */
   private async generateBookingCode(bookingDate: string): Promise<string> {
     const compact = bookingDate.replace(/-/g, '');
-    const count = await this.prisma.booking.count({
-      where: { bookingCode: { startsWith: `BK-${compact}-` } },
+    const prefix = `BK-${compact}-`;
+
+    // Find the latest booking code for this prefix to avoid collisions after deletions
+    const lastBooking = await this.prisma.booking.findFirst({
+      where: { bookingCode: { startsWith: prefix } },
+      orderBy: { bookingCode: 'desc' },
+      select: { bookingCode: true },
     });
-    return `BK-${compact}-${String(count + 1).padStart(4, '0')}`;
+
+    let nextNumber = 1;
+    if (lastBooking) {
+      const parts = lastBooking.bookingCode.split('-');
+      const lastNumber = parseInt(parts[parts.length - 1], 10);
+      if (!isNaN(lastNumber)) {
+        nextNumber = lastNumber + 1;
+      }
+    }
+
+    return `${prefix}${String(nextNumber).padStart(4, '0')}`;
   }
 
   /**
