@@ -5,15 +5,18 @@ import {
   IsString,
   IsOptional,
   Matches,
+  IsEnum,
 } from 'class-validator';
+import { BookingSource, BookingPriority } from '@prisma/client';
 
 export class CreateBookingDto {
   @ApiProperty({
-    description: 'Patient ID',
-    example: 'uuid-patient-id',
+    description:
+      'Patient Profile ID (hỗ trợ cả bệnh nhân có tài khoản và vãng lai)',
+    example: 'uuid-patient-profile-id',
   })
-  @IsUUID('4', { message: 'Invalid patient ID format' })
-  patientId: string;
+  @IsUUID('4', { message: 'Invalid patient profile ID format' })
+  patientProfileId: string;
 
   @ApiProperty({
     description: 'Doctor ID',
@@ -45,6 +48,26 @@ export class CreateBookingDto {
     message: 'Invalid time format. Use HH:mm (24-hour)',
   })
   startTime: string;
+
+  @ApiProperty({
+    description: 'Booking source',
+    enum: BookingSource,
+    example: BookingSource.ONLINE,
+    required: false,
+  })
+  @IsOptional()
+  @IsEnum(BookingSource)
+  source?: BookingSource;
+
+  @ApiProperty({
+    description: 'Priority level',
+    enum: BookingPriority,
+    example: BookingPriority.NORMAL,
+    required: false,
+  })
+  @IsOptional()
+  @IsEnum(BookingPriority)
+  priority?: BookingPriority;
 
   @ApiProperty({
     description: 'Patient notes (optional)',

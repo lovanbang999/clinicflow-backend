@@ -581,7 +581,9 @@ export class SchedulesService {
 
     // Get patient's existing bookings for this date if patientId is provided
     const patientBookings = patientId
-      ? existingBookings.filter((booking) => booking.patientId === patientId)
+      ? existingBookings.filter(
+          (booking) => booking.patientProfileId === patientId,
+        )
       : [];
 
     for (const slot of slots) {

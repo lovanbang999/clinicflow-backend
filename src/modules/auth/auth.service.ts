@@ -142,6 +142,12 @@ export class AuthService {
         phone,
         role: UserRole.PATIENT,
         isActive: false,
+        patientProfile: {
+          create: {
+            patientCode: `PT-${Date.now().toString().slice(-6)}-${phone ? phone.slice(-4) : Math.floor(1000 + Math.random() * 9000)}`,
+            fullName,
+          },
+        },
       },
     });
 
@@ -171,6 +177,14 @@ export class AuthService {
     // Find user
     const user = await this.prisma.user.findUnique({
       where: { email },
+      include: {
+        patientProfile: {
+          select: {
+            id: true,
+            patientCode: true,
+          },
+        },
+      },
     });
 
     if (!user) {
@@ -461,6 +475,14 @@ export class AuthService {
     // Find user
     const user = await this.prisma.user.findUnique({
       where: { email },
+      include: {
+        patientProfile: {
+          select: {
+            id: true,
+            patientCode: true,
+          },
+        },
+      },
     });
 
     if (!user) {
@@ -619,6 +641,12 @@ export class AuthService {
         isActive: true,
         createdAt: true,
         updatedAt: true,
+        patientProfile: {
+          select: {
+            id: true,
+            patientCode: true,
+          },
+        },
       },
     });
 

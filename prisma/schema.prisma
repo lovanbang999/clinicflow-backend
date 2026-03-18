@@ -1,6 +1,6 @@
-// This is your Prisma schema file
-// Learn more about it in the docs: https://pris.ly/d/prisma-schema
-// SmartClinic Database Schema v2.0 — Production Ready
+// SmartClinic Database Schema v3.0 — Production Ready
+// Updated: Guest patient support, Room management, Invoice VAT/e-invoice,
+//          bookingCode, source tracking, notification retry, slot cache, and more.
 
 generator client {
   provider = "prisma-client-js"
@@ -51,8 +51,36 @@ enum BookingStatus {
   COMPLETED
   CANCELLED
   NO_SHOW
-  // QUEUED: kept for backward compatibility, deprecated - use BookingQueue table instead
+  // QUEUED: kept for backward compatibility, deprecated — use BookingQueue table instead
   QUEUED
+}
+
+// Booking source: where the booking originated
+enum BookingSource {
+  ONLINE        // Patient booked via website/app
+  WALK_IN       // Patient walked in, receptionist created booking
+  PHONE         // Receptionist created booking via phone call
+  RECEPTIONIST  // Receptionist booked on behalf (scheduled)
+}
+
+// Priority level for triage
+enum BookingPriority {
+  NORMAL
+  URGENT
+  EMERGENCY
+}
+
+enum ScheduleSlotStatus {
+  SCHEDULED
+  BLOCKED
+}
+
+enum RoomType {
+  CONSULTATION
+  ULTRASOUND
+  PROCEDURE
+  LAB
+  WAITING
 }
 
 enum LabOrderStatus {
@@ -68,6 +96,12 @@ enum InvoiceStatus {
   PAID
   CANCELLED
   REFUNDED
+}
+
+enum EInvoiceStatus {
+  PENDING
+  ISSUED
+  CANCELLED
 }
 
 enum PaymentMethod {
@@ -118,24 +152,24 @@ model User {
   updatedAt DateTime @updatedAt
 
   // Relations
-  doctorProfile    DoctorProfile?
-  patientProfile   PatientProfile?
+  doctorProfile  DoctorProfile?
+  patientProfile PatientProfile?
 
-  bookingsAsPatient  Booking[]              @relation("PatientBookings")
-  bookingsAsDoctor   Booking[]              @relation("DoctorBookings")
-  bookedBookings     Booking[]              @relation("BookedByUser")
-  cancelledBookings  Booking[]              @relation("CancelledByUser")
+  // Bookings — doctor always has account; patient linked via PatientProfile
+  bookingsAsDoctor  Booking[] @relation("DoctorBookings")
+  bookedBookings    Booking[] @relation("BookedByUser")
+  cancelledBookings Booking[] @relation("CancelledByUser")
 
-  workingHours   DoctorWorkingHours[]
-  scheduleSlots  DoctorScheduleSlot[]   @relation("DoctorScheduleSlots")
-  breakTimes     DoctorBreakTime[]
-  offDays        DoctorOffDay[]         @relation("DoctorOffDays")
-  approvedOffDays DoctorOffDay[]        @relation("ApprovedOffDays")
+  workingHours    DoctorWorkingHours[]
+  scheduleSlots   DoctorScheduleSlot[] @relation("DoctorScheduleSlots")
+  breakTimes      DoctorBreakTime[]
+  offDays         DoctorOffDay[]       @relation("DoctorOffDays")
+  approvedOffDays DoctorOffDay[]       @relation("ApprovedOffDays")
 
-  statusChanges  BookingStatusHistory[] @relation("ChangedByUser")
+  statusChanges BookingStatusHistory[] @relation("ChangedByUser")
 
-  verificationCodes  VerificationCode[]
-  refreshTokens      RefreshToken[]
+  verificationCodes VerificationCode[]
+  refreshTokens     RefreshToken[]
 
   labResultsRecorded LabResult[]    @relation("RecordedByUser")
   paymentsConfirmed  Payment[]      @relation("ConfirmedByUser")
@@ -218,7 +252,7 @@ model DoctorWorkingHours {
   doctorId  String
   dayOfWeek DayOfWeek
   startTime String    // "08:00" HH:mm
-  endTime   String    // "12:00"
+  endTime   String    // "17:00"
   isActive  Boolean   @default(true)
 
   createdAt DateTime @default(now())
@@ -266,60 +300,114 @@ model DoctorOffDay {
 
 // Generated slots from working hours (actual bookable slots per day)
 model DoctorScheduleSlot {
-  id          String   @id @default(uuid())
+  id          String             @id @default(uuid())
   doctorId    String
-  date        DateTime @db.Date
+  roomId      String?            // Optional — links to Room for conflict detection
+  date        DateTime           @db.Date
   startTime   String
   endTime     String
-  maxPatients Int      @default(1)
-  room        String?
+  maxPatients Int                @default(1)
+  bookedCount Int                @default(0) // Cache: updated on booking create/cancel. Avoids COUNT() joins on hot paths.
   type        String?
   notes       String?
-  status      String   @default("SCHEDULED") // SCHEDULED | BLOCKED
-  isActive    Boolean  @default(true)
+  status      ScheduleSlotStatus @default(SCHEDULED)
+  isActive    Boolean            @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  doctor User @relation("DoctorScheduleSlots", fields: [doctorId], references: [id], onDelete: Cascade)
+  doctor User  @relation("DoctorScheduleSlots", fields: [doctorId], references: [id], onDelete: Cascade)
+  room   Room? @relation(fields: [roomId], references: [id])
 
   @@index([doctorId, date])
+  @@index([roomId, date]) // Check room conflicts
   @@map("doctor_schedule_slots")
+}
+
+// ============================================
+// ROOM
+// ============================================
+
+// Physical rooms in the clinic. Prevents double-booking same room at same time.
+model Room {
+  id       String   @id @default(uuid())
+  name     String   @unique // "Phòng khám 101", "Phòng siêu âm 2"
+  type     RoomType @default(CONSULTATION)
+  floor    String?
+  capacity Int      @default(1)
+  isActive Boolean  @default(true)
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  scheduleSlots DoctorScheduleSlot[]
+
+  @@index([isActive])
+  @@map("rooms")
 }
 
 // ============================================
 // PATIENT
 // ============================================
 
+// PatientProfile is decoupled from User to support walk-in / guest patients.
+// userId is nullable: NULL means the patient has no system account (isGuest = true).
+// When a guest later creates an account, set userId and isGuest = false —
+// all historical bookings are preserved because they reference patientProfileId.
 model PatientProfile {
-  id     String @id @default(uuid())
-  userId String @unique
+  id     String  @id @default(uuid())
+  userId String? @unique // NULL for walk-in / guest patients
 
-  bloodType String?  // "A+", "B-", "O+", "AB+, "unknown"
+  // Denormalized from User for guest patients (and kept in sync for registered users)
+  fullName    String
+  phone       String?
+  email       String?   // Optional — used for guest notifications
+  dateOfBirth DateTime? @db.Date
+  gender      Gender?
+  address     String?
+
+  patientCode String  @unique // "BN-2026-0001" — internal identifier used by receptionist
+  isGuest     Boolean @default(false) // true = walk-in without account
+
+  // Identity (required for BHYT claims and VAT invoices)
+  nationalId String? // CCCD / CMND
+
+  // Vital stats
+  bloodType String?  // "A+", "B-", "O+", "AB+", "unknown"
   heightCm  Decimal? @db.Decimal(5, 1)
   weightKg  Decimal? @db.Decimal(5, 1)
 
   // Health insurance
-  insuranceNumber   String?
-  insuranceProvider String?
-  insuranceExpiry   DateTime? @db.Date
+  insuranceNumber    String?
+  insuranceProvider  String?
+  insuranceType      String?   // "BHYT" | "BHXH" | "Commercial"
+  insuranceExpiry    DateTime? @db.Date
+  insuranceCardFront String?   // CDN URL — front of BHYT card
+  insuranceCardBack  String?   // CDN URL — back of BHYT card
 
   // Emergency contact
   emergencyContactName     String?
   emergencyContactPhone    String?
   emergencyContactRelation String?
 
-  // Medical history (TEXT phase 1, migrate to JSONB later if ICD-10 structured data needed)
+  // Medical history (TEXT for phase 1; migrate to JSONB with ICD-10 codes later)
   allergies         String?
   chronicConditions String?
   familyHistory     String?
+  occupation        String?
+  ethnicity         String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  bookings Booking[]
 
   @@index([userId])
+  @@index([patientCode])
+  @@index([phone])
+  @@index([nationalId])
   @@map("patient_profiles")
 }
 
@@ -342,9 +430,9 @@ model Service {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  bookings      Booking[]
-  invoiceItems  InvoiceItem[]
-  doctorServices DoctorService[] // Doctors who can provide this service
+  bookings       Booking[]
+  invoiceItems   InvoiceItem[]
+  doctorServices DoctorService[]
 
   @@index([isActive])
   @@index([category])
@@ -371,26 +459,36 @@ model DoctorService {
 model Booking {
   id String @id @default(uuid())
 
-  patientId   String
-  doctorId    String
-  serviceId   String
+  // Patient is always referenced via PatientProfile (works for both guests and registered users)
+  patientProfileId String
+  doctorId         String
+  serviceId        String
+
+  bookingCode String   @unique // "BK-20260317-0041" — human-readable reference
   bookingDate DateTime @db.Date
   startTime   String   // "09:00"
   endTime     String   // "09:30"
 
-  status BookingStatus @default(PENDING)
+  status   BookingStatus   @default(PENDING)
+  source   BookingSource   @default(ONLINE)
+  priority BookingPriority @default(NORMAL)
 
-  bookedBy    String? // Set if receptionist books on behalf of patient
+  bookedBy     String? // userId of receptionist if booked on behalf
   patientNotes String?
   doctorNotes  String?
 
   cancelReason String?
-  cancelledBy  String?
+  cancelledBy  String? // userId who cancelled
+
+  // Timestamps for key state transitions
+  confirmedAt    DateTime?
+  checkedInAt    DateTime?
+  reminderSentAt DateTime? // Tracks if reminder email/SMS was sent
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  patient         User                   @relation("PatientBookings", fields: [patientId], references: [id])
+  patientProfile  PatientProfile         @relation(fields: [patientProfileId], references: [id])
   doctor          User                   @relation("DoctorBookings", fields: [doctorId], references: [id])
   service         Service                @relation(fields: [serviceId], references: [id])
   bookedByUser    User?                  @relation("BookedByUser", fields: [bookedBy], references: [id])
@@ -401,31 +499,32 @@ model Booking {
   invoice         Invoice?
   labOrders       LabOrder[]
 
-  @@index([patientId])
+  @@index([patientProfileId])
   @@index([doctorId])
   @@index([bookingDate])
   @@index([status])
+  @@index([bookingCode])
   @@index([doctorId, bookingDate, startTime])
   @@index([doctorId, bookingDate, status])
   @@map("bookings")
 }
 
-// State Machine:
+// State machine:
 // PENDING → CONFIRMED → CHECKED_IN → IN_PROGRESS → COMPLETED
 //         ↘ CANCELLED  ↘ CANCELLED  ↘ NO_SHOW
 model BookingQueue {
   id        String @id @default(uuid())
   bookingId String @unique
 
-  // Denormalized for fast queue queries without joining bookings
+  // Denormalized for fast queue queries
   doctorId  String
   queueDate DateTime @db.Date
 
   queuePosition        Int
   estimatedWaitMinutes Int @default(0)
 
-  calledAt    DateTime? // When doctor calls this patient
-  completedAt DateTime? // When examination is done
+  calledAt    DateTime?
+  completedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -447,7 +546,7 @@ model BookingStatusHistory {
   metadata    Json?          // IP, device, extra context
 
   createdAt DateTime @default(now())
-  // No updatedAt — append-only table
+  // No updatedAt — append-only
 
   booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   changedBy User    @relation("ChangedByUser", fields: [changedById], references: [id])
@@ -463,15 +562,15 @@ model BookingStatusHistory {
 
 model MedicalRecord {
   id        String @id @default(uuid())
-  bookingId String @unique // 1 booking → 1 medical record
+  bookingId String @unique
 
-  // Denormalized for fast patient history queries without joining bookings
-  patientId String
-  doctorId  String
+  // Denormalized for fast patient history queries
+  patientProfileId String
+  doctorId         String
 
-  chiefComplaint   String? // Chief complaint from patient
-  clinicalFindings String? // Physical examination findings
-  diagnosisCode    String? // ICD-10 code e.g. "M54.5"
+  chiefComplaint   String?
+  clinicalFindings String?
+  diagnosisCode    String? // ICD-10 e.g. "M54.5"
   diagnosisName    String? // "Đau thắt lưng cơ học"
   treatmentPlan    String?
   doctorNotes      String?
@@ -479,7 +578,7 @@ model MedicalRecord {
   followUpDate DateTime? @db.Date
   followUpNote String?
 
-  isFinalized Boolean @default(false) // Doctor has finalized the record
+  isFinalized Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -488,7 +587,7 @@ model MedicalRecord {
   prescription Prescription?
   labOrders    LabOrder[]
 
-  @@index([patientId, createdAt(sort: Desc)])
+  @@index([patientProfileId, createdAt(sort: Desc)])
   @@index([doctorId])
   @@index([bookingId])
   @@map("medical_records")
@@ -496,11 +595,11 @@ model MedicalRecord {
 
 model Prescription {
   id              String @id @default(uuid())
-  medicalRecordId String @unique // 1 medical record → 1 prescription
+  medicalRecordId String @unique
 
   // Denormalized
-  patientId String
-  doctorId  String
+  patientProfileId String
+  doctorId         String
 
   notes     String?
   isPrinted Boolean   @default(false)
@@ -509,10 +608,10 @@ model Prescription {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  medicalRecord MedicalRecord    @relation(fields: [medicalRecordId], references: [id])
+  medicalRecord MedicalRecord      @relation(fields: [medicalRecordId], references: [id])
   items         PrescriptionItem[]
 
-  @@index([patientId])
+  @@index([patientProfileId])
   @@index([medicalRecordId])
   @@map("prescriptions")
 }
@@ -544,8 +643,8 @@ model LabOrder {
   medicalRecordId String
 
   // Denormalized
-  patientId String
-  doctorId  String
+  patientProfileId String
+  doctorId         String
 
   testName        String
   testDescription String?
@@ -559,7 +658,7 @@ model LabOrder {
   medicalRecord MedicalRecord @relation(fields: [medicalRecordId], references: [id])
   result        LabResult?
 
-  @@index([patientId])
+  @@index([patientProfileId])
   @@index([medicalRecordId])
   @@index([status])
   @@map("lab_orders")
@@ -567,13 +666,13 @@ model LabOrder {
 
 model LabResult {
   id         String @id @default(uuid())
-  labOrderId String @unique // 1 lab order → 1 result
+  labOrderId String @unique
 
   resultText    String?
-  resultFileUrl String?  // PDF/image URL on CDN
+  resultFileUrl String?
   isAbnormal    Boolean?
   abnormalNote  String?
-  recordedBy    String   // FK → users (technician or receptionist)
+  recordedBy    String
   resultDate    DateTime
 
   createdAt DateTime @default(now())
@@ -592,18 +691,34 @@ model LabResult {
 
 model Invoice {
   id        String @id @default(uuid())
-  bookingId String @unique // 1 booking → 1 invoice
+  bookingId String @unique
 
   // Denormalized
-  patientId String
+  patientProfileId String
 
   invoiceNumber  String        @unique // "INV-20260311-0001"
   subtotal       Decimal       @db.Decimal(12, 2)
   discountAmount Decimal       @default(0) @db.Decimal(12, 2)
-  taxAmount      Decimal       @default(0) @db.Decimal(12, 2)
-  totalAmount    Decimal       @db.Decimal(12, 2)
-  status         InvoiceStatus @default(DRAFT)
-  notes          String?
+
+  // VAT — required by Vietnamese law (Decree 123/2020)
+  vatRate   Decimal @default(0) @db.Decimal(5, 2)  // 0.00 or 10.00
+  vatAmount Decimal @default(0) @db.Decimal(12, 2)
+  taxAmount Decimal @default(0) @db.Decimal(12, 2) // Legacy alias, keep for compatibility
+
+  totalAmount Decimal       @db.Decimal(12, 2)
+  status      InvoiceStatus @default(DRAFT)
+  notes       String?
+
+  // Insurance co-payment breakdown
+  insuranceClaimed Boolean @default(false)
+  insuranceAmount  Decimal @default(0) @db.Decimal(12, 2) // Covered by BHYT
+  patientCoPayment Decimal @default(0) @db.Decimal(12, 2) // Patient's share
+
+  // E-invoice (bắt buộc theo Thông tư 78/2021)
+  einvoiceCode     String?
+  einvoiceStatus   EInvoiceStatus @default(PENDING)
+  einvoiceUrl      String?
+  einvoiceIssuedAt DateTime?
 
   issuedAt DateTime?
   paidAt   DateTime?
@@ -615,9 +730,10 @@ model Invoice {
   items    InvoiceItem[]
   payments Payment[]
 
-  @@index([patientId])
+  @@index([patientProfileId])
   @@index([status])
   @@index([paidAt])
+  @@index([einvoiceStatus])
   @@map("invoices")
 }
 
@@ -625,14 +741,13 @@ model InvoiceItem {
   id        String @id @default(uuid())
   invoiceId String
 
-  // serviceId nullable — can be null for manual/ad-hoc charges
   serviceId String?
 
-  // Snapshot at time of invoice creation — price doesn't change if admin modifies service later
+  // Price snapshot at invoice creation time — immune to future service price changes
   itemName   String
   unitPrice  Decimal @db.Decimal(12, 2)
   quantity   Int     @default(1)
-  totalPrice Decimal @db.Decimal(12, 2) // = unitPrice × quantity
+  totalPrice Decimal @db.Decimal(12, 2)
   sortOrder  Int     @default(0)
 
   createdAt DateTime @default(now())
@@ -652,9 +767,9 @@ model Payment {
   insuranceCovered Decimal       @default(0) @db.Decimal(12, 2)
   patientPaid      Decimal       @db.Decimal(12, 2)
   paymentMethod    PaymentMethod
-  insuranceNumber  String?       // BHYT card number if used
-  transactionRef   String?       // Bank transaction reference
-  confirmedBy      String        // FK → users (receptionist)
+  insuranceNumber  String?
+  transactionRef   String?
+  confirmedBy      String
   notes            String?
   paidAt           DateTime      @default(now())
 
@@ -674,29 +789,41 @@ model Payment {
 // ============================================
 
 model Notification {
-  id     String @id @default(uuid())
-  userId String
+  id     String  @id @default(uuid())
+  userId String? // NULL for guest patients — use guestEmail / guestPhone instead
+
+  // Guest delivery targets (used when userId is null)
+  guestEmail String?
+  guestPhone String?
 
   title   String
   content String
   type    NotificationType
   channel NotificationChannel
 
-  isRead   Boolean   @default(false)
-  metadata Json?     // { bookingId, doctorName, appointmentTime, ... }
+  isRead   Boolean @default(false)
+  metadata Json?   // { bookingId, bookingCode, doctorName, appointmentTime, ... }
 
+  // Delivery tracking
   sentAt       DateTime?
   failedAt     DateTime?
   errorMessage String?
   readAt       DateTime?
 
-  createdAt DateTime @default(now())
-  // No updatedAt — effectively append-only
+  // Retry logic — worker checks retryCount < maxRetries before re-queuing
+  retryCount  Int       @default(0)
+  maxRetries  Int       @default(3)
+  nextRetryAt DateTime?
+  provider    String?   // "SENDGRID" | "SES" | "TWILIO"
 
-  user User @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  // No updatedAt — append-only
+
+  user User? @relation(fields: [userId], references: [id])
 
   @@index([userId, isRead])
   @@index([userId, createdAt(sort: Desc)])
+  @@index([nextRetryAt]) // Worker polls this index for retry queue
   @@map("notifications")
 }
 
@@ -708,7 +835,7 @@ model AuditLog {
   id      String  @id @default(uuid())
   actorId String? // NULL for system-initiated actions
 
-  action     String // "CREATE_BOOKING", "UPDATE_USER_STATUS", ...
+  action     String // "CREATE_BOOKING", "CANCEL_BOOKING", "UPDATE_USER_STATUS", ...
   entityType String // "booking", "user", "invoice", ...
   entityId   String?
 
@@ -734,8 +861,10 @@ model SystemConfig {
   key         String  @unique // "clinic.working_hours.start"
   value       String           // "08:00"
   dataType    String  @default("string") // "string" | "number" | "boolean" | "json"
+  category    String  @default("GENERAL") // "GENERAL" | "EMAIL" | "PAYMENT" | "SCHEDULE" | "INVOICE"
   description String?
-  isPublic    Boolean @default(false)
+  isPublic    Boolean @default(false) // false = never exposed via public API
+  isSecret    Boolean @default(false) // true = value is encrypted at rest
   updatedBy   String?
 
   createdAt DateTime @default(now())
@@ -743,5 +872,6 @@ model SystemConfig {
 
   updatedByUser User? @relation("UpdatedByUser", fields: [updatedBy], references: [id])
 
+  @@index([category])
   @@map("system_configs")
 }

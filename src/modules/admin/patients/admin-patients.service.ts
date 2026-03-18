@@ -3,17 +3,24 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AdminCreatePatientDto } from './dto/create-patient.dto';
 import { AdminUpdatePatientDto } from './dto/update-patient.dto';
 import { PatientSearchQueryDto } from './dto/patient-query.dto';
-import { BookingStatus, Gender, Prisma, UserRole } from '@prisma/client';
+import { BookingStatus, Gender, Prisma, User, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { ApiException } from 'src/common/exceptions/api.exception';
 import { ResponseHelper } from 'src/common/interfaces/api-response.interface';
 
+// Sequential counter helper — in production this should use DB sequence or redis
+// Here we just count existing profiles to generate the next code
+async function generatePatientCode(prisma: PrismaService): Promise<string> {
+  const count = await prisma.patientProfile.count();
+  return `BN-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
+}
+
 @Injectable()
 export class AdminPatientsService {
   constructor(private prisma: PrismaService) {}
 
-  // Create
+  // CREATE — registered patient (User + PatientProfile)
   async create(dto: AdminCreatePatientDto) {
     const {
       email,
@@ -28,15 +35,14 @@ export class AdminPatientsService {
 
     const normalizedPhone = phone?.trim() || null;
 
-    const queryOr: any[] = [{ email }];
+    // Check unique email / phone on User table
+    const queryOr: Prisma.UserWhereInput[] = [{ email }];
     if (normalizedPhone) {
       queryOr.push({ phone: normalizedPhone });
     }
 
     const existingUser = await this.prisma.user.findFirst({
-      where: {
-        OR: queryOr,
-      },
+      where: { OR: queryOr },
     });
 
     if (existingUser) {
@@ -49,6 +55,7 @@ export class AdminPatientsService {
     }
 
     const hashedPassword = await bcrypt.hash('Patient@123', 10);
+    const patientCode = await generatePatientCode(this.prisma);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -69,7 +76,18 @@ export class AdminPatientsService {
       const profile = await tx.patientProfile.create({
         data: {
           userId: user.id,
+          // Denormalized fields from User
+          fullName,
+          phone: normalizedPhone,
+          email,
+          dateOfBirth: dateOfBirth?.trim() ? new Date(dateOfBirth) : null,
+          gender,
+          address: address?.trim() || null,
+          // Patient-specific
+          patientCode,
+          isGuest: false,
           bloodType: bloodType?.trim() || null,
+          nationalId: profileData.nationalId?.trim() || null,
           insuranceNumber: profileData.insuranceNumber?.trim() || null,
           insuranceProvider: profileData.insuranceProvider?.trim() || null,
           insuranceExpiry: profileData.insuranceExpiry?.trim()
@@ -92,68 +110,184 @@ export class AdminPatientsService {
     );
   }
 
-  // List / Search (GET /admin/patients)
+  // CREATE GUEST — walk-in patient (PatientProfile only, no User)
+  async createGuest(dto: {
+    fullName: string;
+    phone?: string;
+    email?: string;
+    gender?: Gender;
+    dateOfBirth?: string;
+    address?: string;
+    bloodType?: string;
+  }) {
+    const patientCode = await generatePatientCode(this.prisma);
+    const profile = await this.prisma.patientProfile.create({
+      data: {
+        userId: null,
+        fullName: dto.fullName,
+        phone: dto.phone?.trim() || null,
+        email: dto.email?.trim() || null,
+        dateOfBirth: dto.dateOfBirth?.trim() ? new Date(dto.dateOfBirth) : null,
+        gender: dto.gender,
+        address: dto.address?.trim() || null,
+        patientCode,
+        isGuest: true,
+        bloodType: dto.bloodType?.trim() || null,
+      },
+    });
+
+    return ResponseHelper.success(
+      profile,
+      MessageCodes.PATIENT_CREATED,
+      'Guest patient created successfully',
+      201,
+    );
+  }
+
+  // UPGRADE GUEST → registered patient
+  async upgradeGuestToUser(
+    patientProfileId: string,
+    dto: { email: string; password?: string },
+  ) {
+    const profile = await this.prisma.patientProfile.findUnique({
+      where: { id: patientProfileId },
+    });
+
+    if (!profile) {
+      throw new ApiException(
+        MessageCodes.PATIENT_NOT_FOUND,
+        'Patient profile not found',
+        404,
+        'Upgrade failed',
+      );
+    }
+
+    if (!profile.isGuest) {
+      throw new ApiException(
+        MessageCodes.PATIENT_EXISTS,
+        'Patient already has an account',
+        409,
+        'Upgrade failed',
+      );
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.password || 'Patient@123', 10);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          email: dto.email,
+          fullName: profile.fullName,
+          phone: profile.phone,
+          gender: profile.gender,
+          dateOfBirth: profile.dateOfBirth,
+          address: profile.address,
+          password: hashedPassword,
+          role: UserRole.PATIENT,
+          isActive: true,
+          isVerified: false,
+        },
+      });
+
+      const updatedProfile = await tx.patientProfile.update({
+        where: { id: patientProfileId },
+        data: {
+          userId: user.id,
+          email: dto.email,
+          isGuest: false,
+        },
+      });
+
+      return { user, profile: updatedProfile };
+    });
+
+    return ResponseHelper.success(
+      result,
+      MessageCodes.PATIENT_UPDATED,
+      'Guest patient upgraded to registered account successfully',
+      200,
+    );
+  }
+
+  // LIST / SEARCH — query on PatientProfile (includes both registered + guests)
   async findAll(query: PatientSearchQueryDto) {
-    const { search, page = 1, limit = 10, gender, status, bloodType } = query;
+    const {
+      search,
+      page = 1,
+      limit = 10,
+      gender,
+      status,
+      bloodType,
+      patientCode,
+      isGuest,
+    } = query;
     const skip = (page - 1) * limit;
 
-    const where: Prisma.UserWhereInput = {
-      role: UserRole.PATIENT,
-      deletedAt: null,
-    };
+    // Build PatientProfile where clause
+    const where: Prisma.PatientProfileWhereInput = {};
+
+    if (isGuest !== undefined) {
+      where.isGuest = isGuest;
+    }
+
+    if (patientCode) {
+      where.patientCode = { contains: patientCode, mode: 'insensitive' };
+    }
 
     if (search) {
       where.OR = [
         { fullName: { contains: search, mode: 'insensitive' } },
         { email: { contains: search, mode: 'insensitive' } },
         { phone: { contains: search, mode: 'insensitive' } },
-        {
-          patientProfile: {
-            insuranceNumber: { contains: search, mode: 'insensitive' },
-          },
-        },
+        { patientCode: { contains: search, mode: 'insensitive' } },
+        { insuranceNumber: { contains: search, mode: 'insensitive' } },
+        { nationalId: { contains: search, mode: 'insensitive' } },
       ];
     }
 
-    // Gender filter (comma-separated, e.g. 'MALE,FEMALE')
     if (gender) {
       const genders = gender.split(',').map((g) => g.trim() as Gender);
       where.gender = { in: genders };
     }
 
-    // Status filter — maps 'active'/'inactive' to isActive boolean
+    if (bloodType) {
+      const bloodTypes = bloodType.split(',').map((bt) => bt.trim());
+      where.bloodType = { in: bloodTypes };
+    }
+
+    // Status filter — only applies to registered patients (who have User records)
     if (status) {
       const statuses = status.split(',').map((s) => s.trim());
       const hasActive = statuses.includes('active');
       const hasInactive = statuses.includes('inactive');
       if (hasActive && !hasInactive) {
-        where.isActive = true;
+        where.user = { isActive: true };
       } else if (hasInactive && !hasActive) {
-        where.isActive = false;
+        where.user = { isActive: false };
       }
     }
 
-    // Blood type filter (comma-separated, e.g. 'A+,O+')
-    if (bloodType) {
-      const bloodTypes = bloodType.split(',').map((bt) => bt.trim());
-      where.patientProfile = { bloodType: { in: bloodTypes } };
-    }
-
-    const [total, patients] = await Promise.all([
-      this.prisma.user.count({ where }),
-      this.prisma.user.findMany({
+    const [total, profiles] = await Promise.all([
+      this.prisma.patientProfile.count({ where }),
+      this.prisma.patientProfile.findMany({
         where,
         select: {
           id: true,
           fullName: true,
-          avatar: true,
           email: true,
           phone: true,
           gender: true,
           dateOfBirth: true,
-          isActive: true,
-          patientProfile: {
-            select: { bloodType: true },
+          patientCode: true,
+          isGuest: true,
+          bloodType: true,
+          userId: true,
+          user: {
+            select: {
+              id: true,
+              avatar: true,
+              isActive: true,
+            },
           },
         },
         skip,
@@ -162,33 +296,31 @@ export class AdminPatientsService {
       }),
     ]);
 
-    // Enrich rows with last visit & next appointment from bookings
-    const patientIds = patients.map((p) => p.id);
+    // Enrich with last visit & next appointment
+    const profileIds = profiles.map((p) => p.id);
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
 
     const [lastVisitRecords, nextApptRecords] =
-      patientIds.length === 0
+      profileIds.length === 0
         ? [[], []]
         : await Promise.all([
-            // Most recent completed visit per patient
             this.prisma.booking.findMany({
               where: {
-                patientId: { in: patientIds },
+                patientProfileId: { in: profileIds },
                 status: BookingStatus.COMPLETED,
               },
               orderBy: { bookingDate: 'desc' },
-              distinct: ['patientId'],
+              distinct: ['patientProfileId'],
               select: {
-                patientId: true,
+                patientProfileId: true,
                 bookingDate: true,
                 doctor: { select: { fullName: true } },
               },
             }),
-            // Nearest upcoming appointment per patient
             this.prisma.booking.findMany({
               where: {
-                patientId: { in: patientIds },
+                patientProfileId: { in: profileIds },
                 status: {
                   in: [
                     BookingStatus.PENDING,
@@ -199,34 +331,41 @@ export class AdminPatientsService {
                 bookingDate: { gte: today },
               },
               orderBy: { bookingDate: 'asc' },
-              distinct: ['patientId'],
+              distinct: ['patientProfileId'],
               select: {
-                patientId: true,
+                patientProfileId: true,
                 bookingDate: true,
                 doctor: { select: { fullName: true } },
               },
             }),
           ]);
 
-    const lastVisitMap = new Map(lastVisitRecords.map((b) => [b.patientId, b]));
-    const nextApptMap = new Map(nextApptRecords.map((b) => [b.patientId, b]));
+    const lastVisitMap = new Map(
+      lastVisitRecords.map((b) => [b.patientProfileId, b]),
+    );
+    const nextApptMap = new Map(
+      nextApptRecords.map((b) => [b.patientProfileId, b]),
+    );
 
     const formatDate = (d: Date | null | undefined): string | null =>
       d ? d.toISOString().split('T')[0] : null;
 
-    const rows = patients.map((p) => {
+    const rows = profiles.map((p) => {
       const lv = lastVisitMap.get(p.id);
       const na = nextApptMap.get(p.id);
       return {
         id: p.id,
+        userId: p.userId,
         fullName: p.fullName,
-        avatar: p.avatar,
+        avatar: p.user?.avatar ?? null,
         email: p.email,
         phone: p.phone,
         gender: p.gender,
         dateOfBirth: formatDate(p.dateOfBirth),
-        isActive: p.isActive,
-        bloodType: p.patientProfile?.bloodType ?? null,
+        isActive: p.user?.isActive ?? null, // null for guests
+        isGuest: p.isGuest,
+        patientCode: p.patientCode,
+        bloodType: p.bloodType ?? null,
         lastVisit: formatDate(lv?.bookingDate),
         nextAppointment: formatDate(na?.bookingDate),
         assignedDoctor: na?.doctor?.fullName ?? lv?.doctor?.fullName ?? null,
@@ -244,6 +383,7 @@ export class AdminPatientsService {
     );
   }
 
+  // STATS (counts PatientProfile, including guests)
   async getStats() {
     const now = new Date();
 
@@ -288,46 +428,29 @@ export class AdminPatientsService {
       activeAppointments,
       activeAppointmentsLastMonth,
     ] = await Promise.all([
-      // KPI 1
-      this.prisma.user.count({
-        where: { role: UserRole.PATIENT, deletedAt: null },
+      // KPI 1 — total patient profiles (registered + guest)
+      this.prisma.patientProfile.count(),
+      this.prisma.patientProfile.count({
+        where: { createdAt: { lt: startOfMonth } },
       }),
-      this.prisma.user.count({
-        where: {
-          role: UserRole.PATIENT,
-          deletedAt: null,
-          createdAt: { lt: startOfMonth },
-        },
+      // KPI 2 — new profiles this month
+      this.prisma.patientProfile.count({
+        where: { createdAt: { gte: startOfMonth } },
       }),
-
-      // KPI 2
-      this.prisma.user.count({
-        where: {
-          role: UserRole.PATIENT,
-          deletedAt: null,
-          createdAt: { gte: startOfMonth },
-        },
+      this.prisma.patientProfile.count({
+        where: { createdAt: { gte: startOfLastMonth, lt: startOfMonth } },
       }),
-      this.prisma.user.count({
-        where: {
-          role: UserRole.PATIENT,
-          deletedAt: null,
-          createdAt: { gte: startOfLastMonth, lt: startOfMonth },
-        },
-      }),
-
-      // KPI 3 — unique patients with bookings today
+      // KPI 3 — unique profiles with bookings today
       this.prisma.booking
         .findMany({
           where: {
             bookingDate: { gte: startOfToday, lt: startOfTomorrow },
             status: notCancelledOrNoShow,
           },
-          distinct: ['patientId'],
-          select: { patientId: true },
+          distinct: ['patientProfileId'],
+          select: { patientProfileId: true },
         })
         .then((r) => r.length),
-      // KPI 3 trend — same day last week
       this.prisma.booking
         .findMany({
           where: {
@@ -337,11 +460,10 @@ export class AdminPatientsService {
             },
             status: notCancelledOrNoShow,
           },
-          distinct: ['patientId'],
-          select: { patientId: true },
+          distinct: ['patientProfileId'],
+          select: { patientProfileId: true },
         })
         .then((r) => r.length),
-
       // KPI 4 — active bookings this month
       this.prisma.booking.count({
         where: {
@@ -349,7 +471,6 @@ export class AdminPatientsService {
           status: activeStatuses,
         },
       }),
-      // KPI 4 trend — active bookings last month
       this.prisma.booking.count({
         where: {
           bookingDate: { gte: startOfLastMonth, lt: startOfMonth },
@@ -384,7 +505,7 @@ export class AdminPatientsService {
     );
   }
 
-  // Find one
+  // FIND ONE
   async findOne(id: string) {
     const patient = await this.findById(id);
     return ResponseHelper.success(
@@ -395,7 +516,7 @@ export class AdminPatientsService {
     );
   }
 
-  // Update
+  // UPDATE
   async update(id: string, dto: AdminUpdatePatientDto) {
     await this.findById(id);
 
@@ -411,26 +532,30 @@ export class AdminPatientsService {
     } = dto;
 
     const result = await this.prisma.$transaction(async (tx) => {
-      const updatedUser = await tx.user.update({
-        where: { id },
-        data: {
-          email,
-          fullName,
-          phone: phone !== undefined ? phone?.trim() || null : undefined,
-          gender,
-          dateOfBirth:
-            dateOfBirth !== undefined
-              ? dateOfBirth?.trim()
-                ? new Date(dateOfBirth)
-                : null
-              : undefined,
-          address: address !== undefined ? address?.trim() || null : undefined,
-        },
-      });
+      // Find the profile
+      const profile = await tx.patientProfile.findUnique({ where: { id } });
+      if (!profile) throw new Error('Profile not found');
 
-      const profileDataToSave = {
+      // Update PatientProfile directly
+      const profileUpdateData: Prisma.PatientProfileUpdateInput = {
+        fullName:
+          fullName !== undefined ? fullName?.trim() || undefined : undefined,
+        phone: phone !== undefined ? phone?.trim() || null : undefined,
+        email: email !== undefined ? email?.trim() || null : undefined,
+        gender,
+        dateOfBirth:
+          dateOfBirth !== undefined
+            ? dateOfBirth?.trim()
+              ? new Date(dateOfBirth)
+              : null
+            : undefined,
+        address: address !== undefined ? address?.trim() || null : undefined,
         bloodType:
           bloodType !== undefined ? bloodType?.trim() || null : undefined,
+        nationalId:
+          profileData.nationalId !== undefined
+            ? profileData.nationalId?.trim() || null
+            : undefined,
         insuranceNumber:
           profileData.insuranceNumber !== undefined
             ? profileData.insuranceNumber?.trim() || null
@@ -459,16 +584,37 @@ export class AdminPatientsService {
             : undefined,
       };
 
-      const updatedProfile = await tx.patientProfile.upsert({
-        where: { userId: id },
-        update: profileDataToSave,
-        create: {
-          userId: id,
-          ...profileDataToSave,
-        },
+      const updatedProfile = await tx.patientProfile.update({
+        where: { id },
+        data: profileUpdateData,
       });
 
-      return { ...updatedUser, profile: updatedProfile };
+      // Also sync User record if this is a registered patient
+      let updatedUser: User | null = null;
+      if (profile.userId) {
+        updatedUser = await tx.user.update({
+          where: { id: profile.userId },
+          data: {
+            email: email !== undefined ? email : undefined,
+            fullName:
+              fullName !== undefined
+                ? fullName?.trim() || undefined
+                : undefined,
+            phone: phone !== undefined ? phone?.trim() || null : undefined,
+            gender,
+            dateOfBirth:
+              dateOfBirth !== undefined
+                ? dateOfBirth?.trim()
+                  ? new Date(dateOfBirth)
+                  : null
+                : undefined,
+            address:
+              address !== undefined ? address?.trim() || null : undefined,
+          },
+        });
+      }
+
+      return { profile: updatedProfile, user: updatedUser };
     });
 
     return ResponseHelper.success(
@@ -479,27 +625,27 @@ export class AdminPatientsService {
     );
   }
 
-  // Health profile
+  // HEALTH PROFILE
   async getHealthProfile(id: string) {
-    const patient = await this.prisma.user.findFirst({
-      where: { id, role: UserRole.PATIENT, deletedAt: null },
+    const profile = await this.prisma.patientProfile.findUnique({
+      where: { id },
       select: {
         id: true,
         fullName: true,
-        patientProfile: {
-          select: {
-            allergies: true,
-            chronicConditions: true,
-            familyHistory: true,
-            bloodType: true,
-            heightCm: true,
-            weightKg: true,
-          },
-        },
+        patientCode: true,
+        isGuest: true,
+        allergies: true,
+        chronicConditions: true,
+        familyHistory: true,
+        bloodType: true,
+        heightCm: true,
+        weightKg: true,
+        occupation: true,
+        ethnicity: true,
       },
     });
 
-    if (!patient) {
+    if (!profile) {
       throw new ApiException(
         MessageCodes.PATIENT_NOT_FOUND,
         'Patient not found',
@@ -509,21 +655,32 @@ export class AdminPatientsService {
     }
 
     return ResponseHelper.success(
-      patient,
+      profile,
       MessageCodes.PATIENT_HEALTH_PROFILE_RETRIEVED,
       'Patient health profile retrieved successfully',
       200,
     );
   }
 
-  // Internal helpers
+  // INTERNAL HELPERS
   private async findById(id: string) {
-    const patient = await this.prisma.user.findFirst({
-      where: { id, role: UserRole.PATIENT, deletedAt: null },
-      include: { patientProfile: true },
+    const profile = await this.prisma.patientProfile.findUnique({
+      where: { id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            isActive: true,
+            isVerified: true,
+            avatar: true,
+            role: true,
+          },
+        },
+      },
     });
 
-    if (!patient) {
+    if (!profile) {
       throw new ApiException(
         MessageCodes.PATIENT_NOT_FOUND,
         'Patient not found',
@@ -532,6 +689,6 @@ export class AdminPatientsService {
       );
     }
 
-    return patient;
+    return profile;
   }
 }

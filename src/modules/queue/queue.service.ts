@@ -8,18 +8,19 @@ import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 
-// Type for booking with relations
 interface BookingWithRelations {
   id: string;
   bookingDate: Date;
   startTime: string;
   endTime: string;
   status: BookingStatus;
-  patient: {
+  patientProfile: {
     id: string;
-    email: string;
     fullName: string;
     phone: string | null;
+    email: string | null;
+    isGuest: boolean;
+    patientCode: string;
   };
   doctor: {
     id: string;
@@ -74,12 +75,14 @@ export class QueueService {
         include: {
           booking: {
             include: {
-              patient: {
+              patientProfile: {
                 select: {
                   id: true,
                   fullName: true,
                   email: true,
                   phone: true,
+                  isGuest: true,
+                  patientCode: true,
                 },
               },
               doctor: {
@@ -136,12 +139,14 @@ export class QueueService {
       include: {
         booking: {
           include: {
-            patient: {
+            patientProfile: {
               select: {
                 id: true,
                 fullName: true,
                 email: true,
                 phone: true,
+                isGuest: true,
+                patientCode: true,
               },
             },
             doctor: {
@@ -407,12 +412,14 @@ export class QueueService {
         include: {
           booking: {
             include: {
-              patient: {
+              patientProfile: {
                 select: {
                   id: true,
-                  email: true,
                   fullName: true,
+                  email: true,
                   phone: true,
+                  isGuest: true,
+                  patientCode: true,
                 },
               },
               doctor: {
@@ -451,12 +458,14 @@ export class QueueService {
           status: BookingStatus.CONFIRMED,
         },
         include: {
-          patient: {
+          patientProfile: {
             select: {
               id: true,
-              email: true,
               fullName: true,
+              email: true,
               phone: true,
+              isGuest: true,
+              patientCode: true,
             },
           },
           doctor: {
@@ -587,10 +596,12 @@ export class QueueService {
     booking: BookingWithRelations,
   ): Promise<void> {
     try {
+      const email = booking.patientProfile.email;
+      if (!email) return;
       await this.notificationsService.sendQueuePromotion({
         bookingId: booking.id,
-        patientName: booking.patient.fullName,
-        patientEmail: booking.patient.email,
+        patientName: booking.patientProfile.fullName,
+        patientEmail: email,
         doctorName: booking.doctor.fullName,
         serviceName: booking.service.name,
         bookingDate: this.formatDate(booking.bookingDate),
