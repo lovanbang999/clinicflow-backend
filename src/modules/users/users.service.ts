@@ -4,7 +4,11 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { FilterUserDto } from './dto/filter-user.dto';
-import { QuickCreatePatientDto } from './dto/quick-create-patient.dto';
+import { FilterPatientDto } from './dto/filter-patient.dto';
+import {
+  RegisterPatientDto,
+  CreateGuestPatientDto,
+} from './dto/quick-create-patient.dto';
 import { Prisma, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
@@ -105,14 +109,35 @@ export class UsersService {
   }
 
   /**
-   * Quick create or find a patient by receptionist
+   * Internal helper to generate a unique patient code (BN-YYYY-NNNN)
    */
-  async quickCreatePatient(dto: QuickCreatePatientDto) {
-    const { fullName, phone, dateOfBirth, gender } = dto;
+  private async generatePatientCode(): Promise<string> {
+    const count = await this.prisma.patientProfile.count();
+    return `BN-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
+  }
 
-    // Check if phone exists
+  /**
+   * Create or find a patient with a system account
+   */
+  async registerPatient(dto: RegisterPatientDto) {
+    const {
+      fullName,
+      phone,
+      email,
+      dateOfBirth,
+      gender,
+      address,
+      nationalId,
+      bloodType,
+    } = dto;
+
+    // 1. Check if User with this phone or email exists
     const existingUser = await this.prisma.user.findFirst({
-      where: { phone, role: UserRole.PATIENT, deletedAt: null },
+      where: {
+        OR: [{ phone }, ...(email ? [{ email }] : [])],
+        role: UserRole.PATIENT,
+        deletedAt: null,
+      },
       select: {
         id: true,
         email: true,
@@ -123,23 +148,82 @@ export class UsersService {
         gender: true,
         address: true,
         role: true,
+        patientProfile: {
+          select: {
+            id: true,
+            patientCode: true,
+          },
+        },
       },
     });
 
     if (existingUser) {
       return ResponseHelper.success(
         existingUser,
-        MessageCodes.USER_RETRIEVED,
-        'Patient found successfully',
+        MessageCodes.USER_ALREADY_EXISTS,
+        'Patient already has an account',
         200,
       );
     }
 
-    // Generate dummy email and hash phone as password
-    const email = `patient_${phone}_${Math.floor(Math.random() * 10000)}@smartclinic.local`;
-    const hashedPassword = await bcrypt.hash(phone, 10);
+    // 2. Check if Guest PatientProfile with this phone exists
+    const existingGuest = await this.prisma.patientProfile.findFirst({
+      where: { phone, isGuest: true, userId: null },
+    });
 
-    const user = await this.prisma.user.create({
+    if (existingGuest) {
+      // Upgrade Guest to User
+      const hashedPassword = await bcrypt.hash(phone, 10);
+
+      const user = await this.prisma.user.create({
+        data: {
+          email,
+          password: hashedPassword,
+          fullName,
+          phone,
+          role: UserRole.PATIENT,
+          isActive: true,
+          isVerified: true,
+          ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
+          ...(gender && { gender }),
+          ...(address && { address }),
+        },
+      });
+
+      const updatedProfile = await this.prisma.patientProfile.update({
+        where: { id: existingGuest.id },
+        data: {
+          userId: user.id,
+          isGuest: false,
+          // Update profile fields if they were missing or changed
+          fullName,
+          ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
+          ...(gender && { gender }),
+          ...(address && { address }),
+          ...(nationalId && { nationalId }),
+          ...(bloodType && { bloodType }),
+        },
+      });
+
+      return ResponseHelper.success(
+        {
+          ...user,
+          patientProfile: {
+            id: updatedProfile.id,
+            patientCode: updatedProfile.patientCode,
+          },
+        },
+        MessageCodes.USER_UPDATED,
+        'Guest patient upgraded to account successfully',
+        200,
+      );
+    }
+
+    // 3. Create fresh User and PatientProfile
+    const hashedPassword = await bcrypt.hash(phone, 10);
+    const patientCode = await this.generatePatientCode();
+
+    const result = await this.prisma.user.create({
       data: {
         email,
         password: hashedPassword,
@@ -150,10 +234,19 @@ export class UsersService {
         isVerified: true,
         ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
         ...(gender && { gender }),
+        ...(address && { address }),
         patientProfile: {
           create: {
-            patientCode: `PT-${Date.now().toString().slice(-6)}-${phone.slice(-4)}`,
+            patientCode,
             fullName,
+            phone,
+            email,
+            ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
+            ...(gender && { gender }),
+            ...(address && { address }),
+            ...(nationalId && { nationalId }),
+            ...(bloodType && { bloodType }),
+            isGuest: false,
           },
         },
       },
@@ -177,10 +270,207 @@ export class UsersService {
     });
 
     return ResponseHelper.success(
-      user,
+      result,
       MessageCodes.USER_CREATED,
-      'Patient created successfully',
+      'Patient account created successfully',
       201,
+    );
+  }
+
+  /**
+   * Create or find a guest patient (profile only)
+   */
+  async createGuestPatient(dto: CreateGuestPatientDto) {
+    const {
+      fullName,
+      phone,
+      dateOfBirth,
+      gender,
+      address,
+      nationalId,
+      bloodType,
+    } = dto;
+
+    // 1. Check if User with this phone exists (registered patients)
+    const existingUser = await this.prisma.user.findFirst({
+      where: { phone, role: UserRole.PATIENT, deletedAt: null },
+      include: {
+        patientProfile: {
+          select: {
+            id: true,
+            patientCode: true,
+          },
+        },
+      },
+    });
+
+    if (existingUser) {
+      return ResponseHelper.success(
+        {
+          id: existingUser.id,
+          fullName: existingUser.fullName,
+          phone: existingUser.phone,
+          dateOfBirth: existingUser.dateOfBirth,
+          gender: existingUser.gender,
+          address: existingUser.address,
+          role: UserRole.PATIENT,
+          patientProfile: existingUser.patientProfile,
+        },
+        MessageCodes.USER_RETRIEVED,
+        'Patient already exists with a system account',
+        200,
+      );
+    }
+
+    // 2. Check if Guest PatientProfile with this phone exists
+    const existingGuest = await this.prisma.patientProfile.findFirst({
+      where: { phone, isGuest: true, userId: null },
+    });
+
+    if (existingGuest) {
+      return ResponseHelper.success(
+        {
+          id: existingGuest.id,
+          fullName: existingGuest.fullName,
+          phone: existingGuest.phone,
+          dateOfBirth: existingGuest.dateOfBirth,
+          gender: existingGuest.gender,
+          address: existingGuest.address,
+          role: UserRole.PATIENT,
+          patientProfile: {
+            id: existingGuest.id,
+            patientCode: existingGuest.patientCode,
+          },
+        },
+        MessageCodes.USER_RETRIEVED,
+        'Guest patient found',
+        200,
+      );
+    }
+
+    // 3. Create new Guest Profile
+    const patientCode = await this.generatePatientCode();
+    const guestProfile = await this.prisma.patientProfile.create({
+      data: {
+        patientCode,
+        fullName,
+        phone,
+        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+        gender,
+        address,
+        nationalId,
+        bloodType,
+        isGuest: true,
+      },
+    });
+
+    return ResponseHelper.success(
+      {
+        id: guestProfile.id,
+        fullName: guestProfile.fullName,
+        phone: guestProfile.phone,
+        dateOfBirth: guestProfile.dateOfBirth,
+        gender: guestProfile.gender,
+        address: guestProfile.address,
+        role: UserRole.PATIENT,
+        patientProfile: {
+          id: guestProfile.id,
+          patientCode: guestProfile.patientCode,
+        },
+      },
+      MessageCodes.USER_CREATED,
+      'Guest patient created successfully',
+      201,
+    );
+  }
+
+  /**
+   * Find all patient profiles with filters and pagination (ADMIN/RECEPTIONIST only)
+   * Includes both guests and registered patients
+   */
+  async findAllPatients(filterDto: FilterPatientDto) {
+    const { search, isGuest, page = 1, limit = 10 } = filterDto;
+
+    const pPage = parseInt(String(page), 10) || 1;
+    const pLimit = parseInt(String(limit), 10) || 10;
+
+    const where: Prisma.PatientProfileWhereInput = {};
+
+    if (search) {
+      where.OR = [
+        { fullName: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
+        { patientCode: { contains: search, mode: 'insensitive' } },
+        { nationalId: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (isGuest !== undefined) {
+      where.isGuest = isGuest;
+    }
+
+    const [profiles, total] = await Promise.all([
+      this.prisma.patientProfile.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              fullName: true,
+              phone: true,
+              avatar: true,
+              isActive: true,
+              role: true,
+            },
+          },
+        },
+        skip: (pPage - 1) * pLimit,
+        take: pLimit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.patientProfile.count({ where }),
+    ]);
+
+    // Map profiles to a format the frontend expects (User-like objects)
+    const users = profiles.map((profile) => {
+      if (profile.user) {
+        return {
+          ...profile.user,
+          patientProfile: {
+            id: profile.id,
+            patientCode: profile.patientCode,
+          },
+        };
+      }
+      // Guest profile mapping to User-like object
+      return {
+        id: profile.id, // Use profile ID as ID for guest
+        fullName: profile.fullName,
+        phone: profile.phone,
+        email: profile.email,
+        role: UserRole.PATIENT,
+        isActive: true,
+        patientProfile: {
+          id: profile.id,
+          patientCode: profile.patientCode,
+        },
+      };
+    });
+
+    return ResponseHelper.success(
+      {
+        users,
+        pagination: {
+          total,
+          page: pPage,
+          limit: pLimit,
+          totalPages: Math.ceil(total / pLimit),
+        },
+      },
+      MessageCodes.USER_LIST_RETRIEVED,
+      'Patient profiles retrieved successfully',
+      200,
     );
   }
 

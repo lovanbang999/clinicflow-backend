@@ -20,10 +20,14 @@ import {
 } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
-import { QuickCreatePatientDto } from './dto/quick-create-patient.dto';
+import {
+  RegisterPatientDto,
+  CreateGuestPatientDto,
+} from './dto/quick-create-patient.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { FilterUserDto } from './dto/filter-user.dto';
+import { FilterPatientDto } from './dto/filter-patient.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -110,23 +114,50 @@ export class UsersController {
     return this.usersService.create(createUserDto);
   }
 
-  @Post('receptionist/patients/quick-create')
+  @Post('receptionist/patients/account')
   @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
   @ApiOperation({
-    summary: 'Quick create or find a patient (RECEPTIONIST/ADMIN only)',
+    summary: 'Create a patient with a system account (RECEPTIONIST/ADMIN only)',
     description:
-      'Find a patient by phone or create a new minimal patient profile',
+      'Creates a full user account and a linked patient profile. If the patient exists as a guest, upgrades them. If they already have an account, returns existing profile.',
   })
   @ApiResponse({
     status: 201,
-    description: 'Patient created successfully',
+    description: 'Patient account created successfully',
+  })
+  registerPatient(@Body() dto: RegisterPatientDto) {
+    return this.usersService.registerPatient(dto);
+  }
+
+  @Post('receptionist/patients/guest')
+  @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Create a guest patient medical record (RECEPTIONIST/ADMIN only)',
+    description:
+      'Creates only a patient profile (guest) without a system account. If the patient already exists, returns the existing profile.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Guest patient record created successfully',
+  })
+  createGuestPatient(@Body() dto: CreateGuestPatientDto) {
+    return this.usersService.createGuestPatient(dto);
+  }
+
+  @Get('receptionist/patients')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ApiOperation({
+    summary:
+      'Get all patient profiles including guests (ADMIN/RECEPTIONIST only)',
+    description:
+      'Retrieve paginated list of patient profiles (both guests and registered users) with search by name, phone, or code',
   })
   @ApiResponse({
     status: 200,
-    description: 'Patient found successfully',
+    description: 'Patient profiles retrieved successfully',
   })
-  quickCreatePatient(@Body() quickCreateDto: QuickCreatePatientDto) {
-    return this.usersService.quickCreatePatient(quickCreateDto);
+  findAllPatients(@Query() filterDto: FilterPatientDto) {
+    return this.usersService.findAllPatients(filterDto);
   }
 
   @Get()

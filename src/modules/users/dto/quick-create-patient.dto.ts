@@ -6,10 +6,11 @@ import {
   Matches,
   IsEnum,
   IsNotEmpty,
+  IsEmail,
 } from 'class-validator';
 import { Gender } from '@prisma/client';
 
-export class QuickCreatePatientDto {
+export class BasePatientProfileDto {
   @ApiProperty({
     description: 'Patient full name',
     example: 'Nguyen Van A',
@@ -20,7 +21,7 @@ export class QuickCreatePatientDto {
   fullName: string;
 
   @ApiProperty({
-    description: 'Patient phone number or ID Card (CCCD)',
+    description: 'Patient phone number',
     example: '0912345678',
   })
   @IsString()
@@ -47,4 +48,32 @@ export class QuickCreatePatientDto {
   @IsOptional()
   @IsEnum(Gender)
   gender?: Gender;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  nationalId?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  bloodType?: string;
 }
+
+export class RegisterPatientDto extends BasePatientProfileDto {
+  @ApiProperty({
+    description: 'Patient email - Required for system accounts',
+    example: 'patient@example.com',
+    required: true,
+  })
+  @IsEmail()
+  @IsNotEmpty()
+  email: string;
+}
+
+export class CreateGuestPatientDto extends BasePatientProfileDto {}
