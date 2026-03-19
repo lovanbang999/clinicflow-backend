@@ -46,6 +46,13 @@ export class FilterBookingDto {
   status?: BookingStatus;
 
   @ApiProperty({
+    description: 'Filter by patient name, phone or booking code',
+    required: false,
+  })
+  @IsOptional()
+  search?: string;
+
+  @ApiProperty({
     description: 'Filter by date (YYYY-MM-DD)',
     required: false,
     example: '2024-12-25',
