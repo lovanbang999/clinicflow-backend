@@ -1,9 +1,3 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { NotificationsService } from '../notifications/notifications.service';
-import { CreateBookingDto } from './dto/create-booking.dto';
-import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
-import { FilterBookingDto } from './dto/filter-booking.dto';
 import {
   BookingStatus,
   BookingSource,
@@ -12,9 +6,17 @@ import {
   DayOfWeek,
   Prisma,
 } from '@prisma/client';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
-import { MessageCodes } from '../../common/constants/message-codes.const';
-import { ApiException } from '../../common/exceptions/api.exception';
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { CreateBookingDto } from './dto/create-booking.dto';
+import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
+import { FilterBookingDto } from './dto/filter-booking.dto';
+import { QueueGateway } from '../queue/queue.gateway';
+import { QueueService } from '../queue/queue.service';
+import { MessageCodes } from 'src/common/constants/message-codes.const';
+import { ApiException } from 'src/common/exceptions/api.exception';
+import { ResponseHelper } from 'src/common/interfaces/api-response.interface';
 
 interface BookingWithRelations {
   id: string;
@@ -59,6 +61,8 @@ export class BookingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly queueGateway: QueueGateway,
+    private readonly queueService: QueueService,
   ) {}
 
   /**
@@ -436,13 +440,21 @@ export class BookingsService {
 
       if (
         status === BookingStatus.CANCELLED ||
-        status === BookingStatus.COMPLETED
+        status === BookingStatus.COMPLETED ||
+        status === BookingStatus.NO_SHOW
       ) {
-        this.handleBookingCompletion({
+        await this.handleBookingCompletion({
           id: booking.id,
           doctorId: booking.doctor.id,
           bookingDate: booking.bookingDate,
           startTime: booking.startTime,
+        });
+      }
+
+      // If examination starts, broadcast real-time update
+      if (status === BookingStatus.IN_PROGRESS) {
+        this.queueGateway.broadcastQueueUpdate(updated.doctorId, 'UPDATE', {
+          booking: updated,
         });
       }
 
@@ -495,6 +507,49 @@ export class BookingsService {
       MessageCodes.BOOKING_DELETED,
       'Booking deleted successfully',
       200,
+    );
+  }
+
+  /**
+   * Start examination (Move from CHECKED_IN to IN_PROGRESS)
+   */
+  async startExamination(id: string, userId: string) {
+    return this.updateStatus(
+      id,
+      {
+        status: BookingStatus.IN_PROGRESS,
+        reason: 'Examination started by doctor',
+      },
+      userId,
+    );
+  }
+
+  /**
+   * Complete visit (Move from IN_PROGRESS to COMPLETED)
+   */
+  async completeVisit(id: string, userId: string, doctorNotes?: string) {
+    return this.updateStatus(
+      id,
+      {
+        status: BookingStatus.COMPLETED,
+        reason: 'Consultation finished',
+        doctorNotes,
+      },
+      userId,
+    );
+  }
+
+  /**
+   * Mark as no-show (Move from CHECKED_IN to NO_SHOW)
+   */
+  async markNoShow(id: string, userId: string) {
+    return this.updateStatus(
+      id,
+      {
+        status: BookingStatus.NO_SHOW,
+        reason: 'Patient did not arrive within 30 minutes of check-in',
+      },
+      userId,
     );
   }
 
@@ -772,6 +827,13 @@ export class BookingsService {
 
       return { booking: updatedBooking, queue: queueRecord };
     });
+
+    // Broadcast the real-time Queue assignment
+    this.queueGateway.broadcastQueueUpdate(
+      booking.doctorId,
+      'CHECK_IN',
+      result,
+    );
 
     return ResponseHelper.success(
       result,
@@ -1143,17 +1205,26 @@ export class BookingsService {
   }
 
   /**
-   * Handle booking completion (queue promotion placeholder)
+   * Handle booking completion (Remove from queue)
    */
-  private handleBookingCompletion(booking: {
+  private async handleBookingCompletion(booking: {
     id: string;
     doctorId: string;
     bookingDate: Date;
     startTime: string;
-  }): void {
+  }): Promise<void> {
     console.log(
-      `Booking ${booking.id} completed/cancelled. Check queue for promotion.`,
+      `Booking ${booking.id} completed/cancelled/no-show. Removing from queue...`,
     );
+
+    // Call QueueService to handle record deletion and shift queue positions
+    await this.queueService.removeFromQueue(booking.id);
+
+    // Broadcast update so the board refreshes
+    this.queueGateway.broadcastQueueUpdate(booking.doctorId, 'UPDATE', {
+      bookingId: booking.id,
+      status: 'REMOVED',
+    });
   }
 
   /**

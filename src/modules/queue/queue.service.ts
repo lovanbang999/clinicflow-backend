@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PromoteQueueDto } from './dto/promote-queue.dto';
 import { QueueFilterDto } from './dto/queue-filter.dto';
+import { QueueGateway } from './queue.gateway';
 import { BookingStatus, Prisma } from '@prisma/client';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
@@ -40,6 +41,7 @@ export class QueueService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly queueGateway: QueueGateway,
   ) {}
 
   /**
@@ -289,6 +291,13 @@ export class QueueService {
       reason || 'Manual promotion by staff',
     );
 
+    // Broadcast the promotion event
+    this.queueGateway.broadcastQueueUpdate(
+      queueRecord.booking.doctorId,
+      'PROMOTED',
+      result.booking,
+    );
+
     return ResponseHelper.success(
       result.booking,
       MessageCodes.QUEUE_PROMOTED,
@@ -352,10 +361,16 @@ export class QueueService {
     }
 
     // Promote the first booking in queue
-    await this.promoteBooking(
+    const result = await this.promoteBooking(
       firstInQueue.bookingId,
       'system',
       'Auto-promoted from queue',
+    );
+
+    this.queueGateway.broadcastQueueUpdate(
+      doctorId,
+      'PROMOTED',
+      result.booking,
     );
 
     return true;

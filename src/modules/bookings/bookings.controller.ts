@@ -318,6 +318,31 @@ export class BookingsController {
     return this.bookingsService.updateStatus(id, updateStatusDto, userId);
   }
 
+  @Patch(':id/start')
+  @Roles(UserRole.DOCTOR, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Start examination' })
+  startExamination(@Param('id') id: string, @CurrentUser('id') userId: string) {
+    return this.bookingsService.startExamination(id, userId);
+  }
+
+  @Patch(':id/complete')
+  @Roles(UserRole.DOCTOR, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Complete visit' })
+  completeVisit(
+    @Param('id') id: string,
+    @Body('doctorNotes') doctorNotes: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.bookingsService.completeVisit(id, userId, doctorNotes);
+  }
+
+  @Patch(':id/no-show')
+  @Roles(UserRole.RECEPTIONIST, UserRole.DOCTOR, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Mark as no-show' })
+  markNoShow(@Param('id') id: string, @CurrentUser('id') userId: string) {
+    return this.bookingsService.markNoShow(id, userId);
+  }
+
   @Patch(':id/cancel')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
