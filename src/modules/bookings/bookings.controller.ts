@@ -362,4 +362,31 @@ export class BookingsController {
   getPatientDashboardStats(@CurrentUser('id') patientId: string) {
     return this.bookingsService.getPatientDashboardStats(patientId);
   }
+
+  @Get('dashboard/receptionist-stats')
+  @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Get receptionist dashboard stats',
+    description:
+      'Retrieve booking statistics (pending, confirmed, completed, cancelled) for today and trends compared to yesterday.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Statistics retrieved successfully',
+    schema: {
+      example: {
+        success: true,
+        statusCode: 200,
+        data: {
+          pending: { value: 10, trend: 15, trendDir: 'up' },
+          confirmed: { value: 25, trend: 5, trendDir: 'up' },
+          completed: { value: 15, trend: 10, trendDir: 'down' },
+          cancelled: { value: 2, trend: 0, trendDir: 'neutral' },
+        },
+      },
+    },
+  })
+  getReceptionistDashboardStats() {
+    return this.bookingsService.getReceptionistDashboardStats();
+  }
 }
