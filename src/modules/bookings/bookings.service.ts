@@ -651,6 +651,97 @@ export class BookingsService {
     );
   }
 
+  /**
+   * Get receptionist dashboard statistics
+   */
+  async getReceptionistDashboardStats() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const nextDay = new Date(today);
+    nextDay.setDate(today.getDate() + 1);
+
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+
+    const todayWhere = {
+      bookingDate: {
+        gte: today,
+        lt: nextDay,
+      },
+    };
+
+    const yesterdayWhere = {
+      bookingDate: {
+        gte: yesterday,
+        lt: today,
+      },
+    };
+
+    const [
+      pendingToday,
+      confirmedToday,
+      completedToday,
+      cancelledToday,
+      pendingYesterday,
+      confirmedYesterday,
+      completedYesterday,
+      cancelledYesterday,
+    ] = await Promise.all([
+      // Today
+      this.prisma.booking.count({
+        where: { ...todayWhere, status: BookingStatus.PENDING },
+      }),
+      this.prisma.booking.count({
+        where: { ...todayWhere, status: BookingStatus.CONFIRMED },
+      }),
+      this.prisma.booking.count({
+        where: { ...todayWhere, status: BookingStatus.COMPLETED },
+      }),
+      this.prisma.booking.count({
+        where: { ...todayWhere, status: BookingStatus.CANCELLED },
+      }),
+      // Yesterday
+      this.prisma.booking.count({
+        where: { ...yesterdayWhere, status: BookingStatus.PENDING },
+      }),
+      this.prisma.booking.count({
+        where: { ...yesterdayWhere, status: BookingStatus.CONFIRMED },
+      }),
+      this.prisma.booking.count({
+        where: { ...yesterdayWhere, status: BookingStatus.COMPLETED },
+      }),
+      this.prisma.booking.count({
+        where: { ...yesterdayWhere, status: BookingStatus.CANCELLED },
+      }),
+    ]);
+
+    const calcTrend = (t: number, y: number) => {
+      if (y === 0) {
+        if (t === 0) return { value: t, trend: 0, trendDir: 'neutral' };
+        return { value: t, trend: 100, trendDir: 'up' };
+      }
+      const diff = t - y;
+      const percentage = Math.round((Math.abs(diff) / y) * 100);
+
+      if (diff > 0) return { value: t, trend: percentage, trendDir: 'up' };
+      if (diff < 0) return { value: t, trend: percentage, trendDir: 'down' };
+      return { value: t, trend: 0, trendDir: 'neutral' };
+    };
+
+    return ResponseHelper.success(
+      {
+        pending: calcTrend(pendingToday, pendingYesterday),
+        confirmed: calcTrend(confirmedToday, confirmedYesterday),
+        completed: calcTrend(completedToday, completedYesterday),
+        cancelled: calcTrend(cancelledToday, cancelledYesterday),
+      },
+      MessageCodes.BOOKING_LIST_RETRIEVED,
+      'Receptionist dashboard statistics retrieved successfully',
+      200,
+    );
+  }
+
   // ============================================
   // PRIVATE HELPER METHODS
   // ============================================
