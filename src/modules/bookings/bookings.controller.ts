@@ -22,6 +22,7 @@ import { BookingsService } from './bookings.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { FilterBookingDto } from './dto/filter-booking.dto';
+import { CancelBookingDto } from './dto/cancel-booking.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -36,15 +37,42 @@ export class BookingsController {
   constructor(private readonly bookingsService: BookingsService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a new booking' })
+  @ApiOperation({
+    summary: 'Create a new online booking',
+    description:
+      'Create an online booking for a registered patient profile. Initial status will be PENDING.',
+  })
   @ApiResponse({
     status: 201,
     description: 'Booking created successfully',
+    schema: {
+      example: {
+        success: true,
+        statusCode: 201,
+        message: 'Booking created successfully',
+        messageCode: 'BOOKING.CREATED.SUCCESS',
+        data: {
+          id: 'uuid',
+          bookingCode: 'BK-20241230-0001',
+          patientProfileId: 'uuid',
+          doctorId: 'uuid',
+          serviceId: 'uuid',
+          bookingDate: '2024-12-30',
+          startTime: '09:00',
+          endTime: '09:30',
+          status: 'PENDING',
+          source: 'ONLINE',
+          priority: 'NORMAL',
+          patientNotes: '...',
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 400,
-    description: 'Invalid booking data',
+    description: 'Invalid booking data (date/slot/profile)',
   })
+  @ApiResponse({ status: 404, description: 'Doctor or Service not found' })
   @ApiResponse({
     status: 409,
     description: 'Booking conflict (duplicate or slot full)',
@@ -59,11 +87,27 @@ export class BookingsController {
   @Post('receptionist')
   @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
   @ApiOperation({
-    summary: 'Create a booking as receptionist (Auto Confirmed)',
+    summary: 'Create a booking as receptionist',
+    description:
+      'Internal booking creation (Walk-in or Receptionist). Initial status is automatically CONFIRMED.',
   })
   @ApiResponse({
     status: 201,
     description: 'Booking created and confirmed successfully',
+    schema: {
+      example: {
+        success: true,
+        statusCode: 201,
+        message: 'Booking created and confirmed successfully',
+        data: {
+          id: 'uuid',
+          bookingCode: 'BK-20241230-0002',
+          status: 'CONFIRMED',
+          source: 'RECEPTIONIST',
+          confirmedAt: '2024-03-20T10:00:00.000Z',
+        },
+      },
+    },
   })
   createByReceptionist(
     @Body() createBookingDto: CreateBookingDto,
@@ -74,17 +118,36 @@ export class BookingsController {
 
   @Get()
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
-  @ApiOperation({ summary: 'Get all bookings with filters' })
-  @ApiQuery({ name: 'patientId', required: false })
-  @ApiQuery({ name: 'doctorId', required: false })
-  @ApiQuery({ name: 'serviceId', required: false })
-  @ApiQuery({ name: 'status', required: false })
-  @ApiQuery({ name: 'date', required: false })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'limit', required: false })
+  @ApiOperation({
+    summary: 'List all bookings',
+    description:
+      'Retrieve a paginated list of all bookings with advanced filtering options for admin/receptionist.',
+  })
   @ApiResponse({
     status: 200,
-    description: 'List of bookings',
+    description: 'List of bookings retrieved successfully',
+    schema: {
+      example: {
+        success: true,
+        statusCode: 200,
+        data: {
+          bookings: [
+            {
+              id: 'uuid',
+              bookingCode: 'BK-20241230-0001',
+              status: 'CONFIRMED',
+              patientProfile: {
+                fullName: 'Alex Jones',
+                patientCode: 'P-12345',
+              },
+              doctor: { fullName: 'Dr. Smith' },
+              service: { name: 'General Checkup' },
+            },
+          ],
+          pagination: { total: 100, page: 1, limit: 10, totalPages: 10 },
+        },
+      },
+    },
   })
   findAll(@Query() filterDto: FilterBookingDto) {
     return this.bookingsService.findAll(filterDto);
@@ -93,9 +156,9 @@ export class BookingsController {
   @Get('my-bookings')
   @Roles(UserRole.PATIENT)
   @ApiOperation({
-    summary: 'Get my bookings',
+    summary: 'Get current user bookings',
     description:
-      'Get all bookings for the current patient with optional filters',
+      'Retrieve paginated appointments for the authenticated patient.',
   })
   @ApiQuery({
     name: 'status',
@@ -115,6 +178,24 @@ export class BookingsController {
   @ApiResponse({
     status: 200,
     description: 'My bookings retrieved successfully',
+    schema: {
+      example: {
+        success: true,
+        statusCode: 200,
+        data: {
+          bookings: [
+            {
+              id: 'uuid',
+              bookingDate: '2024-12-30',
+              status: 'CONFIRMED',
+              service: { name: 'Consultation' },
+              doctor: { fullName: 'Dr. House' },
+            },
+          ],
+          pagination: { total: 5, page: 1, limit: 10, totalPages: 1 },
+        },
+      },
+    },
   })
   getMyBookings(
     @CurrentUser('id') patientId: string,
@@ -130,15 +211,37 @@ export class BookingsController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get booking by ID' })
+  @ApiOperation({
+    summary: 'Get booking details by ID',
+    description:
+      'Retrieve a single booking record including full relations like patient, doctor, service, queue position, and status history.',
+  })
   @ApiResponse({
     status: 200,
-    description: 'Booking details',
+    description: 'Booking details retrieved',
+    schema: {
+      example: {
+        success: true,
+        statusCode: 200,
+        data: {
+          id: 'uuid',
+          bookingCode: 'BK-20241230-0001',
+          status: 'CONFIRMED',
+          statusHistory: [
+            {
+              oldStatus: 'PENDING',
+              newStatus: 'CONFIRMED',
+              changedBy: { fullName: 'Admin' },
+            },
+          ],
+          patientProfile: { fullName: 'Alex', patientCode: 'P-12345' },
+          service: { name: 'Service Name', durationMinutes: 30 },
+          queueRecord: { queuePosition: 5, estimatedWaitMinutes: 15 },
+        },
+      },
+    },
   })
-  @ApiResponse({
-    status: 404,
-    description: 'Booking not found',
-  })
+  @ApiResponse({ status: 404, description: 'Booking not found' })
   findOne(@Param('id') id: string) {
     return this.bookingsService.findOne(id);
   }
@@ -146,15 +249,29 @@ export class BookingsController {
   @Patch(':id/status')
   @Roles(UserRole.DOCTOR, UserRole.RECEPTIONIST, UserRole.ADMIN)
   @ApiOperation({
-    summary: 'Update booking status (DOCTOR/RECEPTIONIST/ADMIN only)',
+    summary: 'Update appointment status',
+    description:
+      'Manually update the status of an appointment. Includes validation to prevent impossible status transitions.',
   })
   @ApiResponse({
     status: 200,
     description: 'Booking status updated successfully',
+    schema: {
+      example: {
+        success: true,
+        statusCode: 200,
+        message: 'Booking status updated successfully',
+        data: {
+          id: 'uuid',
+          status: 'CHECKED_IN',
+          checkedInAt: '2024-03-20T11:00:00.000Z',
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 400,
-    description: 'Invalid status transition',
+    description: 'Invalid status transition (e.g. Completed -> Cancelled)',
   })
   updateStatus(
     @Param('id') id: string,
@@ -166,22 +283,41 @@ export class BookingsController {
 
   @Patch(':id/cancel')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Cancel booking' })
+  @ApiOperation({
+    summary: 'Cancel an appointment',
+    description:
+      'Cancel a booking record by ID with a mandatory reason. Can be performed by the patient or staff.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Booking cancelled successfully',
+    schema: {
+      example: {
+        success: true,
+        statusCode: 200,
+        message: 'Booking cancelled successfully',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Cancellation reason is required and must be detailed',
   })
   cancel(
     @Param('id') id: string,
-    @Body('reason') reason: string,
+    @Body() cancelBookingDto: CancelBookingDto,
     @CurrentUser('id') userId: string,
   ) {
-    return this.bookingsService.cancel(id, userId, reason);
+    return this.bookingsService.cancel(id, userId, cancelBookingDto.reason);
   }
 
   @Delete(':id')
   @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Delete booking (ADMIN only)' })
+  @ApiOperation({
+    summary: 'Soft-delete a booking',
+    description:
+      'Effectively cancels the booking record. Restricted to Administrators only.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Booking deleted successfully',
@@ -193,8 +329,9 @@ export class BookingsController {
   @Get('dashboard/stats')
   @Roles(UserRole.PATIENT)
   @ApiOperation({
-    summary: 'Get patient dashboard statistics',
-    description: 'Get booking statistics for current patient',
+    summary: 'Get patient dashboard stats',
+    description:
+      'Retrieve summary counts (upcoming, completed, waiting) and the next closest appointment for the patient dashboard.',
   })
   @ApiResponse({
     status: 200,
@@ -203,8 +340,6 @@ export class BookingsController {
       example: {
         success: true,
         statusCode: 200,
-        message: 'Dashboard statistics retrieved successfully',
-        messageCode: 'BOOKING.LIST.SUCCESS',
         data: {
           stats: {
             upcomingBookings: 2,
@@ -216,17 +351,9 @@ export class BookingsController {
             id: 'uuid',
             bookingDate: '2024-12-30',
             startTime: '09:00',
-            endTime: '09:30',
             status: 'CONFIRMED',
-            service: {
-              id: 'uuid',
-              name: 'Khám tổng quát',
-            },
-            doctor: {
-              id: 'uuid',
-              fullName: 'BS. Nguyễn Văn An',
-              avatar: null,
-            },
+            service: { name: 'General Checkup' },
+            doctor: { fullName: 'Dr. An' },
           },
         },
       },
