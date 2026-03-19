@@ -246,6 +246,43 @@ export class BookingsController {
     return this.bookingsService.findOne(id);
   }
 
+  @Post(':id/check-in')
+  @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Check in a patient for their appointment',
+    description:
+      'Transitions a CONFIRMED booking to CHECKED_IN, assigning a daily STT (queuePosition) and calculating estimated wait time.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Patient successfully checked in',
+    schema: {
+      example: {
+        success: true,
+        statusCode: 200,
+        message: 'Patient successfully checked in',
+        data: {
+          booking: {
+            id: 'uuid',
+            status: 'CHECKED_IN',
+          },
+          queue: {
+            queuePosition: 5,
+            estimatedWaitMinutes: 60,
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Only confirmed bookings can be checked in, or already in queue',
+  })
+  checkIn(@Param('id') id: string, @CurrentUser('id') userId: string) {
+    return this.bookingsService.checkIn(id, userId);
+  }
+
   @Patch(':id/status')
   @Roles(UserRole.DOCTOR, UserRole.RECEPTIONIST, UserRole.ADMIN)
   @ApiOperation({

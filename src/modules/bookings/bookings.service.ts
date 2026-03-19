@@ -260,6 +260,7 @@ export class BookingsService {
       serviceId,
       status,
       date,
+      search,
       page = 1,
       limit = 10,
     } = filterDto;
@@ -271,6 +272,20 @@ export class BookingsService {
     if (serviceId) where.serviceId = serviceId;
     if (status) where.status = status;
     if (date) where.bookingDate = new Date(date);
+
+    if (search) {
+      where.OR = [
+        { bookingCode: { contains: search, mode: 'insensitive' } },
+        {
+          patientProfile: {
+            fullName: { contains: search, mode: 'insensitive' },
+          },
+        },
+        {
+          patientProfile: { phone: { contains: search, mode: 'insensitive' } },
+        },
+      ];
+    }
 
     const [bookings, total] = await Promise.all([
       this.prisma.booking.findMany({
@@ -647,6 +662,121 @@ export class BookingsService {
       },
       MessageCodes.BOOKING_LIST_RETRIEVED,
       'Dashboard statistics retrieved successfully',
+      200,
+    );
+  }
+
+  /**
+   * Check in a patient for their appointment
+   */
+  async checkIn(bookingId: string, userId: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        service: true,
+        patientProfile: true,
+      },
+    });
+
+    if (!booking) {
+      throw new ApiException(
+        MessageCodes.BOOKING_NOT_FOUND,
+        'Booking not found',
+        404,
+        'Check-in failed',
+      );
+    }
+
+    if (booking.status !== BookingStatus.CONFIRMED) {
+      throw new ApiException(
+        MessageCodes.BOOKING_INVALID_STATUS,
+        'Only confirmed bookings can be checked in',
+        400,
+        'Check-in failed',
+      );
+    }
+
+    // Check if it already has a queue record
+    const existingQueue = await this.prisma.bookingQueue.findUnique({
+      where: { bookingId },
+    });
+
+    if (existingQueue) {
+      throw new ApiException(
+        MessageCodes.BOOKING_ALREADY_IN_QUEUE,
+        'Booking is already in the queue',
+        409,
+        'Check-in failed',
+      );
+    }
+
+    // Find the latest queue position for the doctor on that date
+    const latestQueue = await this.prisma.bookingQueue.findFirst({
+      where: {
+        doctorId: booking.doctorId,
+        queueDate: booking.bookingDate,
+      },
+      orderBy: {
+        queuePosition: 'desc',
+      },
+      select: {
+        queuePosition: true,
+      },
+    });
+
+    const currentPosition = latestQueue ? latestQueue.queuePosition + 1 : 1;
+
+    // Estimate wait time (naive estimate: active queue size * 30 min)
+    const checkedInCount = await this.prisma.bookingQueue.count({
+      where: {
+        doctorId: booking.doctorId,
+        queueDate: booking.bookingDate,
+        booking: { status: BookingStatus.CHECKED_IN },
+      },
+    });
+
+    // Fallback naive heuristic 30 mins per appointment currently checked-in
+    const estWaitMinutes = checkedInCount * 30;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      // 1. Update Booking status
+      const updatedBooking = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          status: BookingStatus.CHECKED_IN,
+          checkedInAt: new Date(),
+        },
+      });
+
+      // 2. Create history
+      await tx.bookingStatusHistory.create({
+        data: {
+          bookingId,
+          oldStatus: BookingStatus.CONFIRMED,
+          newStatus: BookingStatus.CHECKED_IN,
+          changedById: userId,
+          reason: 'Patient checked in at reception',
+        },
+      });
+
+      // 3. Create Queue Record
+      const queueRecord = await tx.bookingQueue.create({
+        data: {
+          bookingId,
+          doctorId: booking.doctorId,
+          queueDate: booking.bookingDate,
+          queuePosition: currentPosition,
+          estimatedWaitMinutes: estWaitMinutes,
+        },
+      });
+
+      return { booking: updatedBooking, queue: queueRecord };
+    });
+
+    return ResponseHelper.success(
+      result,
+      MessageCodes.BOOKING_UPDATED,
+      'Patient successfully checked in',
       200,
     );
   }
