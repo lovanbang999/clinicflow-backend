@@ -127,6 +127,19 @@ enum NotificationChannel {
   IN_APP
 }
 
+model Icd10Code {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([code])
+  @@index([name])
+  @@map("icd10_codes")
+}
+
 // ============================================
 // AUTH & USER
 // ============================================

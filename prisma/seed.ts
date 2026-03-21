@@ -12,6 +12,8 @@ import {
   PatientProfile,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -77,6 +79,7 @@ async function main() {
   await prisma.auditLog.deleteMany();
   await prisma.refreshToken.deleteMany();
   await prisma.verificationCode.deleteMany();
+  await prisma.icd10Code.deleteMany();
   await prisma.service.deleteMany();
   await prisma.room.deleteMany();
   await prisma.user.deleteMany();
@@ -862,6 +865,65 @@ async function main() {
     bookingCount++;
   }
   console.log(`  ✅ Created ${bookingCount} sample bookings`);
+
+  // ============================================
+  // 10. CREATE ICD-10 CODES (FULL DATASET IMPORT)
+  // ============================================
+  console.log('\n🩺 Creating ICD-10 Codes...');
+  const icd10Path = path.resolve(
+    process.cwd(),
+    '../Tools/icd10_vietnamese.json',
+  );
+  let icd10CodesData: { code: string; name: string }[] = [];
+
+  if (fs.existsSync(icd10Path)) {
+    console.log(`  📂 Found scraped dataset at ${icd10Path}`);
+    try {
+      icd10CodesData = JSON.parse(fs.readFileSync(icd10Path, 'utf8')) as {
+        code: string;
+        name: string;
+      }[];
+      console.log(`  📦 Loaded ${icd10CodesData.length} entries from JSON`);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error('  ❌ Error parsing JSON file:', errorMessage);
+    }
+  }
+
+  // Fallback sample if file missing or empty
+  if (icd10CodesData.length === 0) {
+    console.log('  ⚠️ Using fallback mock sample...');
+    icd10CodesData = [
+      { code: 'J00', name: 'Bệnh đường hô hấp trên cấp tính (Cảm lạnh)' },
+      { code: 'J01', name: 'Viêm xoang cấp' },
+      { code: 'J02', name: 'Viêm họng cấp' },
+      { code: 'J03', name: 'Viêm amidan cấp' },
+      { code: 'J04', name: 'Viêm thanh quản và khí quản cấp' },
+      { code: 'I10', name: 'Tăng huyết áp vô căn (nguyên phát)' },
+      { code: 'E11', name: 'Bệnh đái tháo đường không phụ thuộc insuline' },
+      {
+        code: 'E78',
+        name: 'Rối loạn chuyển hóa lipoprotein và tình trạng tăng lipid máu khác',
+      },
+      { code: 'K21', name: 'Bệnh trào ngược dạ dày - thực quản' },
+      { code: 'K29', name: 'Viêm dạ dày và tá tràng' },
+      { code: 'M54.5', name: 'Đau thắt lưng' },
+      { code: 'A09', name: 'Tiêu chảy và viêm dạ dày ruột' },
+    ];
+  }
+
+  const batchSize = 1000;
+  for (let i = 0; i < icd10CodesData.length; i += batchSize) {
+    const batch = icd10CodesData.slice(i, i + batchSize);
+    await prisma.icd10Code.createMany({
+      data: batch,
+      skipDuplicates: true,
+    });
+    console.log(
+      `  ✅ Batch ${i / batchSize + 1}: Migrated indices ${i + 1} to ${Math.min(i + batchSize, icd10CodesData.length)}`,
+    );
+  }
+  console.log(`  🎉 Finished seeding ${icd10CodesData.length} ICD-10 Codes`);
 
   // ============================================
   // SUMMARY
