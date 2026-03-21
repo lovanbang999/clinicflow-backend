@@ -15,6 +15,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { UploadModule } from './modules/upload/upload.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { MedicalRecordsModule } from './modules/medical-records/medical-records.module';
+import { LabOrdersModule } from './modules/lab-orders/lab-orders.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { MedicalRecordsModule } from './modules/medical-records/medical-records.
     NotificationsModule,
     AdminModule,
     MedicalRecordsModule,
+    LabOrdersModule,
   ],
   providers: [
     // Global guard - apply JWT auth to all routes by default
