@@ -6,7 +6,7 @@ import {
   DayOfWeek,
   Prisma,
 } from '@prisma/client';
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
@@ -988,11 +988,21 @@ export class BookingsService {
     }
 
     if (doctor.role !== UserRole.DOCTOR) {
-      throw new BadRequestException('User is not a doctor');
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'User is not a doctor',
+        400,
+        'Booking validation failed',
+      );
     }
 
     if (!doctor.isActive) {
-      throw new BadRequestException('Doctor is not active');
+      throw new ApiException(
+        MessageCodes.ACCOUNT_INACTIVE,
+        'Doctor is not active',
+        400,
+        'Booking validation failed',
+      );
     }
 
     // 4. Check service exists and is active
@@ -1016,15 +1026,23 @@ export class BookingsService {
     });
 
     if (!workingHours) {
-      throw new BadRequestException('Doctor does not work on this day');
+      throw new ApiException(
+        MessageCodes.SCHEDULE_NOT_FOUND,
+        'Doctor does not work on this day',
+        400,
+        'Booking validation failed',
+      );
     }
 
     if (
       startTime < workingHours.startTime ||
       startTime >= workingHours.endTime
     ) {
-      throw new BadRequestException(
+      throw new ApiException(
+        MessageCodes.BOOKING_INVALID_TIME,
         `Time slot is outside doctor's working hours (${workingHours.startTime} - ${workingHours.endTime})`,
+        400,
+        'Booking validation failed',
       );
     }
 
@@ -1041,8 +1059,11 @@ export class BookingsService {
     });
 
     if (breakTime) {
-      throw new BadRequestException(
+      throw new ApiException(
+        MessageCodes.SCHEDULE_CONFLICT,
         `Time slot conflicts with doctor's break time (${breakTime.startTime} - ${breakTime.endTime})`,
+        400,
+        'Booking validation failed',
       );
     }
 
@@ -1057,7 +1078,12 @@ export class BookingsService {
     });
 
     if (offDay) {
-      throw new BadRequestException('Doctor is not available on this day');
+      throw new ApiException(
+        MessageCodes.SCHEDULE_NOT_FOUND,
+        'Doctor is not available on this day',
+        400,
+        'Booking validation failed',
+      );
     }
 
     // 8. Check duplicate booking (same patient profile + doctor + same day)

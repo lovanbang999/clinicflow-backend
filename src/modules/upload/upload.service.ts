@@ -20,8 +20,9 @@ export class UploadService {
     '.jpeg',
     '.svg',
     '.webp',
+    '.pdf',
   ];
-  private readonly maxFileSize = 5 * 1024 * 1024; // 5MB
+  private readonly maxFileSize = 10 * 1024 * 1024; // 10MB cho PDF, hình ảnh xét nghiệm
 
   constructor(
     @Inject(CLOUDINARY) private readonly cloudinary: typeof CloudinaryType,
@@ -70,6 +71,21 @@ export class UploadService {
     return this.uploadBufferToCloudinary(file, 'smart-clinic/avatars');
   }
 
+  async uploadLabResult(
+    file: Express.Multer.File | undefined,
+  ): Promise<UploadResult> {
+    this.validateFile(file);
+    if (!file) throw new BadRequestException('No file provided');
+
+    // Chú ý với pdf trên Cloudinary, ta có thể phải dùng resource_type: 'auto' hoặc 'raw' tuỳ cấu hình tài khoản,
+    // uploadBufferToCloudinary hiện đang hardcode `resource_type: 'image'`.
+    return this.uploadBufferToCloudinary(
+      file,
+      'smart-clinic/lab-results',
+      file.mimetype === 'application/pdf' ? 'auto' : 'image',
+    );
+  }
+
   async deleteAvatar(publicId: string | null | undefined): Promise<void> {
     if (!publicId) return;
 
@@ -88,6 +104,7 @@ export class UploadService {
   private async uploadBufferToCloudinary(
     file: Express.Multer.File,
     folder: string,
+    resourceType: 'image' | 'video' | 'raw' | 'auto' = 'image',
   ): Promise<UploadResult> {
     const toError = (e: unknown, fallback: string) =>
       e instanceof Error ? e : new Error(typeof e === 'string' ? e : fallback);
@@ -96,7 +113,7 @@ export class UploadService {
       const uploadStream = this.cloudinary.uploader.upload_stream(
         {
           folder,
-          resource_type: 'image',
+          resource_type: resourceType,
           unique_filename: true,
           overwrite: false,
         },
@@ -147,6 +164,7 @@ export class UploadService {
       'image/jpg',
       'image/svg+xml',
       'image/webp',
+      'application/pdf',
     ];
     if (!validMimeTypes.includes(file.mimetype)) {
       throw new BadRequestException('Invalid file MIME type');

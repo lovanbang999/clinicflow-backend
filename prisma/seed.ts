@@ -699,6 +699,7 @@ async function main() {
     DayOfWeek.WEDNESDAY,
     DayOfWeek.THURSDAY,
     DayOfWeek.FRIDAY,
+    DayOfWeek.SUNDAY,
   ];
 
   let workingHoursCount = 0;

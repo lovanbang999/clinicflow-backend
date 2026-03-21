@@ -145,4 +145,40 @@ export class UploadController {
       201,
     );
   }
+
+  @Post('lab-result')
+  @UseInterceptors(FileInterceptor('file'))
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
+  @ApiOperation({
+    summary: 'Upload a lab result file (PDF, Image)',
+    description: 'Upload a lab result document. Max size: 10MB.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Lab result file (PDF, PNG, JPG)',
+        },
+      },
+      required: ['file'],
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'File uploaded successfully',
+  })
+  async uploadLabResult(@UploadedFile() file: Express.Multer.File) {
+    const { url, publicId } = await this.uploadService.uploadLabResult(file);
+
+    return ResponseHelper.success(
+      { url, publicId },
+      'LAB.UPLOAD_SUCCESS',
+      'Lab result file uploaded successfully',
+      201,
+    );
+  }
 }
