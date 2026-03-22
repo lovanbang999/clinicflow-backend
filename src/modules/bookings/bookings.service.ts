@@ -5,6 +5,7 @@ import {
   UserRole,
   DayOfWeek,
   Prisma,
+  InvoiceStatus,
 } from '@prisma/client';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,6 +18,7 @@ import { QueueService } from '../queue/queue.service';
 import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { ApiException } from 'src/common/exceptions/api.exception';
 import { ResponseHelper } from 'src/common/interfaces/api-response.interface';
+import { BillingService } from '../billing/billing.service';
 
 interface BookingWithRelations {
   id: string;
@@ -63,6 +65,7 @@ export class BookingsService {
     private readonly notificationsService: NotificationsService,
     private readonly queueGateway: QueueGateway,
     private readonly queueService: QueueService,
+    private readonly billingService: BillingService,
   ) {}
 
   /**
@@ -153,6 +156,13 @@ export class BookingsService {
     this.sendBookingNotification(booking).catch((error) => {
       console.error('Failed to send booking notification:', error);
     });
+
+    // Auto-create invoice
+    try {
+      await this.billingService.createInvoice({ bookingId: booking.id });
+    } catch (e) {
+      console.error('Failed to auto-create invoice:', e);
+    }
 
     return ResponseHelper.success(
       booking,
@@ -245,6 +255,16 @@ export class BookingsService {
     this.sendBookingNotification(booking).catch((error) => {
       console.error('Failed to send booking notification:', error);
     });
+
+    // Auto-create invoice
+    try {
+      await this.billingService.createInvoice({
+        bookingId: booking.id,
+        notes: 'Walk-in/Receptionist generated invoice',
+      });
+    } catch (e) {
+      console.error('Failed to auto-create invoice:', e);
+    }
 
     return ResponseHelper.success(
       booking,
@@ -449,6 +469,28 @@ export class BookingsService {
           bookingDate: booking.bookingDate,
           startTime: booking.startTime,
         });
+
+        // Auto-update Invoice status if applicable
+        if (status === BookingStatus.COMPLETED) {
+          await tx.invoice.updateMany({
+            where: {
+              bookingId: id,
+              status: { in: [InvoiceStatus.DRAFT, InvoiceStatus.OPEN] },
+            },
+            data: { status: InvoiceStatus.ISSUED },
+          });
+        } else if (
+          status === BookingStatus.CANCELLED ||
+          status === BookingStatus.NO_SHOW
+        ) {
+          await tx.invoice.updateMany({
+            where: {
+              bookingId: id,
+              status: { in: [InvoiceStatus.DRAFT, InvoiceStatus.OPEN] },
+            },
+            data: { status: InvoiceStatus.CANCELLED },
+          });
+        }
       }
 
       // If examination starts, broadcast real-time update
