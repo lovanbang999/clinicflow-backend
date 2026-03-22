@@ -16,6 +16,7 @@ import { UploadModule } from './modules/upload/upload.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { MedicalRecordsModule } from './modules/medical-records/medical-records.module';
 import { LabOrdersModule } from './modules/lab-orders/lab-orders.module';
+import { BillingModule } from './modules/billing/billing.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { LabOrdersModule } from './modules/lab-orders/lab-orders.module';
     AdminModule,
     MedicalRecordsModule,
     LabOrdersModule,
+    BillingModule,
   ],
   providers: [
     // Global guard - apply JWT auth to all routes by default

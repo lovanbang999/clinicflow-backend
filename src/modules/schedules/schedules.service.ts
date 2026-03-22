@@ -302,6 +302,43 @@ export class SchedulesService {
       );
     }
 
+    // Query affected appointments before creating the off day
+    const offDateObj = new Date(date);
+    offDateObj.setHours(0, 0, 0, 0);
+    const offDateEnd = new Date(offDateObj);
+    offDateEnd.setHours(23, 59, 59, 999);
+
+    const affectedAppointments = await this.prisma.booking.findMany({
+      where: {
+        doctorId,
+        bookingDate: {
+          gte: offDateObj,
+          lte: offDateEnd,
+        },
+        status: {
+          in: [
+            BookingStatus.PENDING,
+            BookingStatus.CONFIRMED,
+            BookingStatus.CHECKED_IN,
+          ],
+        },
+      },
+      include: {
+        patientProfile: {
+          select: {
+            fullName: true,
+            phone: true,
+          },
+        },
+        service: {
+          select: {
+            name: true,
+          },
+        },
+      },
+      orderBy: { startTime: 'asc' },
+    });
+
     // Create off day
     const offDay = await this.prisma.doctorOffDay.create({
       data: {
@@ -312,7 +349,17 @@ export class SchedulesService {
     });
 
     return ResponseHelper.success(
-      offDay,
+      {
+        ...offDay,
+        affectedAppointments: affectedAppointments.map((b) => ({
+          id: b.id,
+          patientName: b.patientProfile?.fullName ?? 'Unknown',
+          patientPhone: b.patientProfile?.phone ?? '',
+          serviceName: b.service?.name ?? '',
+          startTime: b.startTime,
+          status: b.status,
+        })),
+      },
       MessageCodes.SCHEDULE_CREATED,
       'Off day created successfully',
       201,

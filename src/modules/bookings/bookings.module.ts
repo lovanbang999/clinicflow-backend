@@ -5,9 +5,10 @@ import { BookingsController } from './bookings.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { QueueModule } from '../queue/queue.module';
+import { BillingModule } from '../billing/billing.module';
 
 @Module({
-  imports: [PrismaModule, NotificationsModule, QueueModule],
+  imports: [PrismaModule, NotificationsModule, QueueModule, BillingModule],
   controllers: [BookingsController],
   providers: [BookingsService, BookingsCronService],
   exports: [BookingsService],

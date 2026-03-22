@@ -8,11 +8,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateLabOrderDto } from './dto/create-lab-order.dto';
 import { UploadLabResultDto } from './dto/upload-lab-result.dto';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
-import { LabOrderStatus } from '@prisma/client';
+import { LabOrderStatus, InvoiceStatus } from '@prisma/client';
+import { BillingService } from '../billing/billing.service';
 
 @Injectable()
 export class LabOrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly billingService: BillingService,
+  ) {}
 
   async createOrder(doctorId: string, dto: CreateLabOrderDto) {
     const booking = await this.prisma.booking.findUnique({
@@ -54,6 +58,43 @@ export class LabOrdersService {
         status: LabOrderStatus.PENDING,
       },
     });
+
+    // Auto-add this lab order to the patient's master invoice
+    try {
+      const invoice = await this.prisma.invoice.findUnique({
+        where: { bookingId: dto.bookingId },
+      });
+
+      if (
+        invoice &&
+        (invoice.status === InvoiceStatus.DRAFT ||
+          invoice.status === InvoiceStatus.OPEN)
+      ) {
+        let price = 0;
+        let itemName = dto.testName;
+
+        if (dto.serviceId) {
+          const svc = await this.prisma.service.findUnique({
+            where: { id: dto.serviceId },
+          });
+          if (svc) {
+            price = Number(svc.price);
+            itemName = svc.name;
+          }
+        }
+
+        await this.billingService.addInvoiceItem(invoice.id, {
+          serviceId: dto.serviceId,
+          labOrderId: labOrder.id,
+          itemName: itemName,
+          unitPrice: price,
+          quantity: 1,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to auto-add lab order to invoice', error);
+      // We don't fail the lab order creation if billing fails, though ideally they are atomic.
+    }
 
     return ResponseHelper.success(
       labOrder,

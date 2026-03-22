@@ -57,10 +57,10 @@ enum BookingStatus {
 
 // Booking source: where the booking originated
 enum BookingSource {
-  ONLINE        // Patient booked via website/app
-  WALK_IN       // Patient walked in, receptionist created booking
-  PHONE         // Receptionist created booking via phone call
-  RECEPTIONIST  // Receptionist booked on behalf (scheduled)
+  ONLINE // Patient booked via website/app
+  WALK_IN // Patient walked in, receptionist created booking
+  PHONE // Receptionist created booking via phone call
+  RECEPTIONIST // Receptionist booked on behalf (scheduled)
 }
 
 // Priority level for triage
@@ -85,6 +85,7 @@ enum RoomType {
 
 enum LabOrderStatus {
   PENDING
+  PAID
   IN_PROGRESS
   COMPLETED
   CANCELLED
@@ -92,6 +93,7 @@ enum LabOrderStatus {
 
 enum InvoiceStatus {
   DRAFT
+  OPEN
   ISSUED
   PAID
   CANCELLED
@@ -128,10 +130,10 @@ enum NotificationChannel {
 }
 
 model Icd10Code {
-  id        String   @id @default(uuid())
-  code      String   @unique
-  name      String
-  
+  id   String @id @default(uuid())
+  code String @unique
+  name String
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -184,8 +186,8 @@ model User {
   verificationCodes VerificationCode[]
   refreshTokens     RefreshToken[]
 
-  labResultsRecorded LabResult[]    @relation("RecordedByUser")
-  paymentsConfirmed  Payment[]      @relation("ConfirmedByUser")
+  labResultsRecorded LabResult[] @relation("RecordedByUser")
+  paymentsConfirmed  Payment[]   @relation("ConfirmedByUser")
 
   notifications        Notification[]
   auditLogs            AuditLog[]     @relation("ActorLogs")
@@ -218,7 +220,7 @@ model RefreshToken {
 model VerificationCode {
   id        String           @id @default(uuid())
   userId    String
-  code      String           // Hashed OTP/token
+  code      String // Hashed OTP/token
   type      VerificationType
   expiresAt DateTime
   isUsed    Boolean          @default(false)
@@ -264,8 +266,8 @@ model DoctorWorkingHours {
   id        String    @id @default(uuid())
   doctorId  String
   dayOfWeek DayOfWeek
-  startTime String    // "08:00" HH:mm
-  endTime   String    // "17:00"
+  startTime String // "08:00" HH:mm
+  endTime   String // "17:00"
   isActive  Boolean   @default(true)
 
   createdAt DateTime @default(now())
@@ -315,7 +317,7 @@ model DoctorOffDay {
 model DoctorScheduleSlot {
   id          String             @id @default(uuid())
   doctorId    String
-  roomId      String?            // Optional — links to Room for conflict detection
+  roomId      String? // Optional — links to Room for conflict detection
   date        DateTime           @db.Date
   startTime   String
   endTime     String
@@ -375,7 +377,7 @@ model PatientProfile {
   // Denormalized from User for guest patients (and kept in sync for registered users)
   fullName    String
   phone       String?
-  email       String?   // Optional — used for guest notifications
+  email       String? // Optional — used for guest notifications
   dateOfBirth DateTime? @db.Date
   gender      Gender?
   address     String?
@@ -387,17 +389,17 @@ model PatientProfile {
   nationalId String? // CCCD / CMND
 
   // Vital stats
-  bloodType String?  // "A+", "B-", "O+", "AB+", "unknown"
+  bloodType String? // "A+", "B-", "O+", "AB+", "unknown"
   heightCm  Decimal? @db.Decimal(5, 1)
   weightKg  Decimal? @db.Decimal(5, 1)
 
   // Health insurance
   insuranceNumber    String?
   insuranceProvider  String?
-  insuranceType      String?   // "BHYT" | "BHXH" | "Commercial"
+  insuranceType      String? // "BHYT" | "BHXH" | "Commercial"
   insuranceExpiry    DateTime? @db.Date
-  insuranceCardFront String?   // CDN URL — front of BHYT card
-  insuranceCardBack  String?   // CDN URL — back of BHYT card
+  insuranceCardFront String? // CDN URL — front of BHYT card
+  insuranceCardBack  String? // CDN URL — back of BHYT card
 
   // Emergency contact
   emergencyContactName     String?
@@ -436,7 +438,7 @@ model Service {
   durationMinutes Int
   price           Decimal   @db.Decimal(12, 2)
   maxSlotsPerHour Int       @default(2)
-  category        String?   // "Nội khoa", "Ngoại khoa", "Xét nghiệm"
+  category        String? // "Nội khoa", "Ngoại khoa", "Xét nghiệm"
   isActive        Boolean   @default(true)
   deletedAt       DateTime?
 
@@ -479,8 +481,8 @@ model Booking {
 
   bookingCode String   @unique // "BK-20260317-0041" — human-readable reference
   bookingDate DateTime @db.Date
-  startTime   String   // "09:00"
-  endTime     String   // "09:30"
+  startTime   String // "09:00"
+  endTime     String // "09:30"
 
   status   BookingStatus   @default(PENDING)
   source   BookingSource   @default(ONLINE)
@@ -556,7 +558,7 @@ model BookingStatusHistory {
   newStatus   BookingStatus
   changedById String
   reason      String?
-  metadata    Json?          // IP, device, extra context
+  metadata    Json? // IP, device, extra context
 
   createdAt DateTime @default(now())
   // No updatedAt — append-only
@@ -633,9 +635,9 @@ model PrescriptionItem {
   id             String @id @default(uuid())
   prescriptionId String
 
-  medicineName String  // "Ibuprofen"
-  dosage       String  // "400mg"
-  frequency    String  // "3 lần/ngày"
+  medicineName String // "Ibuprofen"
+  dosage       String // "400mg"
+  frequency    String // "3 lần/ngày"
   durationDays Int?
   quantity     Int
   unit         String  @default("viên")
@@ -670,6 +672,7 @@ model LabOrder {
   booking       Booking       @relation(fields: [bookingId], references: [id])
   medicalRecord MedicalRecord @relation(fields: [medicalRecordId], references: [id])
   result        LabResult?
+  invoiceItem   InvoiceItem?
 
   @@index([patientProfileId])
   @@index([medicalRecordId])
@@ -709,12 +712,12 @@ model Invoice {
   // Denormalized
   patientProfileId String
 
-  invoiceNumber  String        @unique // "INV-20260311-0001"
-  subtotal       Decimal       @db.Decimal(12, 2)
-  discountAmount Decimal       @default(0) @db.Decimal(12, 2)
+  invoiceNumber  String  @unique // "INV-20260311-0001"
+  subtotal       Decimal @db.Decimal(12, 2)
+  discountAmount Decimal @default(0) @db.Decimal(12, 2)
 
   // VAT — required by Vietnamese law (Decree 123/2020)
-  vatRate   Decimal @default(0) @db.Decimal(5, 2)  // 0.00 or 10.00
+  vatRate   Decimal @default(0) @db.Decimal(5, 2) // 0.00 or 10.00
   vatAmount Decimal @default(0) @db.Decimal(12, 2)
   taxAmount Decimal @default(0) @db.Decimal(12, 2) // Legacy alias, keep for compatibility
 
@@ -751,10 +754,10 @@ model Invoice {
 }
 
 model InvoiceItem {
-  id        String @id @default(uuid())
-  invoiceId String
-
-  serviceId String?
+  id         String  @id @default(uuid())
+  invoiceId  String
+  serviceId  String?
+  labOrderId String? @unique
 
   // Price snapshot at invoice creation time — immune to future service price changes
   itemName   String
@@ -765,10 +768,12 @@ model InvoiceItem {
 
   createdAt DateTime @default(now())
 
-  invoice Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  service Service? @relation(fields: [serviceId], references: [id])
+  invoice  Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  service  Service?  @relation(fields: [serviceId], references: [id])
+  labOrder LabOrder? @relation(fields: [labOrderId], references: [id])
 
   @@index([invoiceId])
+  @@index([serviceId])
   @@map("invoice_items")
 }
 
@@ -815,7 +820,7 @@ model Notification {
   channel NotificationChannel
 
   isRead   Boolean @default(false)
-  metadata Json?   // { bookingId, bookingCode, doctorName, appointmentTime, ... }
+  metadata Json? // { bookingId, bookingCode, doctorName, appointmentTime, ... }
 
   // Delivery tracking
   sentAt       DateTime?
@@ -827,7 +832,7 @@ model Notification {
   retryCount  Int       @default(0)
   maxRetries  Int       @default(3)
   nextRetryAt DateTime?
-  provider    String?   // "SENDGRID" | "SES" | "TWILIO"
+  provider    String? // "SENDGRID" | "SES" | "TWILIO"
 
   createdAt DateTime @default(now())
   // No updatedAt — append-only
@@ -872,7 +877,7 @@ model AuditLog {
 model SystemConfig {
   id          String  @id @default(uuid())
   key         String  @unique // "clinic.working_hours.start"
-  value       String           // "08:00"
+  value       String // "08:00"
   dataType    String  @default("string") // "string" | "number" | "boolean" | "json"
   category    String  @default("GENERAL") // "GENERAL" | "EMAIL" | "PAYMENT" | "SCHEDULE" | "INVOICE"
   description String?
