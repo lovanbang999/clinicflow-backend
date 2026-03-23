@@ -149,6 +149,10 @@ export class QueueService {
                 phone: true,
                 isGuest: true,
                 patientCode: true,
+                dateOfBirth: true,
+                gender: true,
+                weightKg: true,
+                heightCm: true,
               },
             },
             doctor: {
