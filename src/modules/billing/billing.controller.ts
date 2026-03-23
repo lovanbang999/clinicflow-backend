@@ -48,6 +48,14 @@ export class BillingController {
     return this.billingService.createInvoice(dto);
   }
 
+  @Delete('invoices/:id')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete a DRAFT invoice' })
+  deleteInvoice(@Param('id', ParseUUIDPipe) id: string) {
+    return this.billingService.deleteInvoice(id);
+  }
+
   @Get('invoices')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
   @ApiOperation({ summary: 'List invoices with optional filters' })
