@@ -21,7 +21,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole, InvoiceStatus } from '@prisma/client';
+import { UserRole, InvoiceStatus, InvoiceType } from '@prisma/client';
 import { BillingService } from './billing.service';
 import {
   CreateInvoiceDto,
@@ -40,7 +40,10 @@ export class BillingController {
 
   @Post('invoices')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
-  @ApiOperation({ summary: 'Create DRAFT invoice for a booking (idempotent)' })
+  @ApiOperation({
+    summary:
+      'Create DRAFT invoice for a booking (Phương án B: nhiều invoice/booking)',
+  })
   createInvoice(@Body() dto: CreateInvoiceDto) {
     return this.billingService.createInvoice(dto);
   }
@@ -49,6 +52,7 @@ export class BillingController {
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
   @ApiOperation({ summary: 'List invoices with optional filters' })
   @ApiQuery({ name: 'status', required: false, enum: InvoiceStatus })
+  @ApiQuery({ name: 'invoiceType', required: false, enum: InvoiceType })
   @ApiQuery({ name: 'patientProfileId', required: false })
   @ApiQuery({ name: 'startDate', required: false })
   @ApiQuery({ name: 'endDate', required: false })
@@ -56,6 +60,7 @@ export class BillingController {
   @ApiQuery({ name: 'limit', required: false })
   listInvoices(
     @Query('status') status?: InvoiceStatus,
+    @Query('invoiceType') invoiceType?: InvoiceType,
     @Query('patientProfileId') patientProfileId?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
@@ -64,6 +69,7 @@ export class BillingController {
   ) {
     return this.billingService.listInvoices({
       status,
+      invoiceType,
       patientProfileId,
       startDate,
       endDate,
@@ -74,9 +80,23 @@ export class BillingController {
 
   @Get('invoices/booking/:bookingId')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
-  @ApiOperation({ summary: 'Get invoice by booking ID' })
-  getInvoiceByBooking(@Param('bookingId', ParseUUIDPipe) bookingId: string) {
-    return this.billingService.getInvoiceByBooking(bookingId);
+  @ApiOperation({
+    summary: 'List all invoices for a booking (Phương án B: returns array)',
+  })
+  listInvoicesByBooking(@Param('bookingId', ParseUUIDPipe) bookingId: string) {
+    return this.billingService.listInvoicesByBooking(bookingId);
+  }
+
+  @Get('invoices/booking/:bookingId/pending-labs')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
+  @ApiOperation({
+    summary:
+      'Get PENDING lab orders for a booking not yet added to any invoice — for billing alert',
+  })
+  getPendingLabOrdersForBilling(
+    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+  ) {
+    return this.billingService.getPendingLabOrdersForBilling(bookingId);
   }
 
   @Get('invoices/:id')
@@ -114,7 +134,7 @@ export class BillingController {
   @Post('invoices/:id/payments')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
   @ApiOperation({
-    summary: 'Add payment to invoice (DRAFT → OPEN)',
+    summary: 'Add payment to invoice. Auto-finalizes (PAID) when total is met.',
   })
   addPayment(
     @Param('id', ParseUUIDPipe) id: string,
@@ -127,7 +147,8 @@ export class BillingController {
   @Post('invoices/:id/finalize')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
   @ApiOperation({
-    summary: 'Finalize invoice (OPEN/ISSUED → PAID)',
+    summary:
+      'Manually finalize invoice (OPEN/ISSUED → PAID). Normally auto-triggered by addPayment.',
   })
   finalizeInvoice(@Param('id', ParseUUIDPipe) id: string) {
     return this.billingService.finalizeInvoice(id);

@@ -8,16 +8,17 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateLabOrderDto } from './dto/create-lab-order.dto';
 import { UploadLabResultDto } from './dto/upload-lab-result.dto';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
-import { LabOrderStatus, InvoiceStatus } from '@prisma/client';
-import { BillingService } from '../billing/billing.service';
+import { LabOrderStatus } from '@prisma/client';
 
 @Injectable()
 export class LabOrdersService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly billingService: BillingService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Doctor create lab order
+   * Lab order is created with status PENDING (isPaid = false).
+   * Receptionist will create a LAB invoice to collect payment, backend automatically seeds items from PENDING orders.
+   */
   async createOrder(doctorId: string, dto: CreateLabOrderDto) {
     const booking = await this.prisma.booking.findUnique({
       where: { id: dto.bookingId },
@@ -55,51 +56,14 @@ export class LabOrdersService {
         doctorId: booking.doctorId,
         testName: dto.testName,
         testDescription: dto.testDescription,
-        status: LabOrderStatus.PENDING,
+        status: LabOrderStatus.PENDING, // isPaid = false — receptionist will create a LAB invoice to collect payment
       },
     });
-
-    // Auto-add this lab order to the patient's master invoice
-    try {
-      const invoice = await this.prisma.invoice.findUnique({
-        where: { bookingId: dto.bookingId },
-      });
-
-      if (
-        invoice &&
-        (invoice.status === InvoiceStatus.DRAFT ||
-          invoice.status === InvoiceStatus.OPEN)
-      ) {
-        let price = 0;
-        let itemName = dto.testName;
-
-        if (dto.serviceId) {
-          const svc = await this.prisma.service.findUnique({
-            where: { id: dto.serviceId },
-          });
-          if (svc) {
-            price = Number(svc.price);
-            itemName = svc.name;
-          }
-        }
-
-        await this.billingService.addInvoiceItem(invoice.id, {
-          serviceId: dto.serviceId,
-          labOrderId: labOrder.id,
-          itemName: itemName,
-          unitPrice: price,
-          quantity: 1,
-        });
-      }
-    } catch (error) {
-      console.error('Failed to auto-add lab order to invoice', error);
-      // We don't fail the lab order creation if billing fails, though ideally they are atomic.
-    }
 
     return ResponseHelper.success(
       labOrder,
       'LAB.ORDER_CREATED',
-      'Lab order created successfully',
+      'Lab order created. Receptionist must create a LAB invoice to collect payment.',
       201,
     );
   }
@@ -109,11 +73,39 @@ export class LabOrdersService {
       where: { bookingId },
       include: {
         result: true,
+        invoiceItem: {
+          include: {
+            invoice: {
+              select: { id: true, invoiceNumber: true, status: true },
+            },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
 
     return ResponseHelper.success(orders, 'LAB.FETCHED', '', 200);
+  }
+
+  /**
+   * Get PENDING lab orders for a booking not yet added to any invoice.
+   * Used for receptionist to know when to create a LAB invoice.
+   */
+  async getPendingUnbilledOrders(bookingId: string) {
+    const orders = await this.prisma.labOrder.findMany({
+      where: {
+        bookingId,
+        status: LabOrderStatus.PENDING,
+        invoiceItem: null, // not yet added to any invoice
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    return ResponseHelper.success(
+      orders,
+      'LAB.PENDING_UNBILLED_FETCHED',
+      '',
+      200,
+    );
   }
 
   async getPendingOrders() {
@@ -160,6 +152,49 @@ export class LabOrdersService {
     return ResponseHelper.success(orders, 'LAB.FETCHED_PENDING', '', 200);
   }
 
+  /**
+   * Technician view list of lab orders that have been paid (PAID) and are ready to perform.
+   */
+  async getReadyToPerformOrders() {
+    const rawOrders = await this.prisma.labOrder.findMany({
+      where: { status: LabOrderStatus.PAID },
+      include: {
+        booking: {
+          select: {
+            bookingCode: true,
+            doctor: { select: { fullName: true } },
+            patientProfile: {
+              select: {
+                fullName: true,
+                patientCode: true,
+                gender: true,
+                dateOfBirth: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const orders = rawOrders.map((order) => {
+      const { booking, ...rest } = order;
+      if (!booking) return rest;
+      return {
+        ...rest,
+        booking: { bookingCode: booking.bookingCode, doctor: booking.doctor },
+        patientProfile: booking.patientProfile,
+      };
+    });
+
+    return ResponseHelper.success(
+      orders,
+      'LAB.FETCHED_READY',
+      'Ready to perform orders',
+      200,
+    );
+  }
+
   async addResult(
     resultAuthorId: string,
     labOrderId: string,
@@ -196,7 +231,7 @@ export class LabOrdersService {
         },
       });
 
-      // Update order status
+      // Update order status → COMPLETED
       return tx.labOrder.update({
         where: { id: labOrderId },
         data: { status: LabOrderStatus.COMPLETED },
