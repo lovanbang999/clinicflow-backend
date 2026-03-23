@@ -11,7 +11,12 @@ import {
 } from './dto/billing.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
-import { InvoiceStatus, LabOrderStatus, Prisma } from '@prisma/client';
+import {
+  InvoiceStatus,
+  InvoiceType,
+  LabOrderStatus,
+  Prisma,
+} from '@prisma/client';
 
 @Injectable()
 export class BillingService {
@@ -21,8 +26,8 @@ export class BillingService {
 
   /**
    * Create a DRAFT invoice for a booking.
-   * Auto-seeds a first line item from the booking's service.
-   * Idempotent: returns existing invoice if already exists.
+   * A booking can have multiple invoices (Consultation / Lab / Pharmacy).
+   * Auto-seeds a first line item from the booking's service (for CONSULTATION type).
    */
   async createInvoice(dto: CreateInvoiceDto) {
     const booking = await this.prisma.booking.findUnique({
@@ -35,20 +40,7 @@ export class BillingService {
 
     if (!booking) throw new NotFoundException('Booking not found');
 
-    // Idempotent: return existing invoice
-    const existing = await this.prisma.invoice.findUnique({
-      where: { bookingId: dto.bookingId },
-      include: { items: true, payments: true },
-    });
-    if (existing) {
-      return ResponseHelper.success(
-        existing,
-        'BILLING.INVOICE_FETCHED',
-        'Invoice already exists',
-        200,
-      );
-    }
-
+    const invoiceType = dto.invoiceType ?? InvoiceType.CONSULTATION;
     const servicePrice = booking.service.price;
 
     // Generate invoice number: INV-YYYYMMDD-XXXX
@@ -56,34 +48,85 @@ export class BillingService {
     const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
 
     const invoice = await this.prisma.$transaction(async (tx) => {
+      const seedSubtotal =
+        invoiceType === InvoiceType.CONSULTATION ? Number(servicePrice) : 0;
+
       const inv = await tx.invoice.create({
         data: {
           bookingId: dto.bookingId,
           patientProfileId: booking.patientProfileId,
+          invoiceType,
           invoiceNumber,
-          subtotal: servicePrice,
+          subtotal: seedSubtotal,
           discountAmount: 0,
           vatRate: 0,
           vatAmount: 0,
           taxAmount: 0,
-          totalAmount: servicePrice,
+          totalAmount: seedSubtotal,
           status: InvoiceStatus.DRAFT,
           notes: dto.notes,
         },
       });
 
-      // Seed first item from booking service
-      await tx.invoiceItem.create({
-        data: {
-          invoiceId: inv.id,
-          serviceId: booking.serviceId,
-          itemName: booking.service.name,
-          unitPrice: servicePrice,
-          quantity: 1,
-          totalPrice: servicePrice,
-          sortOrder: 0,
-        },
-      });
+      // For CONSULTATION: seed first item from booking service
+      if (invoiceType === InvoiceType.CONSULTATION) {
+        await tx.invoiceItem.create({
+          data: {
+            invoiceId: inv.id,
+            serviceId: booking.serviceId,
+            itemName: booking.service.name,
+            unitPrice: servicePrice,
+            quantity: 1,
+            totalPrice: servicePrice,
+            sortOrder: 0,
+          },
+        });
+      }
+
+      // For LAB: auto-seed items from PENDING lab orders not yet assigned to any invoice
+      if (invoiceType === InvoiceType.LAB) {
+        const pendingOrders = await tx.labOrder.findMany({
+          where: {
+            bookingId: dto.bookingId,
+            status: LabOrderStatus.PENDING,
+            invoiceItem: null, // not yet added to any invoice
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+
+        let labSubtotal = 0;
+        for (let i = 0; i < pendingOrders.length; i++) {
+          const order = pendingOrders[i];
+          const price = 0;
+          const itemName = order.testName;
+
+          // Try to get price from service if available via MedicalRecord
+          // Price lookup: check if there's a known service for this test
+          // For now use 0 — receptionist can add price via addInvoiceItem
+          // (or link via serviceId in CreateLabOrderDto in future)
+
+          const item = await tx.invoiceItem.create({
+            data: {
+              invoiceId: inv.id,
+              labOrderId: order.id,
+              itemName,
+              unitPrice: price,
+              quantity: 1,
+              totalPrice: price,
+              sortOrder: i,
+            },
+          });
+          labSubtotal += Number(item.totalPrice);
+        }
+
+        // Recalculate totals after seeding
+        if (labSubtotal > 0) {
+          await tx.invoice.update({
+            where: { id: inv.id },
+            data: { subtotal: labSubtotal, totalAmount: labSubtotal },
+          });
+        }
+      }
 
       return tx.invoice.findUnique({
         where: { id: inv.id },
@@ -100,10 +143,16 @@ export class BillingService {
   }
 
   /**
-   * Get invoice by booking ID.
+   * List all invoices for a booking (multiple invoices per booking).
    */
-  async getInvoiceByBooking(bookingId: string) {
-    const invoice = await this.prisma.invoice.findUnique({
+  async listInvoicesByBooking(bookingId: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: { id: true },
+    });
+    if (!booking) throw new NotFoundException('Booking not found');
+
+    const invoices = await this.prisma.invoice.findMany({
       where: { bookingId },
       include: {
         items: { orderBy: { sortOrder: 'asc' } },
@@ -118,21 +167,22 @@ export class BillingService {
                 patientCode: true,
                 phone: true,
                 insuranceNumber: true,
+                dateOfBirth: true,
+                gender: true,
               },
             },
             service: { select: { id: true, name: true } },
+            queueRecord: true,
           },
         },
       },
+      orderBy: { createdAt: 'asc' },
     });
 
-    if (!invoice)
-      throw new NotFoundException('Invoice not found for this booking');
-
     return ResponseHelper.success(
-      invoice,
-      'BILLING.INVOICE_FETCHED',
-      'Invoice retrieved',
+      invoices,
+      'BILLING.INVOICES_FETCHED',
+      'Invoices retrieved for booking',
       200,
     );
   }
@@ -174,11 +224,12 @@ export class BillingService {
   }
 
   /**
-   * List invoices with optional filters (status, patientProfileId, date range).
+   * List invoices with optional filters (status, patientProfileId, invoiceType, date range).
    */
   async listInvoices(params: {
     status?: InvoiceStatus;
     patientProfileId?: string;
+    invoiceType?: InvoiceType;
     startDate?: string;
     endDate?: string;
     page?: number;
@@ -187,6 +238,7 @@ export class BillingService {
     const {
       status,
       patientProfileId,
+      invoiceType,
       startDate,
       endDate,
       page = 1,
@@ -197,6 +249,7 @@ export class BillingService {
     const where: Prisma.InvoiceWhereInput = {};
     if (status) where.status = status;
     if (patientProfileId) where.patientProfileId = patientProfileId;
+    if (invoiceType) where.invoiceType = invoiceType;
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate)
@@ -228,6 +281,28 @@ export class BillingService {
       { invoices, total, page, limit, totalPages: Math.ceil(total / limit) },
       'BILLING.INVOICES_LISTED',
       'Invoices retrieved',
+      200,
+    );
+  }
+
+  /**
+   * Get PENDING lab orders of a booking that are not yet added to any invoice.
+   * Used by receptionist to know if they need to create a LAB invoice.
+   */
+  async getPendingLabOrdersForBilling(bookingId: string) {
+    const orders = await this.prisma.labOrder.findMany({
+      where: {
+        bookingId,
+        status: LabOrderStatus.PENDING,
+        invoiceItem: null, // not yet added to any invoice
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return ResponseHelper.success(
+      orders,
+      'BILLING.PENDING_LABS_FETCHED',
+      'Pending unbilled lab orders',
       200,
     );
   }
@@ -316,8 +391,9 @@ export class BillingService {
 
   /**
    * Add a payment to an invoice.
-   * If Invoice is DRAFT, transitions to OPEN.
-   * If dto.labOrderId is provided, marks the LabOrder as PAID.
+   * - DRAFT → OPEN on first payment.
+   * - Auto-finalizes (OPEN → PAID) when total payments ≥ totalAmount.
+   * - If dto.labOrderId is provided, marks the LabOrder as PAID.
    */
   async addPayment(
     invoiceId: string,
@@ -347,6 +423,15 @@ export class BillingService {
     const insuranceCovered = dto.insuranceCovered ?? 0;
     const patientPaid = dto.amountPaid - insuranceCovered;
 
+    // Calculate total paid after this payment
+    const previouslyPaid = invoice.payments.reduce(
+      (sum, p) => sum + Number(p.amountPaid),
+      0,
+    );
+    const newTotalPaid = previouslyPaid + dto.amountPaid;
+    const invoiceTotal = Number(invoice.totalAmount);
+    const shouldAutoFinalize = newTotalPaid >= invoiceTotal;
+
     await this.prisma.$transaction(async (tx) => {
       await tx.payment.create({
         data: {
@@ -363,17 +448,52 @@ export class BillingService {
         },
       });
 
-      // Change status to OPEN if it was DRAFT
-      if (invoice.status === InvoiceStatus.DRAFT) {
+      if (shouldAutoFinalize) {
+        // Auto-finalize: PAID ngay khi đủ tiền
+        const totalInsurance =
+          invoice.payments.reduce(
+            (sum, p) => sum + Number(p.insuranceCovered),
+            0,
+          ) + insuranceCovered;
+        const totalPatient =
+          invoice.payments.reduce((sum, p) => sum + Number(p.patientPaid), 0) +
+          (patientPaid < 0 ? 0 : patientPaid);
+
+        await tx.invoice.update({
+          where: { id: invoiceId },
+          data: {
+            status: InvoiceStatus.PAID,
+            paidAt: new Date(),
+            insuranceClaimed: totalInsurance > 0,
+            insuranceAmount: totalInsurance,
+            patientCoPayment: totalPatient,
+          },
+        });
+
+        // If LAB invoice: mark ALL linked lab orders as PAID (READY TO PERFORM)
+        if (invoice.invoiceType === InvoiceType.LAB) {
+          const labItems = await tx.invoiceItem.findMany({
+            where: { invoiceId, labOrderId: { not: null } },
+          });
+          if (labItems.length > 0) {
+            await tx.labOrder.updateMany({
+              where: {
+                id: { in: labItems.map((i) => i.labOrderId as string) },
+              },
+              data: { status: LabOrderStatus.PAID },
+            });
+          }
+        }
+      } else if (invoice.status === InvoiceStatus.DRAFT) {
+        // First payment: DRAFT → OPEN
         await tx.invoice.update({
           where: { id: invoiceId },
           data: { status: InvoiceStatus.OPEN },
         });
       }
 
-      // If tied to a lab order, mark LabOrder as PAID
+      // If tied to a specific lab order (single payment for 1 lab order), mark that one too
       if (dto.labOrderId) {
-        // Also verify the lab order exists inside the invoice item
         await tx.labOrder.update({
           where: { id: dto.labOrderId },
           data: { status: LabOrderStatus.PAID },
@@ -389,13 +509,16 @@ export class BillingService {
     return ResponseHelper.success(
       updated,
       'BILLING.PAYMENT_ADDED',
-      'Payment added',
+      shouldAutoFinalize
+        ? 'Payment added and invoice finalized'
+        : 'Payment added',
       200,
     );
   }
 
   /**
-   * Finalize the invoice (ISSUED/OPEN -> PAID)
+   * Manually finalize the invoice (ISSUED/OPEN → PAID).
+   * Normally called automatically by addPayment when total is met.
    */
   async finalizeInvoice(invoiceId: string) {
     const invoice = await this.prisma.invoice.findUnique({

@@ -7,13 +7,23 @@ import {
   IsUUID,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { InvoiceStatus, PaymentMethod } from '@prisma/client';
+import { InvoiceStatus, InvoiceType, PaymentMethod } from '@prisma/client';
 import { Type } from 'class-transformer';
 
 export class CreateInvoiceDto {
   @ApiProperty({ description: 'Booking ID to create invoice for' })
   @IsUUID()
   bookingId: string;
+
+  @ApiPropertyOptional({
+    enum: InvoiceType,
+    default: InvoiceType.CONSULTATION,
+    description:
+      'Type of invoice: CONSULTATION (Examination) | LAB (Laboratory) | PHARMACY (Pharmacy)',
+  })
+  @IsEnum(InvoiceType)
+  @IsOptional()
+  invoiceType?: InvoiceType;
 
   @ApiPropertyOptional()
   @IsString()

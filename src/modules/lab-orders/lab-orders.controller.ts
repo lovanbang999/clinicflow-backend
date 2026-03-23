@@ -50,9 +50,28 @@ export class LabOrdersController {
 
   @Get('pending')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
-  @ApiOperation({ summary: 'Get all pending lab orders' })
+  @ApiOperation({ summary: 'Get all PENDING lab orders (chưa thu tiền)' })
   getPendingOrders() {
     return this.labOrdersService.getPendingOrders();
+  }
+
+  @Get('pending-ready')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
+  @ApiOperation({
+    summary: 'Get PAID lab orders (READY TO PERFORM) — for lab technicians',
+  })
+  getReadyToPerformOrders() {
+    return this.labOrdersService.getReadyToPerformOrders();
+  }
+
+  @Get('booking/:id/pending-unbilled')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
+  @ApiOperation({
+    summary:
+      'Get PENDING lab orders for a booking not yet added to any invoice',
+  })
+  getPendingUnbilledOrders(@Param('id') bookingId: string) {
+    return this.labOrdersService.getPendingUnbilledOrders(bookingId);
   }
 
   @Patch(':id/result')
