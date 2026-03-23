@@ -1,9 +1,6 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, HttpStatus } from '@nestjs/common';
+import { ApiException } from '../../common/exceptions/api.exception';
+import { MessageCodes } from '../../common/constants/message-codes.const';
 import {
   CreateInvoiceDto,
   AddInvoiceItemDto,
@@ -38,7 +35,13 @@ export class BillingService {
       },
     });
 
-    if (!booking) throw new NotFoundException('Booking not found');
+    if (!booking) {
+      throw new ApiException(
+        MessageCodes.BOOKING_NOT_FOUND,
+        'Booking not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
 
     const invoiceType = dto.invoiceType ?? InvoiceType.CONSULTATION;
     const servicePrice = booking.service.price;
@@ -92,18 +95,14 @@ export class BillingService {
             invoiceItem: null, // not yet added to any invoice
           },
           orderBy: { createdAt: 'asc' },
+          include: { service: { select: { price: true } } }, // Fetch real service price
         });
 
         let labSubtotal = 0;
         for (let i = 0; i < pendingOrders.length; i++) {
           const order = pendingOrders[i];
-          const price = 0;
+          const price = order.service?.price ? Number(order.service.price) : 0;
           const itemName = order.testName;
-
-          // Try to get price from service if available via MedicalRecord
-          // Price lookup: check if there's a known service for this test
-          // For now use 0 — receptionist can add price via addInvoiceItem
-          // (or link via serviceId in CreateLabOrderDto in future)
 
           const item = await tx.invoiceItem.create({
             data: {
@@ -143,6 +142,39 @@ export class BillingService {
   }
 
   /**
+   * Delete a DRAFT invoice. Used when a receptionist creates an invoice by mistake
+   * or wants to undo the creation of an invoice.
+   * This cascades and deletes the InvoiceItems.
+   * As a result, any linked LabOrders will be unlinked (invoiceItem becomes null)
+   * and they will reappear in the pending lab orders list.
+   */
+  async deleteInvoice(id: string) {
+    const invoice = await this.prisma.invoice.findUnique({ where: { id } });
+    if (!invoice) {
+      throw new ApiException(
+        MessageCodes.INVOICE_NOT_FOUND,
+        'Invoice not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    if (invoice.status !== InvoiceStatus.DRAFT) {
+      throw new ApiException(
+        MessageCodes.INVOICE_NOT_DRAFT,
+        'Only DRAFT invoices can be deleted.',
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    await this.prisma.invoice.delete({ where: { id } });
+    return ResponseHelper.success(
+      null,
+      'BILLING.INVOICE_DELETED',
+      'Invoice deleted',
+      200,
+    );
+  }
+
+  /**
    * List all invoices for a booking (multiple invoices per booking).
    */
   async listInvoicesByBooking(bookingId: string) {
@@ -150,7 +182,13 @@ export class BillingService {
       where: { id: bookingId },
       select: { id: true },
     });
-    if (!booking) throw new NotFoundException('Booking not found');
+    if (!booking) {
+      throw new ApiException(
+        MessageCodes.BOOKING_NOT_FOUND,
+        'Booking not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
 
     const invoices = await this.prisma.invoice.findMany({
       where: { bookingId },
@@ -213,7 +251,13 @@ export class BillingService {
       },
     });
 
-    if (!invoice) throw new NotFoundException('Invoice not found');
+    if (!invoice) {
+      throw new ApiException(
+        MessageCodes.INVOICE_NOT_FOUND,
+        'Invoice not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
 
     return ResponseHelper.success(
       invoice,
@@ -316,13 +360,21 @@ export class BillingService {
     const invoice = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
     });
-    if (!invoice) throw new NotFoundException('Invoice not found');
+    if (!invoice) {
+      throw new ApiException(
+        MessageCodes.INVOICE_NOT_FOUND,
+        'Invoice not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
     if (
       invoice.status !== InvoiceStatus.DRAFT &&
       invoice.status !== InvoiceStatus.OPEN
     ) {
-      throw new ConflictException(
+      throw new ApiException(
+        MessageCodes.INVOICE_NOT_DRAFT,
         'Can only add items to DRAFT or OPEN invoice',
+        HttpStatus.CONFLICT,
       );
     }
 
@@ -364,13 +416,21 @@ export class BillingService {
     const invoice = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
     });
-    if (!invoice) throw new NotFoundException('Invoice not found');
+    if (!invoice) {
+      throw new ApiException(
+        MessageCodes.INVOICE_NOT_FOUND,
+        'Invoice not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
     if (
       invoice.status !== InvoiceStatus.DRAFT &&
       invoice.status !== InvoiceStatus.OPEN
     ) {
-      throw new ConflictException(
+      throw new ApiException(
+        MessageCodes.INVOICE_NOT_DRAFT,
         'Can only remove items from DRAFT or OPEN invoice',
+        HttpStatus.CONFLICT,
       );
     }
 
@@ -405,18 +465,30 @@ export class BillingService {
       include: { payments: true },
     });
 
-    if (!invoice) throw new NotFoundException('Invoice not found');
+    if (!invoice) {
+      throw new ApiException(
+        MessageCodes.INVOICE_NOT_FOUND,
+        'Invoice not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
 
     if (invoice.status === InvoiceStatus.PAID) {
-      throw new ConflictException('Invoice is already finalized and PAID');
+      throw new ApiException(
+        MessageCodes.INVOICE_ALREADY_PAID,
+        'Invoice is already finalized and PAID',
+        HttpStatus.CONFLICT,
+      );
     }
 
     if (
       invoice.status === InvoiceStatus.CANCELLED ||
       invoice.status === InvoiceStatus.REFUNDED
     ) {
-      throw new ForbiddenException(
+      throw new ApiException(
+        MessageCodes.PAYMENT_FAILED,
         'Cannot add payment to a cancelled or refunded invoice',
+        HttpStatus.FORBIDDEN,
       );
     }
 
@@ -526,10 +598,20 @@ export class BillingService {
       include: { payments: true },
     });
 
-    if (!invoice) throw new NotFoundException('Invoice not found');
+    if (!invoice) {
+      throw new ApiException(
+        MessageCodes.INVOICE_NOT_FOUND,
+        'Invoice not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
 
     if (invoice.status === InvoiceStatus.PAID) {
-      throw new ConflictException('Invoice is already finalized');
+      throw new ApiException(
+        MessageCodes.INVOICE_ALREADY_PAID,
+        'Invoice is already finalized',
+        HttpStatus.CONFLICT,
+      );
     }
 
     // Calculate sum of all payments

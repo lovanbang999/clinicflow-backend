@@ -453,6 +453,7 @@ model Service {
 
   bookings       Booking[]
   invoiceItems   InvoiceItem[]
+  labOrders      LabOrder[]
   doctorServices DoctorService[]
 
   @@index([isActive])
@@ -669,6 +670,7 @@ model LabOrder {
 
   testName        String
   testDescription String?
+  serviceId       String?
   status          LabOrderStatus @default(PENDING)
   orderedAt       DateTime       @default(now())
 
@@ -677,6 +679,7 @@ model LabOrder {
 
   booking       Booking       @relation(fields: [bookingId], references: [id])
   medicalRecord MedicalRecord @relation(fields: [medicalRecordId], references: [id])
+  service       Service?      @relation(fields: [serviceId], references: [id])
   result        LabResult?
   invoiceItem   InvoiceItem?
 

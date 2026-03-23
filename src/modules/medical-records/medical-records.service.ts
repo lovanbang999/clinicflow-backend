@@ -135,6 +135,56 @@ export class MedicalRecordsService {
         });
       }
 
+      // AUTO-CREATE PHARMACY INVOICE when finalizing with prescription items
+      // Flow: Doctor completes visit → System creates PHARMACY invoice → Receptionist collects payment
+      if (
+        dto.completeVisit &&
+        dto.prescriptionItems &&
+        dto.prescriptionItems.length > 0
+      ) {
+        // Only create if no PHARMACY invoice exists yet for this booking
+        const existingPharmacyInvoice = await tx.invoice.findFirst({
+          where: { bookingId: dto.bookingId, invoiceType: 'PHARMACY' },
+        });
+
+        if (!existingPharmacyInvoice) {
+          const count = await tx.invoice.count();
+          const pharmacyInvoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
+
+          const pharmacyInvoice = await tx.invoice.create({
+            data: {
+              bookingId: dto.bookingId,
+              patientProfileId: booking.patientProfileId,
+              invoiceType: 'PHARMACY',
+              invoiceNumber: pharmacyInvoiceNumber,
+              subtotal: 0,
+              discountAmount: 0,
+              vatRate: 0,
+              vatAmount: 0,
+              taxAmount: 0,
+              totalAmount: 0,
+              status: 'DRAFT',
+              notes: 'Tự động tạo khi bác sĩ kê đơn thuốc',
+            },
+          });
+
+          // Seed one item per prescription medicine
+          for (let idx = 0; idx < dto.prescriptionItems.length; idx++) {
+            const item = dto.prescriptionItems[idx];
+            await tx.invoiceItem.create({
+              data: {
+                invoiceId: pharmacyInvoice.id,
+                itemName: `${item.medicineName} (${item.dosage}, ${item.quantity} ${item.unit})`,
+                unitPrice: 0, // Receptionist sets actual price
+                quantity: item.quantity,
+                totalPrice: 0,
+                sortOrder: idx,
+              },
+            });
+          }
+        }
+      }
+
       // Refetch the fully updated record inside transaction
       return tx.medicalRecord.findUnique({
         where: { id: record.id },

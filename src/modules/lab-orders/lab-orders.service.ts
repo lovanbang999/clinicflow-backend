@@ -56,6 +56,7 @@ export class LabOrdersService {
         doctorId: booking.doctorId,
         testName: dto.testName,
         testDescription: dto.testDescription,
+        serviceId: dto.serviceId, // Added serviceId to keep track for billing
         status: LabOrderStatus.PENDING, // isPaid = false — receptionist will create a LAB invoice to collect payment
       },
     });
