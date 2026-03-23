@@ -20,6 +20,7 @@ enum UserRole {
   DOCTOR
   RECEPTIONIST
   ADMIN
+  TECHNICIAN
 }
 
 enum Gender {

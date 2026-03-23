@@ -1,9 +1,6 @@
-import {
-  Injectable,
-  NotFoundException,
-  ForbiddenException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, HttpStatus } from '@nestjs/common';
+import { ApiException } from '../../common/exceptions/api.exception';
+import { MessageCodes } from '../../common/constants/message-codes.const';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLabOrderDto } from './dto/create-lab-order.dto';
 import { UploadLabResultDto } from './dto/upload-lab-result.dto';
@@ -25,11 +22,19 @@ export class LabOrdersService {
     });
 
     if (!booking) {
-      throw new NotFoundException('Booking not found');
+      throw new ApiException(
+        MessageCodes.BOOKING_NOT_FOUND,
+        'Booking not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     if (booking.doctorId !== doctorId) {
-      throw new ForbiddenException('Not authorized to access this booking');
+      throw new ApiException(
+        MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+        'Not authorized to access this booking',
+        HttpStatus.FORBIDDEN,
+      );
     }
 
     // Ensure medical record exists
@@ -153,12 +158,61 @@ export class LabOrdersService {
     return ResponseHelper.success(orders, 'LAB.FETCHED_PENDING', '', 200);
   }
 
+  async getOrderById(id: string) {
+    const rawOrder = await this.prisma.labOrder.findUnique({
+      where: { id },
+      include: {
+        result: true,
+        booking: {
+          select: {
+            bookingCode: true,
+            doctor: { select: { fullName: true } },
+            patientProfile: {
+              select: {
+                fullName: true,
+                patientCode: true,
+                gender: true,
+                dateOfBirth: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!rawOrder) {
+      throw new ApiException(
+        MessageCodes.LAB_ORDER_NOT_FOUND,
+        'Lab order not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    const { booking, ...rest } = rawOrder;
+    const order = {
+      ...rest,
+      booking: booking
+        ? { bookingCode: booking.bookingCode, doctor: booking.doctor }
+        : undefined,
+      patientProfile: booking?.patientProfile,
+    };
+
+    return ResponseHelper.success(
+      order,
+      'LAB.FETCHED_BY_ID',
+      'Lab order fetched successfully',
+      200,
+    );
+  }
+
   /**
    * Technician view list of lab orders that have been paid (PAID) and are ready to perform.
    */
   async getReadyToPerformOrders() {
     const rawOrders = await this.prisma.labOrder.findMany({
-      where: { status: LabOrderStatus.PAID },
+      where: {
+        status: { in: [LabOrderStatus.PAID, LabOrderStatus.IN_PROGRESS] },
+      },
       include: {
         booking: {
           select: {
@@ -206,7 +260,11 @@ export class LabOrdersService {
     });
 
     if (!order) {
-      throw new NotFoundException('Lab order not found');
+      throw new ApiException(
+        MessageCodes.LAB_ORDER_NOT_FOUND,
+        'Lab order not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     const updatedOrder = await this.prisma.$transaction(async (tx) => {
@@ -248,23 +306,59 @@ export class LabOrdersService {
     );
   }
 
+  async updateOrderStatus(labOrderId: string, status: LabOrderStatus) {
+    const order = await this.prisma.labOrder.findUnique({
+      where: { id: labOrderId },
+    });
+
+    if (!order) {
+      throw new ApiException(
+        MessageCodes.LAB_ORDER_NOT_FOUND,
+        'Lab order not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    const updatedOrder = await this.prisma.labOrder.update({
+      where: { id: labOrderId },
+      data: { status },
+    });
+
+    return ResponseHelper.success(
+      updatedOrder,
+      'LAB.STATUS_UPDATED',
+      'Lab order status updated',
+      200,
+    );
+  }
+
   async deleteOrder(doctorId: string, labOrderId: string) {
     const order = await this.prisma.labOrder.findUnique({
       where: { id: labOrderId },
     });
 
     if (!order) {
-      throw new NotFoundException('Lab order not found');
+      throw new ApiException(
+        MessageCodes.LAB_ORDER_NOT_FOUND,
+        'Lab order not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     if (order.doctorId !== doctorId) {
-      throw new ForbiddenException(
+      throw new ApiException(
+        MessageCodes.LAB_ORDER_DELETE_FORBIDDEN,
         'Only the assigned doctor can delete this order',
+        HttpStatus.FORBIDDEN,
       );
     }
 
     if (order.status === LabOrderStatus.COMPLETED) {
-      throw new BadRequestException('Cannot delete a completed lab order');
+      throw new ApiException(
+        MessageCodes.LAB_ORDER_DELETE_COMPLETED,
+        'Cannot delete a completed lab order',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     await this.prisma.labOrder.delete({

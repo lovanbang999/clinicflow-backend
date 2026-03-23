@@ -148,7 +148,12 @@ export class UploadController {
 
   @Post('lab-result')
   @UseInterceptors(FileInterceptor('file'))
-  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.RECEPTIONIST,
+    UserRole.TECHNICIAN,
+    UserRole.DOCTOR,
+  )
   @ApiOperation({
     summary: 'Upload a lab result file (PDF, Image)',
     description: 'Upload a lab result document. Max size: 10MB.',

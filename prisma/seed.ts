@@ -379,6 +379,44 @@ async function main() {
   }
   console.log('  ✅ Receptionists created');
 
+  // TECHNICIANS
+  const techniciansData = [
+    {
+      email: 'ktv.phuong@clinic.com',
+      fullName: 'KTV. Trần Thị Phương',
+      phone: '0981111111',
+      dateOfBirth: new Date('1990-05-15'),
+      gender: Gender.FEMALE,
+      address: '111 Nguyễn Trãi, Quận 1, TP.HCM',
+    },
+    {
+      email: 'ktv.tuan@clinic.com',
+      fullName: 'KTV. Lê Anh Tuấn',
+      phone: '0982222222',
+      dateOfBirth: new Date('1992-08-22'),
+      gender: Gender.MALE,
+      address: '222 Lê Lợi, Quận 1, TP.HCM',
+    },
+  ];
+
+  for (const technician of techniciansData) {
+    await prisma.user.create({
+      data: {
+        email: technician.email,
+        password: await hashPassword('technician123'),
+        role: UserRole.TECHNICIAN,
+        fullName: technician.fullName,
+        phone: technician.phone,
+        dateOfBirth: technician.dateOfBirth,
+        gender: technician.gender,
+        address: technician.address,
+        isActive: true,
+        isVerified: true,
+      },
+    });
+  }
+  console.log('  ✅ Technicians created');
+
   // ============================================
   // 3. CREATE REGISTERED PATIENTS (User + PatientProfile)
   // ============================================
@@ -956,6 +994,9 @@ async function main() {
   const receptionistCount = await prisma.user.count({
     where: { role: UserRole.RECEPTIONIST },
   });
+  const technicianCount = await prisma.user.count({
+    where: { role: UserRole.TECHNICIAN },
+  });
   const patientUserCount = await prisma.user.count({
     where: { role: UserRole.PATIENT },
   });
@@ -964,6 +1005,7 @@ async function main() {
   console.log(`   - Admins: ${adminCount}`);
   console.log(`   - Doctors: ${doctorCount}`);
   console.log(`   - Receptionists: ${receptionistCount}`);
+  console.log(`   - Technicians: ${technicianCount}`);
   console.log(`   - Patients (có tài khoản): ${patientUserCount}`);
   console.log(`🏠 Rooms: ${roomCount}`);
   console.log(`🧑‍⚕️ PatientProfiles: ${patientProfileTotal}`);
@@ -991,6 +1033,9 @@ async function main() {
   console.log('\nRECEPTIONISTS:');
   console.log('  letan.huong@clinic.com / receptionist123');
   console.log('  letan.lan@clinic.com   / receptionist123');
+  console.log('\nTECHNICIANS:');
+  console.log('  ktv.phuong@clinic.com / technician123');
+  console.log('  ktv.tuan@clinic.com   / technician123');
   console.log('\nPATIENTS (registered):');
   console.log('  patient.nam@gmail.com / patient123  → BN-2026-0001');
   console.log('  patient.linh@gmail.com / patient123 → BN-2026-0002');
