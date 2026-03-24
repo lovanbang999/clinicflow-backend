@@ -23,7 +23,18 @@ export class UsersService {
    * Create a new user (ADMIN only)
    */
   async create(createUserDto: CreateUserDto) {
-    const { email, password, fullName, phone, role } = createUserDto;
+    const {
+      email,
+      password,
+      fullName,
+      phone,
+      role,
+      specialties,
+      qualifications,
+      bio,
+      yearsOfExperience,
+      consultationFee,
+    } = createUserDto;
 
     // Check if email exists
     const existingUser = await this.prisma.user.findUnique({
@@ -59,15 +70,30 @@ export class UsersService {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Create user (admin-created users are auto-active)
+    const userData: Prisma.UserCreateInput = {
+      email,
+      password: hashedPassword,
+      fullName,
+      phone,
+      role,
+      isActive: true,
+    };
+
+    // Auto-create DoctorProfile if role is DOCTOR
+    if (role === UserRole.DOCTOR) {
+      userData.doctorProfile = {
+        create: {
+          specialties: specialties || [],
+          qualifications: qualifications || [],
+          bio: bio || null,
+          yearsOfExperience: yearsOfExperience || 0,
+          consultationFee: consultationFee || null,
+        },
+      };
+    }
+
     const user = await this.prisma.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        fullName,
-        phone,
-        role,
-        isActive: true,
-      },
+      data: userData,
       select: {
         id: true,
         email: true,
@@ -478,7 +504,15 @@ export class UsersService {
    * Find all users with filters and pagination
    */
   async findAll(filterDto: FilterUserDto) {
-    const { role, isActive, search, page = 1, limit = 10 } = filterDto;
+    const {
+      role,
+      isActive,
+      search,
+      page = 1,
+      limit = 10,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+    } = filterDto;
 
     // Build where clause
     const where: Prisma.UserWhereInput = { deletedAt: null };
@@ -534,7 +568,7 @@ export class UsersService {
         },
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { [sortBy]: sortOrder },
       }),
       this.prisma.user.count({ where }),
     ]);

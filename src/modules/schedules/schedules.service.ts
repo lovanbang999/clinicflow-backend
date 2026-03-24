@@ -1,10 +1,11 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkingHoursDto } from './dto/create-working-hours.dto';
+import { BulkUpdateWorkingHoursDto } from './dto/bulk-update-working-hours.dto';
 import { CreateBreakTimeDto } from './dto/create-break-time.dto';
 import { CreateOffDayDto } from './dto/create-off-day.dto';
 import { AvailableSlotsQueryDto } from './dto/available-slots-query.dto';
-import { DayOfWeek, BookingStatus, Prisma } from '@prisma/client';
+import { DayOfWeek, BookingStatus, Prisma, UserRole } from '@prisma/client';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
@@ -689,5 +690,79 @@ export class SchedulesService {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+  }
+
+  /**
+   * Bulk update working hours for a doctor (Create/Update/Delete)
+   */
+  async bulkUpdateWorkingHours(dto: BulkUpdateWorkingHoursDto) {
+    const { doctorId, items } = dto;
+
+    // Validate doctor exists
+    const doctor = await this.prisma.user.findUnique({
+      where: { id: doctorId },
+    });
+
+    if (!doctor || doctor.role !== UserRole.DOCTOR) {
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'Doctor not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      for (const item of items) {
+        if (!item.enabled) {
+          // Delete if exists
+          await tx.doctorWorkingHours.deleteMany({
+            where: {
+              doctorId,
+              dayOfWeek: item.dayOfWeek,
+            },
+          });
+        } else {
+          // Validate time format
+          if (item.startTime >= item.endTime) {
+            throw new BadRequestException(
+              `Start time must be before end time for ${item.dayOfWeek}`,
+            );
+          }
+
+          // Upsert
+          await tx.doctorWorkingHours.upsert({
+            where: {
+              doctorId_dayOfWeek: {
+                doctorId,
+                dayOfWeek: item.dayOfWeek,
+              },
+            },
+            update: {
+              startTime: item.startTime,
+              endTime: item.endTime,
+            },
+            create: {
+              doctorId,
+              dayOfWeek: item.dayOfWeek,
+              startTime: item.startTime,
+              endTime: item.endTime,
+            },
+          });
+        }
+      }
+
+      // Return refreshed list
+      const updatedList = await tx.doctorWorkingHours.findMany({
+        where: { doctorId },
+        orderBy: { dayOfWeek: 'asc' },
+      });
+
+      return ResponseHelper.success(
+        updatedList,
+        MessageCodes.SCHEDULE_CREATED,
+        'Bulk working hours updated successfully',
+        200,
+      );
+    });
   }
 }

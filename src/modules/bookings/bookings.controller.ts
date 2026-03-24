@@ -117,7 +117,7 @@ export class BookingsController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
   @ApiOperation({
     summary: 'List all bookings',
     description:
