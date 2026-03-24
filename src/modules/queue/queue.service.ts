@@ -52,7 +52,13 @@ export class QueueService {
 
     // Build booking where clause properly
     const bookingWhere: Prisma.BookingWhereInput = {
-      status: BookingStatus.CHECKED_IN,
+      status: {
+        in: [
+          BookingStatus.CHECKED_IN,
+          BookingStatus.IN_PROGRESS,
+          BookingStatus.COMPLETED,
+        ],
+      },
     };
 
     if (doctorId) {
@@ -85,6 +91,10 @@ export class QueueService {
                   phone: true,
                   isGuest: true,
                   patientCode: true,
+                  dateOfBirth: true,
+                  gender: true,
+                  weightKg: true,
+                  heightCm: true,
                 },
               },
               doctor: {
@@ -100,6 +110,20 @@ export class QueueService {
                   name: true,
                   durationMinutes: true,
                   price: true,
+                },
+              },
+              medicalRecord: {
+                select: {
+                  id: true,
+                  isFinalized: true,
+                  chiefComplaint: true,
+                  clinicalFindings: true,
+                  diagnosisCode: true,
+                  diagnosisName: true,
+                  treatmentPlan: true,
+                  doctorNotes: true,
+                  followUpDate: true,
+                  followUpNote: true,
                 },
               },
             },
@@ -199,7 +223,7 @@ export class QueueService {
   async getStatistics(doctorId?: string, date?: string) {
     // Build booking where clause properly
     const bookingWhere: Prisma.BookingWhereInput = {
-      status: BookingStatus.CHECKED_IN,
+      status: { in: [BookingStatus.CHECKED_IN, BookingStatus.IN_PROGRESS] },
     };
 
     if (doctorId) {
