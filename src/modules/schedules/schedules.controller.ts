@@ -19,6 +19,7 @@ import {
 } from '@nestjs/swagger';
 import { SchedulesService } from './schedules.service';
 import { CreateWorkingHoursDto } from './dto/create-working-hours.dto';
+import { BulkUpdateWorkingHoursDto } from './dto/bulk-update-working-hours.dto';
 import { CreateBreakTimeDto } from './dto/create-break-time.dto';
 import { CreateOffDayDto } from './dto/create-off-day.dto';
 import { AvailableSlotsQueryDto } from './dto/available-slots-query.dto';
@@ -301,5 +302,18 @@ export class SchedulesController {
   })
   getAvailableSlots(@Query() queryDto: AvailableSlotsQueryDto) {
     return this.schedulesService.getAvailableSlots(queryDto);
+  }
+
+  @Post('working-hours/bulk')
+  @Roles(UserRole.ADMIN, UserRole.DOCTOR)
+  @ApiOperation({
+    summary: 'Bulk create/update/delete working hours (ADMIN/DOCTOR only)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Bulk working hours updated successfully',
+  })
+  bulkUpdateWorkingHours(@Body() dto: BulkUpdateWorkingHoursDto) {
+    return this.schedulesService.bulkUpdateWorkingHours(dto);
   }
 }

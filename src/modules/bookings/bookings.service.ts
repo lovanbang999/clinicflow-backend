@@ -326,6 +326,16 @@ export class BookingsService {
             },
           },
           queueRecord: true,
+          medicalRecord: {
+            include: {
+              prescription: {
+                include: {
+                  items: true,
+                },
+              },
+              labOrders: true,
+            },
+          },
         },
         skip: (page - 1) * limit,
         take: limit,
