@@ -377,6 +377,16 @@ export class BookingsService {
           },
           orderBy: { createdAt: 'desc' },
         },
+        medicalRecord: {
+          include: {
+            prescription: {
+              include: {
+                items: true,
+              },
+            },
+            labOrders: true,
+          },
+        },
       },
     });
 
