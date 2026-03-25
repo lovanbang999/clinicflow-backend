@@ -28,6 +28,7 @@ import {
   AddInvoiceItemDto,
   ConfirmPaymentDto,
 } from './dto/billing.dto';
+import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 
 @ApiTags('billing')
 @Controller('billing')
@@ -147,18 +148,27 @@ export class BillingController {
   addPayment(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ConfirmPaymentDto,
-    @Request() req: { user: { id: string } },
+    @CurrentUser() user: { id: string },
   ) {
-    return this.billingService.addPayment(id, dto, req.user.id);
+    return this.billingService.addPayment(id, dto, user.id);
   }
 
-  @Post('invoices/:id/finalize')
-  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
-  @ApiOperation({
-    summary:
-      'Manually finalize invoice (OPEN/ISSUED → PAID). Normally auto-triggered by addPayment.',
-  })
-  finalizeInvoice(@Param('id', ParseUUIDPipe) id: string) {
-    return this.billingService.finalizeInvoice(id);
+  @Get('my-invoices')
+  @Roles(UserRole.PATIENT)
+  @ApiOperation({ summary: 'List invoices for the logged-in patient' })
+  @ApiQuery({ name: 'status', required: false, enum: InvoiceStatus })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  listMyInvoices(
+    @CurrentUser() user: { id: string },
+    @Query('status') status?: InvoiceStatus,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.billingService.listMyInvoices(user.id, {
+      status,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+    });
   }
 }
