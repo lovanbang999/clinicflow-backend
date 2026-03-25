@@ -644,6 +644,44 @@ export class BillingService {
     );
   }
 
+  /**
+   * List invoices for the logged-in patient.
+   */
+  async listMyInvoices(
+    userId: string,
+    params: {
+      status?: InvoiceStatus;
+      page?: number;
+      limit?: number;
+    },
+  ) {
+    const patientProfile = await this.prisma.patientProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+
+    if (!patientProfile) {
+      // If user has no patient profile, return empty list
+      return ResponseHelper.success(
+        {
+          invoices: [],
+          total: 0,
+          page: params.page,
+          limit: params.limit,
+          totalPages: 0,
+        },
+        'BILLING.INVOICES_LISTED',
+        'No patient profile found',
+        200,
+      );
+    }
+
+    return this.listInvoices({
+      ...params,
+      patientProfileId: patientProfile.id,
+    });
+  }
+
   // Private Helpers
 
   private async recalculateTotals(
