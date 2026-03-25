@@ -1,13 +1,21 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from 'src/common/exceptions/api.exception';
 import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import { format } from 'date-fns';
+import { vi } from 'date-fns/locale';
 
 @Injectable()
 export class MedicalRecordsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(MedicalRecordsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   /**
    * Upsert a Medical Record & associated Prescriptions
@@ -192,9 +200,51 @@ export class MedicalRecordsService {
           prescription: {
             include: { items: true },
           },
+          booking: {
+            include: {
+              patientProfile: {
+                include: { user: { select: { email: true } } },
+              },
+              doctor: true,
+              service: true,
+            },
+          },
         },
       });
     });
+
+    // Send post-visit email if the visit was completed
+    if (
+      dto.completeVisit &&
+      updatedRecord?.booking?.patientProfile?.user?.email
+    ) {
+      try {
+        const emailData = {
+          bookingId:
+            updatedRecord.booking.bookingCode ?? updatedRecord.booking.id,
+          patientName: updatedRecord.booking.patientProfile.fullName,
+          patientEmail: updatedRecord.booking.patientProfile.user.email,
+          doctorName: updatedRecord.booking.doctor.fullName,
+          serviceName: updatedRecord.booking.service.name,
+          bookingDate: format(
+            updatedRecord.booking.bookingDate,
+            'EEEE, dd/MM/yyyy',
+            { locale: vi },
+          ),
+          startTime: updatedRecord.booking.startTime,
+          endTime: updatedRecord.booking.endTime,
+          duration: updatedRecord.booking.service.durationMinutes,
+          status: updatedRecord.booking.status as string,
+          diagnosisName: updatedRecord.diagnosisName ?? undefined,
+          hasPrescription: !!(
+            dto.prescriptionItems && dto.prescriptionItems.length > 0
+          ),
+        };
+        await this.notificationsService.sendPostVisitEmail(emailData);
+      } catch (err) {
+        this.logger.error('Failed to send post-visit email', err);
+      }
+    }
 
     return ResponseHelper.success(
       updatedRecord,

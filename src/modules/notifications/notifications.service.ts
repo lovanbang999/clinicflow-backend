@@ -19,6 +19,8 @@ interface BookingEmailData {
   patientNotes?: string;
   queuePosition?: number;
   estimatedWaitTime?: number;
+  diagnosisName?: string;
+  hasPrescription?: boolean;
 }
 
 @Injectable()
@@ -241,6 +243,78 @@ export class NotificationsService {
       this.logger.log(`Booking reminder email sent to ${data.patientEmail}`);
     } catch (error) {
       this.logger.error('Failed to send booking reminder email:', error);
+    }
+  }
+
+  /**
+   * Send post-visit email (Thank you + Prescription notification)
+   */
+  async sendPostVisitEmail(data: BookingEmailData): Promise<void> {
+    try {
+      const html = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+              .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+              .booking-card { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #10b981; }
+              .prescription-alert { background: #e0e7ff; border-left: 4px solid #4f46e5; padding: 15px; margin: 20px 0; border-radius: 4px; }
+              .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #888; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>🏥 Smart Clinic</h1>
+                <p>Visit Completed</p>
+              </div>
+              <div class="content">
+                <h2>Hello ${data.patientName}! 👋</h2>
+                <p>Thank you for visiting Smart Clinic today. Your consultation with <strong>Dr. ${data.doctorName}</strong> has been completed.</p>
+                
+                <div class="booking-card">
+                  <h3>📋 Visit Summary</h3>
+                  <p><strong>Date:</strong> ${data.bookingDate}</p>
+                  <p><strong>Service:</strong> ${data.serviceName}</p>
+                  ${data.diagnosisName ? `<p><strong>Diagnosis:</strong> ${data.diagnosisName}</p>` : ''}
+                </div>
+                
+                ${
+                  data.hasPrescription
+                    ? `
+                <div class="prescription-alert">
+                  <strong>💊 Prescription Available</strong>
+                  <p>Dr. ${data.doctorName} has prescribed medication for you. Please proceed to the <strong>Pharmacy / Reception desk</strong> to collect your medication and complete the pharmacy payment.</p>
+                </div>
+                `
+                    : ''
+                }
+                
+                <p>We wish you good health and a speedy recovery!</p>
+                
+                <p>Best regards,<br>Smart Clinic Team</p>
+              </div>
+              <div class="footer">
+                <p>This is an automated email. Please do not reply.</p>
+                <p>&copy; 2025 Smart Clinic. All rights reserved.</p>
+              </div>
+            </div>
+          </body>
+        </html>
+      `;
+
+      const subject = data.hasPrescription
+        ? '💊 Your Prescription is Ready - Smart Clinic'
+        : '✅ Visit Completed - Smart Clinic';
+
+      await this.mailService.sendMail(data.patientEmail, subject, html);
+
+      this.logger.log(`Post-visit email sent to ${data.patientEmail}`);
+    } catch (error) {
+      this.logger.error('Failed to send post-visit email:', error);
     }
   }
 

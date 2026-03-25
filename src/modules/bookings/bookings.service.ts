@@ -1,3 +1,5 @@
+import { format } from 'date-fns';
+import { vi } from 'date-fns/locale';
 import {
   BookingStatus,
   BookingSource,
@@ -527,6 +529,32 @@ export class BookingsService {
       this.sendCancellationNotification(updatedBooking).catch((error) => {
         console.error('Failed to send cancellation notification:', error);
       });
+    }
+
+    if (status === BookingStatus.CONFIRMED) {
+      const email = updatedBooking.patientProfile?.email;
+      if (email) {
+        this.notificationsService
+          .sendBookingConfirmation({
+            bookingId: updatedBooking.bookingCode ?? updatedBooking.id,
+            patientName: updatedBooking.patientProfile.fullName,
+            patientEmail: email,
+            doctorName: updatedBooking.doctor.fullName,
+            serviceName: updatedBooking.service.name,
+            bookingDate: format(
+              new Date(updatedBooking.bookingDate),
+              'EEEE, dd/MM/yyyy',
+              { locale: vi },
+            ),
+            startTime: updatedBooking.startTime,
+            endTime: updatedBooking.endTime,
+            duration: updatedBooking.service.durationMinutes,
+            status: updatedBooking.status,
+          })
+          .catch((error) => {
+            console.error('Failed to send confirmation notification:', error);
+          });
+      }
     }
 
     return ResponseHelper.success(
