@@ -87,9 +87,9 @@ export class BookingsController {
   @Post('receptionist')
   @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
   @ApiOperation({
-    summary: 'Create a booking as receptionist',
+    summary: 'Create a booking as receptionist (pre-booking or walk-in)',
     description:
-      'Internal booking creation (Walk-in or Receptionist). Initial status is automatically CONFIRMED.',
+      'Creates a booking on behalf of a patient. Use `isPreBooked=true` with `startTime` to reserve a specific slot (pre-booking). Use `isPreBooked=false` without `startTime` for walk-in queue entry. Status is automatically CONFIRMED.',
   })
   @ApiResponse({
     status: 201,
@@ -98,10 +98,14 @@ export class BookingsController {
       example: {
         success: true,
         statusCode: 201,
-        message: 'Booking created and confirmed successfully',
+        message: 'Walk-in booking created successfully',
         data: {
           id: 'uuid',
           bookingCode: 'BK-20241230-0002',
+          isPreBooked: false,
+          startTime: null,
+          endTime: null,
+          estimatedTime: null,
           status: 'CONFIRMED',
           source: 'RECEPTIONIST',
           confirmedAt: '2024-03-20T10:00:00.000Z',

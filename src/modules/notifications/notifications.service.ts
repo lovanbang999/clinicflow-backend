@@ -11,8 +11,8 @@ interface BookingEmailData {
   doctorName: string;
   serviceName: string;
   bookingDate: string;
-  startTime: string;
-  endTime: string;
+  startTime?: string | null; // null/undefined for walk-in bookings
+  endTime?: string | null; // null/undefined for walk-in bookings
   duration: number;
   status: string;
   price?: number;

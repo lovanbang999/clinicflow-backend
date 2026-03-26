@@ -11,9 +11,11 @@ import { ApiException } from '../../common/exceptions/api.exception';
 
 interface BookingWithRelations {
   id: string;
+  bookingCode?: string | null;
   bookingDate: Date;
-  startTime: string;
-  endTime: string;
+  startTime: string | null; // null for walk-in bookings
+  endTime: string | null; // null for walk-in bookings
+  isPreBooked: boolean;
   status: BookingStatus;
   patientProfile: {
     id: string;
@@ -131,7 +133,6 @@ export class QueueService {
         },
         orderBy: [
           { booking: { bookingDate: 'asc' } },
-          { booking: { startTime: 'asc' } },
           { queuePosition: 'asc' },
         ],
         skip: (page - 1) * limit,
@@ -140,9 +141,31 @@ export class QueueService {
       this.prisma.bookingQueue.count({ where }),
     ]);
 
+    // Priority sort (application layer):
+    // 1. Pre-booking with scheduledTime <= now → highest (patient is due)
+    // 2. Walk-in (no fixed time) → medium
+    // 3. Future pre-bookings → lowest
+    const nowTimeStr = new Date().toTimeString().slice(0, 5); // 'HH:MM'
+    const sortedRecords = [...queueRecords].sort((a, b) => {
+      const priorityOf = (r: (typeof queueRecords)[0]): number => {
+        if (r.isPreBooked && r.scheduledTime && r.scheduledTime <= nowTimeStr)
+          return 0;
+        if (!r.isPreBooked) return 1;
+        return 2;
+      };
+
+      const pa = priorityOf(a);
+      const pb = priorityOf(b);
+      if (pa !== pb) return pa - pb;
+      if (pa !== 1) {
+        return (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? '');
+      }
+      return a.queuePosition - b.queuePosition;
+    });
+
     return ResponseHelper.success(
       {
-        queueRecords,
+        queueRecords: sortedRecords,
         pagination: {
           total,
           page,
@@ -299,7 +322,7 @@ export class QueueService {
     const isSlotAvailable = await this.checkSlotAvailability(
       queueRecord.booking.doctorId,
       queueRecord.booking.bookingDate.toISOString().split('T')[0],
-      queueRecord.booking.startTime,
+      queueRecord.booking.startTime ?? '',
       queueRecord.booking.service.maxSlotsPerHour,
     );
 
@@ -430,7 +453,7 @@ export class QueueService {
         tx,
         queueRecord.booking.doctorId,
         queueRecord.booking.bookingDate.toISOString().split('T')[0],
-        queueRecord.booking.startTime,
+        queueRecord.booking.startTime ?? '',
         queueRecord.queuePosition,
       );
     });
@@ -550,7 +573,7 @@ export class QueueService {
         tx,
         queueRecord.booking.doctorId,
         queueRecord.booking.bookingDate.toISOString().split('T')[0],
-        queueRecord.booking.startTime,
+        queueRecord.booking.startTime ?? '',
         queueRecord.queuePosition,
       );
 
@@ -648,8 +671,8 @@ export class QueueService {
         doctorName: booking.doctor.fullName,
         serviceName: booking.service.name,
         bookingDate: this.formatDate(booking.bookingDate),
-        startTime: booking.startTime,
-        endTime: booking.endTime,
+        startTime: booking.startTime ?? '',
+        endTime: booking.endTime ?? '',
         duration: booking.service.durationMinutes,
         status: booking.status,
         price: booking.service.price

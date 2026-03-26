@@ -24,9 +24,11 @@ import { BillingService } from '../billing/billing.service';
 
 interface BookingWithRelations {
   id: string;
+  bookingCode?: string | null;
   bookingDate: Date;
-  startTime: string;
-  endTime: string;
+  startTime: string | null; // null for walk-in bookings
+  endTime: string | null; // null for walk-in bookings
+  isPreBooked: boolean;
   status: BookingStatus;
   patientNotes: string | null;
   patientProfile: {
@@ -71,7 +73,8 @@ export class BookingsService {
   ) {}
 
   /**
-   * Create a new booking (by patient online)
+   * Create a new pre-booking (by patient online)
+   * startTime is REQUIRED for pre-bookings.
    */
   async create(createBookingDto: CreateBookingDto, createdById: string) {
     const {
@@ -85,7 +88,16 @@ export class BookingsService {
       priority = BookingPriority.NORMAL,
     } = createBookingDto;
 
-    await this.validateBooking(createBookingDto);
+    if (!startTime) {
+      throw new ApiException(
+        MessageCodes.BOOKING_INVALID_TIME,
+        'startTime is required for pre-bookings',
+        400,
+        'Booking creation failed',
+      );
+    }
+
+    await this.validateBooking({ ...createBookingDto, isPreBooked: true });
 
     const service = await this.prisma.service.findUnique({
       where: { id: serviceId },
@@ -122,6 +134,7 @@ export class BookingsService {
           bookingDate: new Date(bookingDate),
           startTime,
           endTime,
+          isPreBooked: true,
           status: BookingStatus.PENDING,
           source,
           priority,
@@ -148,7 +161,7 @@ export class BookingsService {
           oldStatus: null,
           newStatus: BookingStatus.PENDING,
           changedById: createdById,
-          reason: 'Booking created online',
+          reason: 'Pre-booking created online',
         },
       });
 
@@ -175,7 +188,10 @@ export class BookingsService {
   }
 
   /**
-   * Create a booking by receptionist/admin (Auto CONFIRMED, source = WALK_IN or RECEPTIONIST)
+   * Create a booking by receptionist/admin.
+   * Supports two modes:
+   *   - Pre-booking (isPreBooked=true): specific slot is reserved, startTime required.
+   *   - Walk-in (isPreBooked=false): patient joins queue, no fixed time needed.
    */
   async createByReceptionist(
     createBookingDto: CreateBookingDto,
@@ -190,6 +206,7 @@ export class BookingsService {
       patientNotes,
       source = BookingSource.RECEPTIONIST,
       priority = BookingPriority.NORMAL,
+      isPreBooked = false, // Default: walk-in for receptionist
     } = createBookingDto;
 
     await this.validateBooking(createBookingDto);
@@ -207,7 +224,53 @@ export class BookingsService {
       );
     }
 
-    const endTime = this.calculateEndTime(startTime, service.durationMinutes);
+    let endTime: string | undefined;
+
+    if (isPreBooked) {
+      // Pre-booking: requires startTime, locks the slot
+      if (!startTime) {
+        throw new ApiException(
+          MessageCodes.BOOKING_INVALID_TIME,
+          'startTime is required for pre-bookings',
+          400,
+          'Booking creation failed',
+        );
+      }
+      endTime = this.calculateEndTime(startTime, service.durationMinutes);
+    } else {
+      // Walk-in: verify queue capacity for this doctor+date
+      const walkInCount = await this.prisma.booking.count({
+        where: {
+          doctorId,
+          bookingDate: new Date(bookingDate),
+          isPreBooked: false,
+          status: {
+            notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW],
+          },
+        },
+      });
+
+      // Check against daily queue capacity from DoctorScheduleSlot
+      const slot = await this.prisma.doctorScheduleSlot.findFirst({
+        where: {
+          doctorId,
+          date: new Date(bookingDate),
+          isActive: true,
+        },
+        select: { maxQueueSize: true },
+      });
+
+      const maxQueue = slot?.maxQueueSize ?? 10;
+      if (walkInCount >= maxQueue) {
+        throw new ApiException(
+          MessageCodes.QUEUE_SLOT_FULL,
+          `Walk-in queue is full for this doctor today (max ${maxQueue})`,
+          409,
+          'Booking creation failed',
+        );
+      }
+    }
+
     const bookingCode = await this.generateBookingCode(bookingDate);
 
     const booking = await this.prisma.$transaction(async (tx) => {
@@ -218,8 +281,9 @@ export class BookingsService {
           serviceId,
           bookingCode,
           bookingDate: new Date(bookingDate),
-          startTime,
-          endTime,
+          startTime: isPreBooked ? startTime : null,
+          endTime: isPreBooked ? endTime : null,
+          isPreBooked,
           status: BookingStatus.CONFIRMED,
           source,
           priority,
@@ -247,7 +311,9 @@ export class BookingsService {
           oldStatus: null,
           newStatus: BookingStatus.CONFIRMED,
           changedById: createdById,
-          reason: 'Booking created by receptionist',
+          reason: isPreBooked
+            ? 'Pre-booking created by receptionist'
+            : 'Walk-in booking created by receptionist',
         },
       });
 
@@ -262,7 +328,9 @@ export class BookingsService {
     try {
       await this.billingService.createInvoice({
         bookingId: booking.id,
-        notes: 'Walk-in/Receptionist generated invoice',
+        notes: isPreBooked
+          ? 'Receptionist pre-booking invoice'
+          : 'Walk-in generated invoice',
       });
     } catch (e) {
       console.error('Failed to auto-create invoice:', e);
@@ -271,7 +339,9 @@ export class BookingsService {
     return ResponseHelper.success(
       booking,
       MessageCodes.BOOKING_CREATED,
-      'Booking created and confirmed successfully',
+      isPreBooked
+        ? 'Pre-booking created and confirmed successfully'
+        : 'Walk-in booking created successfully',
       201,
     );
   }
@@ -489,7 +559,7 @@ export class BookingsService {
           id: booking.id,
           doctorId: booking.doctor.id,
           bookingDate: booking.bookingDate,
-          startTime: booking.startTime,
+          startTime: booking.startTime ?? '',
         });
 
         // Auto-update Invoice status if applicable
@@ -546,8 +616,8 @@ export class BookingsService {
               'EEEE, dd/MM/yyyy',
               { locale: vi },
             ),
-            startTime: updatedBooking.startTime,
-            endTime: updatedBooking.endTime,
+            startTime: updatedBooking.startTime ?? '',
+            endTime: updatedBooking.endTime ?? '',
             duration: updatedBooking.service.durationMinutes,
             status: updatedBooking.status,
           })
@@ -904,7 +974,7 @@ export class BookingsService {
         },
       });
 
-      // 3. Create Queue Record
+      // 3. Create Queue Record (denorm isPreBooked + scheduledTime for priority sort)
       const queueRecord = await tx.bookingQueue.create({
         data: {
           bookingId,
@@ -912,6 +982,8 @@ export class BookingsService {
           queueDate: booking.bookingDate,
           queuePosition: currentPosition,
           estimatedWaitMinutes: estWaitMinutes,
+          isPreBooked: booking.isPreBooked,
+          scheduledTime: booking.startTime ?? null,
         },
       });
 
@@ -925,12 +997,99 @@ export class BookingsService {
       result,
     );
 
+    // Recalculate estimated times for all walk-in patients of this doctor today
+    this.recalculateEstimatedTimes(
+      booking.doctorId,
+      booking.bookingDate.toISOString().split('T')[0],
+    ).catch((err) =>
+      console.error('Failed to recalculate estimated times:', err),
+    );
+
     return ResponseHelper.success(
       result,
       MessageCodes.BOOKING_UPDATED,
       'Patient successfully checked in',
       200,
     );
+  }
+
+  /**
+   * Recalculate estimatedTime for all walk-in patients of a doctor on a given date.
+   * Called after each check-in to keep estimated times accurate.
+   */
+  async recalculateEstimatedTimes(
+    doctorId: string,
+    bookingDate: string,
+  ): Promise<void> {
+    // Fetch all pre-bookings still active today (to find gaps)
+    const preBookings = await this.prisma.booking.findMany({
+      where: {
+        doctorId,
+        bookingDate: new Date(bookingDate),
+        isPreBooked: true,
+        startTime: { not: null },
+        status: {
+          notIn: [
+            BookingStatus.CANCELLED,
+            BookingStatus.NO_SHOW,
+            BookingStatus.COMPLETED,
+          ],
+        },
+      },
+      select: { startTime: true, endTime: true },
+      orderBy: { startTime: 'asc' },
+    });
+
+    // Fetch walk-in queue records for this doctor today
+    const walkInQueues = await this.prisma.bookingQueue.findMany({
+      where: {
+        doctorId,
+        queueDate: new Date(bookingDate),
+        isPreBooked: false,
+        booking: {
+          status: {
+            notIn: [
+              BookingStatus.CANCELLED,
+              BookingStatus.NO_SHOW,
+              BookingStatus.COMPLETED,
+            ],
+          },
+        },
+      },
+      include: {
+        booking: {
+          select: {
+            id: true,
+            service: { select: { durationMinutes: true } },
+          },
+        },
+      },
+      orderBy: { queuePosition: 'asc' },
+    });
+
+    if (walkInQueues.length === 0) return;
+
+    // Find available gaps between pre-bookings or use end-of-day
+    // Simple strategy: stack walk-ins starting from last pre-booking end time
+    const now = new Date();
+    const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const lastPreEnd = preBookings.at(-1)?.endTime ?? nowTimeStr;
+
+    let cursor = new Date(bookingDate);
+    const [hh, mm] = lastPreEnd.split(':').map(Number);
+    cursor.setHours(hh, mm, 0, 0);
+
+    for (const record of walkInQueues) {
+      const estTime = new Date(cursor);
+      const duration = record.booking.service?.durationMinutes ?? 30;
+
+      await this.prisma.booking.update({
+        where: { id: record.booking.id },
+        data: { estimatedTime: estTime },
+      });
+
+      cursor = new Date(cursor.getTime() + duration * 60 * 1000);
+    }
   }
 
   /**
@@ -1029,11 +1188,23 @@ export class BookingsService {
   // ============================================
 
   /**
-   * Validate booking data
+   * Validate booking data.
+   * Rules:
+   *   - Date must be today or future
+   *   - Patient, doctor, service must exist and be active
+   *   - Doctor must work on the requested day
+   *   - startTime must be within working hours (pre-booking only)
+   *   - 1 patient + 1 doctor + 1 date = max 1 active booking
    */
   private async validateBooking(dto: CreateBookingDto) {
-    const { patientProfileId, doctorId, serviceId, bookingDate, startTime } =
-      dto;
+    const {
+      patientProfileId,
+      doctorId,
+      serviceId,
+      bookingDate,
+      startTime,
+      isPreBooked = true,
+    } = dto;
 
     // 1. Check booking date is today or in the future
     const today = new Date();
@@ -1124,37 +1295,40 @@ export class BookingsService {
       );
     }
 
-    if (
-      startTime < workingHours.startTime ||
-      startTime >= workingHours.endTime
-    ) {
-      throw new ApiException(
-        MessageCodes.BOOKING_INVALID_TIME,
-        `Time slot is outside doctor's working hours (${workingHours.startTime} - ${workingHours.endTime})`,
-        400,
-        'Booking validation failed',
-      );
-    }
+    // 6. startTime validation (only for pre-bookings)
+    if (isPreBooked && startTime) {
+      if (
+        startTime < workingHours.startTime ||
+        startTime >= workingHours.endTime
+      ) {
+        throw new ApiException(
+          MessageCodes.BOOKING_INVALID_TIME,
+          `Time slot is outside doctor's working hours (${workingHours.startTime} - ${workingHours.endTime})`,
+          400,
+          'Booking validation failed',
+        );
+      }
 
-    // 6. Check for break times
-    const breakTime = await this.prisma.doctorBreakTime.findFirst({
-      where: {
-        doctorId,
-        breakDate: new Date(bookingDate),
-        AND: [
-          { startTime: { lte: startTime } },
-          { endTime: { gt: startTime } },
-        ],
-      },
-    });
+      // Check for break times
+      const breakTime = await this.prisma.doctorBreakTime.findFirst({
+        where: {
+          doctorId,
+          breakDate: new Date(bookingDate),
+          AND: [
+            { startTime: { lte: startTime } },
+            { endTime: { gt: startTime } },
+          ],
+        },
+      });
 
-    if (breakTime) {
-      throw new ApiException(
-        MessageCodes.SCHEDULE_CONFLICT,
-        `Time slot conflicts with doctor's break time (${breakTime.startTime} - ${breakTime.endTime})`,
-        400,
-        'Booking validation failed',
-      );
+      if (breakTime) {
+        throw new ApiException(
+          MessageCodes.SCHEDULE_CONFLICT,
+          `Time slot conflicts with doctor's break time (${breakTime.startTime} - ${breakTime.endTime})`,
+          400,
+          'Booking validation failed',
+        );
+      }
     }
 
     // 7. Check for off days
@@ -1176,7 +1350,8 @@ export class BookingsService {
       );
     }
 
-    // 8. Check duplicate booking (same patient profile + doctor + same day)
+    // 8. Rule: 1 patient + 1 doctor + 1 date = max 1 active booking
+    // (A partial unique index also enforces this at DB level for safety)
     const existingBooking = await this.prisma.booking.findFirst({
       where: {
         patientProfileId,
@@ -1191,7 +1366,7 @@ export class BookingsService {
     if (existingBooking) {
       throw new ApiException(
         MessageCodes.BOOKING_DUPLICATE,
-        'This patient already has a booking with this doctor on this date',
+        'This patient already has an active booking with this doctor on this date',
         409,
         'Booking validation failed',
       );
@@ -1361,8 +1536,8 @@ export class BookingsService {
         doctorName: booking.doctor.fullName,
         serviceName: booking.service.name,
         bookingDate: this.formatDate(booking.bookingDate),
-        startTime: booking.startTime,
-        endTime: booking.endTime,
+        startTime: booking.startTime ?? '',
+        endTime: booking.endTime ?? '',
         duration: booking.service.durationMinutes,
         status: booking.status,
         price: booking.service.price
@@ -1392,8 +1567,8 @@ export class BookingsService {
         doctorName: booking.doctor.fullName,
         serviceName: booking.service.name,
         bookingDate: this.formatDate(booking.bookingDate),
-        startTime: booking.startTime,
-        endTime: booking.endTime,
+        startTime: booking.startTime ?? '',
+        endTime: booking.endTime ?? '',
         duration: booking.service.durationMinutes,
         status: booking.status,
         price: booking.service.price
