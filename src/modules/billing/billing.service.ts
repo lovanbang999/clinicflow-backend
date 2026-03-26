@@ -322,7 +322,15 @@ export class BillingService {
     ]);
 
     return ResponseHelper.success(
-      { invoices, total, page, limit, totalPages: Math.ceil(total / limit) },
+      {
+        invoices,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      },
       'BILLING.INVOICES_LISTED',
       'Invoices retrieved',
       200,
