@@ -15,9 +15,22 @@ import {
   Prisma,
 } from '@prisma/client';
 
+import { NotificationsService } from '../notifications/notifications.service';
+import { format } from 'date-fns';
+
 @Injectable()
 export class BillingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
+
+  private formatVNCurrency(amount: number): string {
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND',
+    }).format(amount);
+  }
 
   // Invoice CRUD
 
@@ -583,8 +596,33 @@ export class BillingService {
 
     const updated = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
-      include: { items: true, payments: true },
+      include: {
+        items: true,
+        payments: true,
+        booking: {
+          include: {
+            patientProfile: {
+              include: { user: { select: { email: true } } },
+            },
+          },
+        },
+      },
     });
+
+    // Send invoice email if finalized
+    if (shouldAutoFinalize && updated?.booking?.patientProfile?.user?.email) {
+      this.notificationsService
+        .sendInvoiceEmail({
+          patientName: updated.booking.patientProfile.fullName,
+          patientEmail: updated.booking.patientProfile.user.email,
+          invoiceNumber: updated.invoiceNumber,
+          invoiceDate: format(updated.createdAt, 'dd/MM/yyyy'),
+          invoiceType: updated.invoiceType,
+          totalAmount: this.formatVNCurrency(Number(updated.totalAmount)),
+          invoiceUrl: `${process.env.FRONTEND_URL}/patient/billing/${updated.id}`,
+        })
+        .catch((err) => console.error('Failed to send invoice email', err));
+    }
 
     return ResponseHelper.success(
       updated,
@@ -641,8 +679,35 @@ export class BillingService {
         insuranceAmount: totalInsurance,
         patientCoPayment: totalPatient,
       },
-      include: { items: true, payments: true },
+      include: {
+        items: true,
+        payments: true,
+        booking: {
+          include: {
+            patientProfile: {
+              include: { user: { select: { email: true } } },
+            },
+          },
+        },
+      },
     });
+
+    // Send invoice email
+    if (updatedInvoice?.booking?.patientProfile?.user?.email) {
+      this.notificationsService
+        .sendInvoiceEmail({
+          patientName: updatedInvoice.booking.patientProfile.fullName,
+          patientEmail: updatedInvoice.booking.patientProfile.user.email,
+          invoiceNumber: updatedInvoice.invoiceNumber,
+          invoiceDate: format(updatedInvoice.createdAt, 'dd/MM/yyyy'),
+          invoiceType: updatedInvoice.invoiceType,
+          totalAmount: this.formatVNCurrency(
+            Number(updatedInvoice.totalAmount),
+          ),
+          invoiceUrl: `${process.env.FRONTEND_URL}/patient/billing/${updatedInvoice.id}`,
+        })
+        .catch((err) => console.error('Failed to send invoice email', err));
+    }
 
     return ResponseHelper.success(
       updatedInvoice,

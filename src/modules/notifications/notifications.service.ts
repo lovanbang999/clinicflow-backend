@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MailService } from './mail.service';
+import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as Handlebars from 'handlebars';
@@ -11,8 +12,8 @@ interface BookingEmailData {
   doctorName: string;
   serviceName: string;
   bookingDate: string;
-  startTime?: string | null; // null/undefined for walk-in bookings
-  endTime?: string | null; // null/undefined for walk-in bookings
+  startTime?: string | null;
+  endTime?: string | null;
   duration: number;
   status: string;
   price?: number;
@@ -26,10 +27,13 @@ interface BookingEmailData {
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
-  private bookingConfirmationTemplate: HandlebarsTemplateDelegate;
-  private queuePromotionTemplate: HandlebarsTemplateDelegate;
+  private layoutTemplate: HandlebarsTemplateDelegate;
+  private templates: Record<string, HandlebarsTemplateDelegate> = {};
 
-  constructor(private readonly mailService: MailService) {
+  constructor(
+    private readonly mailService: MailService,
+    private readonly configService: ConfigService,
+  ) {
     this.loadTemplates();
   }
 
@@ -38,33 +42,55 @@ export class NotificationsService {
    */
   private loadTemplates() {
     try {
-      const templatesDir = path.join(__dirname, 'templates');
-
-      // Load booking confirmation template
-      const bookingConfirmationPath = path.join(
-        templatesDir,
-        'booking-confirmation.hbs',
-      );
-      const bookingConfirmationSource = fs.readFileSync(
-        bookingConfirmationPath,
-        'utf-8',
-      );
-      this.bookingConfirmationTemplate = Handlebars.compile(
-        bookingConfirmationSource,
+      const templatesDir = path.join(
+        process.cwd(),
+        'src/modules/notifications/templates',
       );
 
-      // Load queue promotion template
-      const queuePromotionPath = path.join(templatesDir, 'queue-promotion.hbs');
-      const queuePromotionSource = fs.readFileSync(queuePromotionPath, 'utf-8');
-      this.queuePromotionTemplate = Handlebars.compile(queuePromotionSource);
+      // Load layout
+      const layoutPath = path.join(templatesDir, 'layout.hbs');
+      if (fs.existsSync(layoutPath)) {
+        this.layoutTemplate = Handlebars.compile(
+          fs.readFileSync(layoutPath, 'utf-8'),
+        );
+      }
 
-      this.logger.log('Email templates loaded successfully');
+      // Load all body templates
+      const templateFiles = [
+        'booking-confirmation',
+        'booking-cancellation',
+        'booking-reminder',
+        'post-visit',
+        'invoice',
+        'queue-promotion',
+      ];
+
+      for (const t of templateFiles) {
+        const tPath = path.join(templatesDir, `${t}.hbs`);
+        if (fs.existsSync(tPath)) {
+          this.templates[t] = Handlebars.compile(
+            fs.readFileSync(tPath, 'utf-8'),
+          );
+        }
+      }
+
+      this.logger.log('Notification email templates loaded successfully');
     } catch (error) {
       this.logger.error('Failed to load email templates:', error);
-      this.logger.warn(
-        'Email notifications will not be sent with custom templates',
-      );
     }
+  }
+
+  /**
+   * Helper to compile template with layout
+   */
+  private compile(templateName: string, data: any): string {
+    const bodyTemplate = this.templates[templateName];
+    if (!bodyTemplate || !this.layoutTemplate) {
+      this.logger.error(`Template ${templateName} or layout not found`);
+      return '';
+    }
+    const bodyHtml = bodyTemplate(data);
+    return this.layoutTemplate({ ...data, body: bodyHtml });
   }
 
   /**
@@ -72,23 +98,22 @@ export class NotificationsService {
    */
   async sendBookingConfirmation(data: BookingEmailData): Promise<void> {
     try {
-      // Note: QUEUED status is deprecated — booking flow now uses PENDING → CONFIRMED
       const isPending = data.status === 'PENDING';
-      const isQueued = false; // kept for template backward compat
+      const isQueued = data.status === 'QUEUED' || !data.startTime;
 
-      const html = this.bookingConfirmationTemplate({
+      const subject = isPending
+        ? '📅 Lịch hẹn mới đang được xử lý - Smart Clinic'
+        : '✅ Xác nhận lịch hẹn thành công - Smart Clinic';
+
+      const html = this.compile('booking-confirmation', {
         ...data,
         isQueued,
         isPending,
-        statusClass: this.getStatusClass(data.status),
+        subject,
+        subheader: 'Xác nhận đặt lịch',
       });
 
-      const subject = isPending
-        ? '📅 Booking Scheduled - Smart Clinic'
-        : '✅ Booking Confirmed - Smart Clinic';
-
       await this.mailService.sendMail(data.patientEmail, subject, html);
-
       this.logger.log(
         `Booking confirmation email sent to ${data.patientEmail}`,
       );
@@ -102,12 +127,18 @@ export class NotificationsService {
    */
   async sendQueuePromotion(data: BookingEmailData): Promise<void> {
     try {
-      const html = this.queuePromotionTemplate(data);
+      const subject = '🎉 Lịch hẹn của bạn đã được xác nhận! - Smart Clinic';
+      const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+      const myBookingsUrl = `${frontendUrl}/patient/bookings`;
 
-      const subject = '🎉 Your Appointment is Confirmed! - Smart Clinic';
+      const html = this.compile('queue-promotion', {
+        ...data,
+        myBookingsUrl,
+        subject,
+        subheader: 'Thông báo xác nhận lịch',
+      });
 
       await this.mailService.sendMail(data.patientEmail, subject, html);
-
       this.logger.log(`Queue promotion email sent to ${data.patientEmail}`);
     } catch (error) {
       this.logger.error('Failed to send queue promotion email:', error);
@@ -119,56 +150,18 @@ export class NotificationsService {
    */
   async sendBookingCancellation(data: BookingEmailData): Promise<void> {
     try {
-      const html = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-              .header { background: #dc3545; color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-              .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-              .booking-card { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
-              .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #888; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h1>🏥 Smart Clinic</h1>
-                <p>Booking Cancellation</p>
-              </div>
-              <div class="content">
-                <h2>Hello ${data.patientName},</h2>
-                <p>Your appointment has been cancelled.</p>
-                
-                <div class="booking-card">
-                  <h3>📋 Cancelled Booking Details</h3>
-                  <p><strong>Booking ID:</strong> ${data.bookingId}</p>
-                  <p><strong>Doctor:</strong> ${data.doctorName}</p>
-                  <p><strong>Service:</strong> ${data.serviceName}</p>
-                  <p><strong>Date:</strong> ${data.bookingDate}</p>
-                  <p><strong>Time:</strong> ${data.startTime} - ${data.endTime}</p>
-                </div>
-                
-                <p>If you did not request this cancellation or have any questions, please contact us immediately.</p>
-                <p>We hope to serve you again soon!</p>
-                
-                <p>Best regards,<br>Smart Clinic Team</p>
-              </div>
-              <div class="footer">
-                <p>This is an automated email. Please do not reply.</p>
-                <p>&copy; 2025 Smart Clinic. All rights reserved.</p>
-              </div>
-            </div>
-          </body>
-        </html>
-      `;
+      const subject = '❌ Thông báo hủy lịch hẹn - Smart Clinic';
+      const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+      const rebookUrl = `${frontendUrl}/booking`;
 
-      const subject = '❌ Booking Cancelled - Smart Clinic';
+      const html = this.compile('booking-cancellation', {
+        ...data,
+        rebookUrl,
+        subject,
+        subheader: 'Hủy lịch hẹn',
+      });
 
       await this.mailService.sendMail(data.patientEmail, subject, html);
-
       this.logger.log(
         `Booking cancellation email sent to ${data.patientEmail}`,
       );
@@ -182,64 +175,16 @@ export class NotificationsService {
    */
   async sendBookingReminder(data: BookingEmailData): Promise<void> {
     try {
-      const html = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-              .header { background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-              .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-              .booking-card { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
-              .alert { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }
-              .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #888; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h1>🏥 Smart Clinic</h1>
-                <p>Appointment Reminder</p>
-              </div>
-              <div class="content">
-                <h2>Hello ${data.patientName}! 👋</h2>
-                <p><strong>This is a friendly reminder about your upcoming appointment tomorrow.</strong></p>
-                
-                <div class="booking-card">
-                  <h3>📋 Appointment Details</h3>
-                  <p><strong>Doctor:</strong> ${data.doctorName}</p>
-                  <p><strong>Service:</strong> ${data.serviceName}</p>
-                  <p><strong>Date:</strong> ${data.bookingDate}</p>
-                  <p><strong>Time:</strong> ${data.startTime} - ${data.endTime}</p>
-                </div>
-                
-                <div class="alert">
-                  <strong>📌 Please Remember:</strong>
-                  <ul>
-                    <li>Arrive 10 minutes early</li>
-                    <li>Bring your ID and medical documents</li>
-                    <li>If you need to cancel, please do so ASAP</li>
-                  </ul>
-                </div>
-                
-                <p>We look forward to seeing you!</p>
-                
-                <p>Best regards,<br>Smart Clinic Team</p>
-              </div>
-              <div class="footer">
-                <p>This is an automated email. Please do not reply.</p>
-                <p>&copy; 2025 Smart Clinic. All rights reserved.</p>
-              </div>
-            </div>
-          </body>
-        </html>
-      `;
+      const subject =
+        '⏰ Nhắc hẹn: Lịch khám của bạn vào ngày mai - Smart Clinic';
 
-      const subject = '⏰ Appointment Reminder - Tomorrow - Smart Clinic';
+      const html = this.compile('booking-reminder', {
+        ...data,
+        subject,
+        subheader: 'Nhắc lịch khám bệnh',
+      });
 
       await this.mailService.sendMail(data.patientEmail, subject, html);
-
       this.logger.log(`Booking reminder email sent to ${data.patientEmail}`);
     } catch (error) {
       this.logger.error('Failed to send booking reminder email:', error);
@@ -251,67 +196,17 @@ export class NotificationsService {
    */
   async sendPostVisitEmail(data: BookingEmailData): Promise<void> {
     try {
-      const html = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-              .header { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-              .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-              .booking-card { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #10b981; }
-              .prescription-alert { background: #e0e7ff; border-left: 4px solid #4f46e5; padding: 15px; margin: 20px 0; border-radius: 4px; }
-              .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #888; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h1>🏥 Smart Clinic</h1>
-                <p>Visit Completed</p>
-              </div>
-              <div class="content">
-                <h2>Hello ${data.patientName}! 👋</h2>
-                <p>Thank you for visiting Smart Clinic today. Your consultation with <strong>Dr. ${data.doctorName}</strong> has been completed.</p>
-                
-                <div class="booking-card">
-                  <h3>📋 Visit Summary</h3>
-                  <p><strong>Date:</strong> ${data.bookingDate}</p>
-                  <p><strong>Service:</strong> ${data.serviceName}</p>
-                  ${data.diagnosisName ? `<p><strong>Diagnosis:</strong> ${data.diagnosisName}</p>` : ''}
-                </div>
-                
-                ${
-                  data.hasPrescription
-                    ? `
-                <div class="prescription-alert">
-                  <strong>💊 Prescription Available</strong>
-                  <p>Dr. ${data.doctorName} has prescribed medication for you. Please proceed to the <strong>Pharmacy / Reception desk</strong> to collect your medication and complete the pharmacy payment.</p>
-                </div>
-                `
-                    : ''
-                }
-                
-                <p>We wish you good health and a speedy recovery!</p>
-                
-                <p>Best regards,<br>Smart Clinic Team</p>
-              </div>
-              <div class="footer">
-                <p>This is an automated email. Please do not reply.</p>
-                <p>&copy; 2025 Smart Clinic. All rights reserved.</p>
-              </div>
-            </div>
-          </body>
-        </html>
-      `;
-
       const subject = data.hasPrescription
-        ? '💊 Your Prescription is Ready - Smart Clinic'
-        : '✅ Visit Completed - Smart Clinic';
+        ? '💊 Đơn thuốc của bạn đã sẵn sàng - Smart Clinic'
+        : '✅ Hoàn tất buổi thăm khám - Smart Clinic';
+
+      const html = this.compile('post-visit', {
+        ...data,
+        subject,
+        subheader: 'Kết quả thăm khám',
+      });
 
       await this.mailService.sendMail(data.patientEmail, subject, html);
-
       this.logger.log(`Post-visit email sent to ${data.patientEmail}`);
     } catch (error) {
       this.logger.error('Failed to send post-visit email:', error);
@@ -319,19 +214,30 @@ export class NotificationsService {
   }
 
   /**
-   * Get status CSS class
+   * Send invoice email
    */
-  private getStatusClass(status: string): string {
-    const statusMap: Record<string, string> = {
-      PENDING: 'pending',
-      CONFIRMED: 'confirmed',
-      CHECKED_IN: 'confirmed',
-      IN_PROGRESS: 'confirmed',
-      COMPLETED: 'confirmed',
-      CANCELLED: 'pending',
-      NO_SHOW: 'pending',
-    };
+  async sendInvoiceEmail(data: {
+    patientName: string;
+    patientEmail: string;
+    invoiceNumber: string;
+    invoiceDate: string;
+    invoiceType: string;
+    totalAmount: string;
+    invoiceUrl: string;
+  }): Promise<void> {
+    try {
+      const subject = `🧾 Hóa đơn thanh toán ${data.invoiceNumber} - Smart Clinic`;
 
-    return statusMap[status] || 'pending';
+      const html = this.compile('invoice', {
+        ...data,
+        subject,
+        subheader: 'Hóa đơn dịch vụ',
+      });
+
+      await this.mailService.sendMail(data.patientEmail, subject, html);
+      this.logger.log(`Invoice email sent to ${data.patientEmail}`);
+    } catch (error) {
+      this.logger.error('Failed to send invoice email:', error);
+    }
   }
 }
