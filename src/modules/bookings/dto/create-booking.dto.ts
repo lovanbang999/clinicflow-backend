@@ -6,6 +6,7 @@ import {
   IsOptional,
   Matches,
   IsEnum,
+  IsBoolean,
 } from 'class-validator';
 import { BookingSource, BookingPriority } from '@prisma/client';
 
@@ -40,14 +41,27 @@ export class CreateBookingDto {
   bookingDate: string;
 
   @ApiProperty({
-    description: 'Start time (HH:mm format)',
+    description: 'Start time (HH:mm format) — required for pre-bookings',
     example: '09:00',
+    required: false,
   })
+  @IsOptional()
   @IsString()
   @Matches(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/, {
     message: 'Invalid time format. Use HH:mm (24-hour)',
   })
-  startTime: string;
+  startTime?: string;
+
+  @ApiProperty({
+    description:
+      'Whether this is a pre-booking (slot reserved) or walk-in (queue)',
+    example: true,
+    required: false,
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isPreBooked?: boolean;
 
   @ApiProperty({
     description: 'Booking source',

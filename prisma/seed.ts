@@ -798,7 +798,46 @@ async function main() {
   console.log(`  ✅ Created ${breakTimeCount} break time records`);
 
   // ============================================
-  // 9. CREATE SAMPLE BOOKINGS (v3.0 — uses patientProfileId)
+  // 9. CREATE DOCTOR SCHEDULE SLOTS (Capacity tracking)
+  // ============================================
+  console.log('\n📅 Creating doctor schedule slots...');
+
+  let slotCount = 0;
+  // Seed slots for the next 7 days
+  for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
+    const slotDate = new Date(dateOnly);
+    slotDate.setDate(dateOnly.getDate() + dayOffset);
+    if (slotDate.getDay() === 0) continue; // Skip Sunday
+
+    for (const doctor of createdDoctors) {
+      // Create slots from 08:00 to 17:00 (hourly)
+      for (let hour = 8; hour < 17; hour++) {
+        if (hour === 12) continue; // Skip lunch hour
+
+        const startTime = `${String(hour).padStart(2, '0')}:00`;
+        const endTime = `${String(hour + 1).padStart(2, '0')}:00`;
+
+        await prisma.doctorScheduleSlot.create({
+          data: {
+            doctorId: doctor.id,
+            date: slotDate,
+            startTime,
+            endTime,
+            maxPreBookings: 2, // 2 pre-bookings per hour
+            maxQueueSize: 5, // 5 walk-in slots per hour
+            preBookedCount: 0,
+            queueCount: 0,
+            isActive: true,
+          },
+        });
+        slotCount++;
+      }
+    }
+  }
+  console.log(`  ✅ Created ${slotCount} schedule slots`);
+
+  // ============================================
+  // 9. CREATE SAMPLE BOOKINGS (hybrid: pre-booking + walk-in)
   // ============================================
   console.log('\n📅 Creating sample bookings...');
 
@@ -811,14 +850,22 @@ async function main() {
   const bookingDates = [
     new Date(dateOnly), // today
     new Date(dateOnly), // today
-    new Date(dateOnly), // today
+    new Date(dateOnly), // today — walk-in
     new Date(dateOnly.getTime() + 1 * 24 * 60 * 60 * 1000), // tomorrow
-    new Date(dateOnly.getTime() + 2 * 24 * 60 * 60 * 1000), // +2 days
+    new Date(dateOnly.getTime() + 2 * 24 * 60 * 60 * 1000), // +2 days — walk-in
     new Date(dateOnly.getTime() + 3 * 24 * 60 * 60 * 1000), // +3 days
   ];
 
-  const sampleBookings = [
-    // Registered patient — Nguyễn Văn Nam (online booking)
+  // Helper: compute endTime string from startTime + durationMinutes
+  function calcEndTime(startTime: string, durationMinutes: number): string {
+    const [h, m] = startTime.split(':').map(Number);
+    const total = h * 60 + m + durationMinutes;
+    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+  }
+
+  // ---- PRE-BOOKINGS (isPreBooked=true, startTime required) ----
+  const preBookings = [
+    // Online: Nguyễn Văn Nam — Nội tổng quát
     {
       patientProfile: createdPatientProfiles[0],
       doctor: doctorVanAn,
@@ -828,7 +875,7 @@ async function main() {
       source: BookingSource.ONLINE,
       priority: BookingPriority.NORMAL,
     },
-    // Registered patient — Lê Thị Linh (online booking)
+    // Online: Lê Thị Linh — Tim mạch
     {
       patientProfile: createdPatientProfiles[1],
       doctor: doctorLeBinh,
@@ -838,56 +885,31 @@ async function main() {
       source: BookingSource.ONLINE,
       priority: BookingPriority.NORMAL,
     },
-    // GUEST patient — Trần Văn Khách (walk-in, receptionist created)
-    {
-      patientProfile: createdGuestProfiles[0],
-      doctor: doctorVanAn,
-      service: xetNghiem,
-      bookingDate: bookingDates[2],
-      startTime: '08:30',
-      source: BookingSource.WALK_IN,
-      priority: BookingPriority.NORMAL,
-    },
-    // Registered patient — upcoming
+    // Phone: Trần Anh Tuấn — upcoming
     {
       patientProfile: createdPatientProfiles[2],
       doctor: doctorVanAn,
       service: khamTongQuat,
       bookingDate: bookingDates[3],
       startTime: '09:00',
-      source: BookingSource.ONLINE,
+      source: BookingSource.PHONE,
       priority: BookingPriority.NORMAL,
     },
-    // GUEST urgent
-    {
-      patientProfile: createdGuestProfiles[1],
-      doctor: doctorLeBinh,
-      service: khamTimMach,
-      bookingDate: bookingDates[4],
-      startTime: '08:00',
-      source: BookingSource.RECEPTIONIST,
-      priority: BookingPriority.URGENT,
-    },
-    // Registered patient — future
+    // Receptionist pre-booking: Phạm Thị Mai — future
     {
       patientProfile: createdPatientProfiles[3],
       doctor: doctorVanAn,
       service: khamTongQuat,
       bookingDate: bookingDates[5],
       startTime: '14:00',
-      source: BookingSource.PHONE,
+      source: BookingSource.RECEPTIONIST,
       priority: BookingPriority.NORMAL,
     },
   ];
 
-  let bookingCount = 0;
-  for (const bData of sampleBookings) {
+  for (const bData of preBookings) {
     const dateStr = bData.bookingDate.toISOString().split('T')[0];
-    const duration = bData.service.durationMinutes;
-    const [h, m] = bData.startTime.split(':').map(Number);
-    const totalMin = h * 60 + m + duration;
-    const endTime = `${String(Math.floor(totalMin / 60)).padStart(2, '0')}:${String(totalMin % 60).padStart(2, '0')}`;
-
+    const endTime = calcEndTime(bData.startTime, bData.service.durationMinutes);
     await prisma.booking.create({
       data: {
         patientProfileId: bData.patientProfile.id,
@@ -897,16 +919,91 @@ async function main() {
         bookingDate: bData.bookingDate,
         startTime: bData.startTime,
         endTime,
+        isPreBooked: true,
         source: bData.source,
         priority: bData.priority,
       },
     });
-    bookingCount++;
   }
-  console.log(`  ✅ Created ${bookingCount} sample bookings`);
+  console.log(`  ✅ Created ${preBookings.length} pre-bookings`);
+
+  // ---- WALK-IN BOOKINGS (isPreBooked=false, no startTime/endTime) ----
+  // Walk-in are created by receptionist; they get a BookingQueue record on check-in.
+  const walkInBookings = [
+    // Walk-in guest: Trần Văn Khách — today
+    {
+      patientProfile: createdGuestProfiles[0],
+      doctor: doctorVanAn,
+      service: xetNghiem,
+      bookingDate: bookingDates[2],
+      source: BookingSource.WALK_IN,
+      priority: BookingPriority.NORMAL,
+    },
+    // Walk-in guest urgent: Nguyễn Thị Vãng Lai — +2 days
+    {
+      patientProfile: createdGuestProfiles[1],
+      doctor: doctorLeBinh,
+      service: khamTimMach,
+      bookingDate: bookingDates[4],
+      source: BookingSource.RECEPTIONIST,
+      priority: BookingPriority.URGENT,
+    },
+  ];
+
+  const createdWalkInBookings: {
+    booking: { id: string };
+    bData: {
+      doctor: { id: string };
+      bookingDate: Date;
+      service: { durationMinutes: number };
+    };
+  }[] = [];
+  for (const bData of walkInBookings) {
+    const dateStr = bData.bookingDate.toISOString().split('T')[0];
+    const booking = await prisma.booking.create({
+      data: {
+        patientProfileId: bData.patientProfile.id,
+        doctorId: bData.doctor.id,
+        serviceId: bData.service.id,
+        bookingCode: generateBookingCode(dateStr),
+        bookingDate: bData.bookingDate,
+        // startTime / endTime intentionally null — walk-in
+        isPreBooked: false,
+        source: bData.source,
+        priority: bData.priority,
+      },
+    });
+    createdWalkInBookings.push({ booking, bData });
+  }
+  console.log(`  ✅ Created ${walkInBookings.length} walk-in bookings`);
+
+  // Seed BookingQueue for walk-in bookings (simulates check-in)
+  // In production this is created by BookingsService.checkIn()
+  let queuePos = 1;
+  for (const { booking, bData } of createdWalkInBookings) {
+    await prisma.bookingQueue.create({
+      data: {
+        bookingId: booking.id,
+        doctorId: bData.doctor.id,
+        queueDate: bData.bookingDate,
+        queuePosition: queuePos++,
+        isPreBooked: false,
+        scheduledTime: null,
+        estimatedWaitMinutes: (queuePos - 1) * bData.service.durationMinutes,
+      },
+    });
+  }
+  console.log(
+    `  ✅ Created ${createdWalkInBookings.length} walk-in queue records`,
+  );
+
+  const sampleBookingTotal = preBookings.length + walkInBookings.length;
+  console.log(
+    `  ✅ Total ${sampleBookingTotal} bookings created (${preBookings.length} pre-booked, ${walkInBookings.length} walk-in)`,
+  );
 
   // ============================================
-  // 10. CREATE ICD-10 CODES (FULL DATASET IMPORT)
+  // 11. CREATE ICD-10 CODES (FULL DATASET IMPORT)
   // ============================================
   console.log('\n🩺 Creating ICD-10 Codes...');
   const icd10Path = path.resolve(

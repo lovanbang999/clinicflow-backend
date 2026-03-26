@@ -14,28 +14,46 @@ export class BookingsCronService {
   ) {}
 
   /**
-   * Automatically marks patients as NO_SHOW if they've been CHECKED_IN
-   * but not started (to IN_PROGRESS or COMPLETED) within 30 minutes.
+   * No-show timeout: Auto-mark pre-bookings as NO_SHOW if the patient
+   * hasn't checked in within 15 minutes AFTER their scheduled appointment time.
+   *
+   * Walk-in bookings are excluded — they have no fixed scheduled time.
    * Runs every 5 minutes.
    */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async handleAutoNoShow() {
-    this.logger.debug('Running auto-no-show check...');
+    this.logger.debug('Running auto-no-show check for pre-bookings...');
 
-    const thirtyMinutesAgo = new Date();
-    thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    const currentTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-    // Find bookings that have been checked in for more than 30 minutes and are still waiting
+    // Calculate the cutoff time: 15 minutes ago (HH:mm string)
+    const cutoffDate = new Date(now.getTime() - 15 * 60 * 1000);
+    const cutoffTimeStr = `${String(cutoffDate.getHours()).padStart(2, '0')}:${String(cutoffDate.getMinutes()).padStart(2, '0')}`;
+
+    void currentTimeStr;
+
+    // Find pre-bookings that are PENDING/CONFIRMED today, where
+    // their startTime was more than 15 minutes ago and patient hasn't checked in.
     const overdueBookings = await this.prisma.booking.findMany({
       where: {
-        status: BookingStatus.CHECKED_IN,
-        checkedInAt: {
-          lt: thirtyMinutesAgo,
+        isPreBooked: true,
+        status: {
+          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
         },
+        bookingDate: new Date(today),
+        startTime: {
+          // startTime <= cutoffTimeStr means appointment was 15+ min ago
+          lte: cutoffTimeStr,
+        },
+        checkedInAt: null,
       },
       select: {
         id: true,
         bookingCode: true,
+        doctorId: true,
+        bookingDate: true,
       },
     });
 
@@ -44,15 +62,26 @@ export class BookingsCronService {
     }
 
     this.logger.log(
-      `Found ${overdueBookings.length} overdue bookings. Marking as NO_SHOW.`,
+      `Found ${overdueBookings.length} overdue pre-bookings. Marking as NO_SHOW.`,
     );
 
     for (const booking of overdueBookings) {
       try {
         await this.bookingsService.markNoShow(booking.id, 'system-cron');
         this.logger.log(
-          `Booking ${booking.bookingCode} auto-marked as NO_SHOW`,
+          `Pre-booking ${booking.bookingCode} auto-marked as NO_SHOW (15-min timeout)`,
         );
+
+        // After freeing the slot, recalculate estimated times for walk-ins
+        this.bookingsService
+          .recalculateEstimatedTimes(
+            booking.doctorId,
+            booking.bookingDate.toISOString().split('T')[0],
+          )
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.logger.error(`Failed to recalculate estimated times: ${msg}`);
+          });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(

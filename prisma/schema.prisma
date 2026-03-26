@@ -329,11 +329,17 @@ model DoctorScheduleSlot {
   startTime   String
   endTime     String
   maxPatients Int                @default(1)
-  bookedCount Int                @default(0) // Cache: updated on booking create/cancel. Avoids COUNT() joins on hot paths.
+  bookedCount Int                @default(0) // Cache: total = preBookedCount + queueCount
   type        String?
   notes       String?
   status      ScheduleSlotStatus @default(SCHEDULED)
   isActive    Boolean            @default(true)
+
+  // Pre-booking vs walk-in capacity tracking
+  maxPreBookings Int @default(1) // Max pre-booked appointments per slot
+  maxQueueSize   Int @default(10) // Max walk-in queue per doctor per day
+  preBookedCount Int @default(0) // Cache: only counts isPreBooked=true bookings
+  queueCount     Int @default(0) // Cache: only counts isPreBooked=false (walk-in) bookings
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -479,6 +485,11 @@ model DoctorService {
   @@map("doctor_services")
 }
 
+// NOTE: A partial unique index exists at DB level (PostgreSQL) to enforce
+// the rule: 1 patient + 1 doctor + 1 day = max 1 active booking.
+// SQL: CREATE UNIQUE INDEX uq_patient_doctor_date_active
+//      ON bookings (patient_profile_id, doctor_id, booking_date)
+//      WHERE status NOT IN ('CANCELLED', 'NO_SHOW');
 model Booking {
   id String @id @default(uuid())
 
@@ -489,8 +500,18 @@ model Booking {
 
   bookingCode String   @unique // "BK-20260317-0041" — human-readable reference
   bookingDate DateTime @db.Date
-  startTime   String // "09:00"
-  endTime     String // "09:30"
+
+  // Nullable: startTime/endTime only set for pre-bookings (isPreBooked=true).
+  // Walk-in bookings have null startTime/endTime — they use estimatedTime instead.
+  startTime String? // "09:00" — null for walk-ins
+  endTime   String? // "09:30" — null for walk-ins
+
+  // true = patient self-booked or receptionist booked a specific slot (slot is locked)
+  // false = walk-in, receptionist queued the patient (no fixed time)
+  isPreBooked Boolean @default(true)
+
+  // Dynamic estimated time for walk-in patients (recalculated on each check-in)
+  estimatedTime DateTime?
 
   status   BookingStatus   @default(PENDING)
   source   BookingSource   @default(ONLINE)
@@ -527,6 +548,8 @@ model Booking {
   @@index([bookingDate])
   @@index([status])
   @@index([bookingCode])
+  @@index([isPreBooked])
+  @@index([doctorId, bookingDate, isPreBooked])
   @@index([doctorId, bookingDate, startTime])
   @@index([doctorId, bookingDate, status])
   @@map("bookings")
@@ -546,6 +569,11 @@ model BookingQueue {
   queuePosition        Int
   estimatedWaitMinutes Int @default(0)
 
+  // Denormalized from Booking for efficient priority sort:
+  // Pre-bookings sort by scheduledTime; walk-ins sort by queuePosition.
+  isPreBooked   Boolean @default(true) // Denorm from Booking.isPreBooked
+  scheduledTime String? // Denorm from Booking.startTime — null for walk-ins
+
   calledAt    DateTime?
   completedAt DateTime?
 
@@ -556,6 +584,7 @@ model BookingQueue {
 
   @@index([doctorId, queueDate])
   @@index([doctorId, queueDate, queuePosition])
+  @@index([doctorId, queueDate, isPreBooked, scheduledTime])
   @@map("booking_queue")
 }
 

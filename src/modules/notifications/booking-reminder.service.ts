@@ -33,6 +33,8 @@ export class BookingReminderService {
       const bookings = await this.prisma.booking.findMany({
         where: {
           bookingDate: { gte: start, lte: end },
+          isPreBooked: true, // Walk-in bookings don't have a fixed time — skip reminders
+          startTime: { not: null },
           status: { in: [BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN] },
         },
         include: {
@@ -57,8 +59,8 @@ export class BookingReminderService {
           doctorName: booking.doctor?.fullName ?? 'Bác sĩ',
           serviceName: booking.service?.name ?? 'Khám tổng quát',
           bookingDate: format(tomorrow, 'EEEE, dd/MM/yyyy', { locale: vi }),
-          startTime: booking.startTime,
-          endTime: booking.endTime,
+          startTime: booking.startTime ?? '',
+          endTime: booking.endTime ?? '',
           duration: booking.service?.durationMinutes ?? 30,
           status: booking.status,
         });
@@ -92,6 +94,8 @@ export class BookingReminderService {
             gte: startOfDay(oneHourLater),
             lte: endOfDay(oneHourLater),
           },
+          isPreBooked: true, // Walk-in bookings don't have a fixed time — skip
+          startTime: { not: null },
           status: { in: [BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN] },
         },
         include: {
@@ -103,6 +107,7 @@ export class BookingReminderService {
 
       // Filter to only bookings starting in ~1 hour
       const upcomingBookings = bookings.filter((b) => {
+        if (!b.startTime) return false;
         const startHour = b.startTime.slice(0, 2);
         return startHour === targetHour;
       });
@@ -122,8 +127,8 @@ export class BookingReminderService {
           doctorName: booking.doctor?.fullName ?? 'Bác sĩ',
           serviceName: booking.service?.name ?? 'Khám tổng quát',
           bookingDate: format(oneHourLater, 'EEEE, dd/MM/yyyy', { locale: vi }),
-          startTime: booking.startTime,
-          endTime: booking.endTime,
+          startTime: booking.startTime ?? '',
+          endTime: booking.endTime ?? '',
           duration: booking.service?.durationMinutes ?? 30,
           status: booking.status,
         });
