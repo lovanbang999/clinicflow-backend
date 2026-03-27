@@ -74,6 +74,8 @@ enum BookingPriority {
 enum ScheduleSlotStatus {
   SCHEDULED
   BLOCKED
+  COMPLETED
+  CANCELED
 }
 
 enum RoomType {
