@@ -68,12 +68,7 @@ export class AdminSchedulesService {
       where.doctorId = filters.doctorId;
     }
     if (filters.status) {
-      if (filters.status === 'canceled') {
-        where.isActive = false;
-      } else {
-        where.status = filters.status.toUpperCase() as ScheduleSlotStatus;
-        where.isActive = true;
-      }
+      where.status = filters.status.toUpperCase() as ScheduleSlotStatus;
     } else if (filters.isActive !== undefined) {
       where.isActive = filters.isActive;
     }

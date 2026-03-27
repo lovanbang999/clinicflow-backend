@@ -1,6 +1,7 @@
 import { IsOptional, IsString, IsBoolean, IsDateString } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ScheduleSlotStatus } from '@prisma/client';
 
 export class FilterScheduleDto {
   @ApiPropertyOptional({
@@ -38,9 +39,9 @@ export class FilterScheduleDto {
 
   @ApiPropertyOptional({
     description: 'Filter by schedule status',
-    enum: ['scheduled', 'blocked', 'canceled'],
+    enum: ScheduleSlotStatus,
   })
   @IsOptional()
   @IsString()
-  status?: 'scheduled' | 'blocked' | 'canceled';
+  status?: ScheduleSlotStatus;
 }
