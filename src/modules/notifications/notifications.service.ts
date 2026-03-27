@@ -403,4 +403,47 @@ export class NotificationsService {
       this.logger.error('Failed to send invoice email:', error);
     }
   }
+  /**
+   * Send notification to all ADMIN users (System Activity)
+   */
+  async notifyAdmins(data: {
+    title: string;
+    content: string;
+    metadata?: Prisma.InputJsonValue;
+  }) {
+    try {
+      const admins = await this.prisma.user.findMany({
+        where: { role: 'ADMIN', isActive: true },
+        select: { id: true },
+      });
+
+      if (admins.length === 0) return;
+
+      const notifications = await Promise.all(
+        admins.map((admin) =>
+          this.prisma.notification.create({
+            data: {
+              userId: admin.id,
+              title: data.title,
+              content: data.content,
+              type: NotificationType.ADMIN_ACTIVITY,
+              channel: NotificationChannel.IN_APP,
+              metadata: data.metadata ?? Prisma.JsonNull,
+            },
+          }),
+        ),
+      );
+
+      // Broadcast to each admin via WebSocket
+      admins.forEach((admin, index) => {
+        this.gateway.sendToUser(admin.id, notifications[index]);
+      });
+
+      this.logger.log(
+        `System activity notification sent to ${admins.length} admins`,
+      );
+    } catch (error) {
+      this.logger.error('Failed to notify admins:', error);
+    }
+  }
 }
