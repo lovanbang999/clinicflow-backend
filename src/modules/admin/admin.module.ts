@@ -1,44 +1,33 @@
 import { Module } from '@nestjs/common';
-import { PrismaModule } from '../prisma/prisma.module';
-import { UsersModule } from '../users/users.module';
-import { AdminDashboardService } from './dashboard/admin-dashboard.service';
-import { AdminDashboardController } from './dashboard/admin-dashboard.controller';
-import { AdminDoctorsService } from './doctors/admin-doctors.service';
-import { AdminDoctorsController } from './doctors/admin-doctors.controller';
-import { AdminServicesService } from './services/admin-services.service';
-import { AdminServicesController } from './services/admin-services.controller';
-import { AdminSchedulesService } from './schedules/admin-schedules.service';
-import { AdminSchedulesController } from './schedules/admin-schedules.controller';
-import { AdminUsersController } from './users/admin-users.controller';
-
 import { AdminPatientsModule } from './patients/admin-patients.module';
 import { AdminAnalyticsModule } from './analytics/admin-analytics.module';
+import { AdminSettingsModule } from './settings/admin-settings.module';
+import { AdminDashboardModule } from './dashboard/admin-dashboard.module';
+import { AdminDoctorsModule } from './doctors/admin-doctors.module';
+import { AdminServicesModule } from './services/admin-services.module';
+import { AdminSchedulesModule } from './schedules/admin-schedules.module';
+import { AdminUsersModule } from './users/admin-users.module';
 
 @Module({
   imports: [
-    PrismaModule,
-    UsersModule,
+    AdminDashboardModule,
+    AdminUsersModule,
+    AdminDoctorsModule,
+    AdminServicesModule,
+    AdminSchedulesModule,
     AdminPatientsModule,
     AdminAnalyticsModule,
-  ],
-  controllers: [
-    AdminDashboardController,
-    AdminUsersController,
-    AdminDoctorsController,
-    AdminServicesController,
-    AdminSchedulesController,
-  ],
-  providers: [
-    AdminDashboardService,
-    AdminDoctorsService,
-    AdminServicesService,
-    AdminSchedulesService,
+    AdminSettingsModule,
   ],
   exports: [
-    AdminDashboardService,
-    AdminDoctorsService,
-    AdminServicesService,
-    AdminSchedulesService,
+    AdminDashboardModule,
+    AdminUsersModule,
+    AdminDoctorsModule,
+    AdminServicesModule,
+    AdminSchedulesModule,
+    AdminPatientsModule,
+    AdminAnalyticsModule,
+    AdminSettingsModule,
   ],
 })
 export class AdminModule {}

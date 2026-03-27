@@ -77,6 +77,7 @@ async function main() {
   await prisma.patientProfile.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.auditLog.deleteMany();
+  await prisma.systemConfig.deleteMany();
   await prisma.refreshToken.deleteMany();
   await prisma.verificationCode.deleteMany();
   await prisma.icd10Code.deleteMany();
@@ -1066,6 +1067,141 @@ async function main() {
   // ============================================
   console.log('\n📊 Seed Summary:');
   console.log('==========================================');
+
+  // ============================================
+  // 11. CREATE DEFAULT SYSTEM CONFIGS
+  // ============================================
+  console.log('\n⚙️ Creating default system configurations...');
+
+  const systemConfigs = [
+    // CLINIC
+    {
+      key: 'clinic.name',
+      value: 'SmartClinic Central',
+      category: 'CLINIC',
+      dataType: 'string',
+      description: 'Tên phòng khám',
+      isPublic: true,
+    },
+    {
+      key: 'clinic.address',
+      value: '123 Hospital St, Health District',
+      category: 'CLINIC',
+      dataType: 'string',
+      description: 'Địa chỉ phòng khám',
+      isPublic: true,
+    },
+    {
+      key: 'clinic.phone',
+      value: '+84 123 456 789',
+      category: 'CLINIC',
+      dataType: 'string',
+      description: 'Số điện thoại liên hệ',
+      isPublic: true,
+    },
+    {
+      key: 'clinic.email',
+      value: 'contact@clinic.com',
+      category: 'CLINIC',
+      dataType: 'string',
+      description: 'Email liên hệ',
+      isPublic: true,
+    },
+    {
+      key: 'clinic.taxId',
+      value: 'MST-12345678',
+      category: 'CLINIC',
+      dataType: 'string',
+      description: 'Mã số thuế',
+      isPublic: false,
+    },
+
+    // BOOKING
+    {
+      key: 'booking.openTime',
+      value: '08:00',
+      category: 'BOOKING',
+      dataType: 'string',
+      description: 'Giờ mở cửa',
+      isPublic: true,
+    },
+    {
+      key: 'booking.closeTime',
+      value: '17:00',
+      category: 'BOOKING',
+      dataType: 'string',
+      description: 'Giờ đóng cửa',
+      isPublic: true,
+    },
+    {
+      key: 'booking.slotDuration',
+      value: '30',
+      category: 'BOOKING',
+      dataType: 'number',
+      description: 'Thời lượng mỗi ca khám (phút)',
+      isPublic: true,
+    },
+    {
+      key: 'booking.cancelationWindowHours',
+      value: '24',
+      category: 'BOOKING',
+      dataType: 'number',
+      description: 'Thời hạn hủy hẹn trước (giờ)',
+      isPublic: true,
+    },
+    {
+      key: 'booking.noShowGraceMinutes',
+      value: '15',
+      category: 'BOOKING',
+      dataType: 'number',
+      description: 'Thời gian chờ tối đa (phút)',
+      isPublic: false,
+    },
+    {
+      key: 'booking.allowOnlineBooking',
+      value: 'true',
+      category: 'BOOKING',
+      dataType: 'boolean',
+      description: 'Cho phép đặt lịch trực tuyến',
+      isPublic: true,
+    },
+
+    // NOTIFICATION
+    {
+      key: 'notification.enableEmailReminders',
+      value: 'true',
+      category: 'NOTIFICATION',
+      dataType: 'boolean',
+      description: 'Gửi nhắc hẹn qua Email',
+      isPublic: false,
+    },
+    {
+      key: 'notification.enableSmsReminders',
+      value: 'false',
+      category: 'NOTIFICATION',
+      dataType: 'boolean',
+      description: 'Gửi nhắc hẹn qua SMS',
+      isPublic: false,
+    },
+    {
+      key: 'notification.reminderSchedule',
+      value: '24, 2',
+      category: 'NOTIFICATION',
+      dataType: 'string',
+      description: 'Lịch gửi nhắc hẹn (cách bao nhiêu giờ)',
+      isPublic: false,
+    },
+  ];
+
+  for (const config of systemConfigs) {
+    await prisma.systemConfig.create({
+      data: {
+        ...config,
+        updatedBy: admin.id,
+      },
+    });
+  }
+  console.log(`  ✅ Created ${systemConfigs.length} default configurations`);
 
   const userCount = await prisma.user.count();
   const roomCount = await prisma.room.count();
