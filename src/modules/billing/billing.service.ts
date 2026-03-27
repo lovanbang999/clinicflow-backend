@@ -602,7 +602,12 @@ export class BillingService {
         booking: {
           include: {
             patientProfile: {
-              include: { user: { select: { email: true } } },
+              select: {
+                id: true,
+                userId: true,
+                fullName: true,
+                user: { select: { email: true } },
+              },
             },
           },
         },
@@ -613,6 +618,7 @@ export class BillingService {
     if (shouldAutoFinalize && updated?.booking?.patientProfile?.user?.email) {
       this.notificationsService
         .sendInvoiceEmail({
+          patientId: updated.booking.patientProfile.userId ?? undefined,
           patientName: updated.booking.patientProfile.fullName,
           patientEmail: updated.booking.patientProfile.user.email,
           invoiceNumber: updated.invoiceNumber,
@@ -685,7 +691,12 @@ export class BillingService {
         booking: {
           include: {
             patientProfile: {
-              include: { user: { select: { email: true } } },
+              select: {
+                id: true,
+                userId: true,
+                fullName: true,
+                user: { select: { email: true } },
+              },
             },
           },
         },
@@ -696,6 +707,7 @@ export class BillingService {
     if (updatedInvoice?.booking?.patientProfile?.user?.email) {
       this.notificationsService
         .sendInvoiceEmail({
+          patientId: updatedInvoice.booking.patientProfile.userId ?? undefined,
           patientName: updatedInvoice.booking.patientProfile.fullName,
           patientEmail: updatedInvoice.booking.patientProfile.user.email,
           invoiceNumber: updatedInvoice.invoiceNumber,
