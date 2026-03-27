@@ -5,7 +5,10 @@ export class TopDoctorItemDto {
   id: string;
 
   @ApiProperty({ example: 'Nguyễn Văn A' })
-  fullName: string;
+  name: string;
+
+  @ApiProperty({ example: 'Cardiology' })
+  specialty: string;
 
   @ApiPropertyOptional({
     example: 'https://cdn.example.com/avatar.jpg',
@@ -13,8 +16,17 @@ export class TopDoctorItemDto {
   })
   avatar: string | null;
 
-  @ApiProperty({ description: 'Number of completed bookings', example: 156 })
-  visitCount: number;
+  @ApiProperty({
+    description: 'Number of visits/patients in period',
+    example: 156,
+  })
+  patientsCount: number;
+
+  @ApiProperty({
+    description: 'Total revenue from this doctor in period',
+    example: 15000000,
+  })
+  revenue: number;
 }
 
 export class TopDoctorsResponseDto {
