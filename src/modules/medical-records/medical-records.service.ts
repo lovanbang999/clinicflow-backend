@@ -203,7 +203,12 @@ export class MedicalRecordsService {
           booking: {
             include: {
               patientProfile: {
-                include: { user: { select: { email: true } } },
+                select: {
+                  id: true,
+                  userId: true,
+                  fullName: true,
+                  user: { select: { email: true } },
+                },
               },
               doctor: true,
               service: true,
@@ -222,6 +227,7 @@ export class MedicalRecordsService {
         const emailData = {
           bookingId:
             updatedRecord.booking.bookingCode ?? updatedRecord.booking.id,
+          patientId: updatedRecord.booking.patientProfile.userId ?? undefined,
           patientName: updatedRecord.booking.patientProfile.fullName,
           patientEmail: updatedRecord.booking.patientProfile.user.email,
           doctorName: updatedRecord.booking.doctor.fullName,

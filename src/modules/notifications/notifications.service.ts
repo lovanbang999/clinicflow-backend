@@ -4,9 +4,13 @@ import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as Handlebars from 'handlebars';
+import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsGateway } from './notifications.gateway';
+import { NotificationType, NotificationChannel, Prisma } from '@prisma/client';
 
 interface BookingEmailData {
   bookingId: string;
+  patientId?: string; // Added to link in-app notification
   patientName: string;
   patientEmail: string;
   doctorName: string;
@@ -33,8 +37,92 @@ export class NotificationsService {
   constructor(
     private readonly mailService: MailService,
     private readonly configService: ConfigService,
+    private readonly prisma: PrismaService,
+    private readonly gateway: NotificationsGateway,
   ) {
     this.loadTemplates();
+  }
+
+  /**
+   * Create and send an in-app notification
+   */
+  async createInAppNotification(data: {
+    userId: string;
+    title: string;
+    content: string;
+    type: NotificationType;
+    metadata?: Prisma.InputJsonValue;
+  }) {
+    try {
+      const notification = await this.prisma.notification.create({
+        data: {
+          userId: data.userId,
+          title: data.title,
+          content: data.content,
+          type: data.type,
+          channel: NotificationChannel.IN_APP,
+          metadata: data.metadata ?? Prisma.JsonNull,
+        },
+      });
+
+      // Send via WebSocket if user is connected
+      this.gateway.sendToUser(data.userId, notification);
+
+      return notification;
+    } catch (error) {
+      this.logger.error('Failed to create in-app notification:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get user's in-app notifications
+   */
+  async getMyNotifications(userId: string) {
+    const list = await this.prisma.notification.findMany({
+      where: {
+        userId,
+        channel: NotificationChannel.IN_APP,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    const unreadCount = await this.prisma.notification.count({
+      where: {
+        userId,
+        channel: NotificationChannel.IN_APP,
+        isRead: false,
+      },
+    });
+
+    return { notifications: list, unreadCount };
+  }
+
+  /**
+   * Mark notification as read
+   */
+  async markAsRead(userId: string, id: string) {
+    return this.prisma.notification.update({
+      where: { id, userId },
+      data: {
+        isRead: true,
+        readAt: new Date(),
+      },
+    });
+  }
+
+  /**
+   * Mark all as read
+   */
+  async markAllAsRead(userId: string) {
+    return this.prisma.notification.updateMany({
+      where: { userId, isRead: false, channel: NotificationChannel.IN_APP },
+      data: {
+        isRead: true,
+        readAt: new Date(),
+      },
+    });
   }
 
   /**
@@ -117,6 +205,19 @@ export class NotificationsService {
       this.logger.log(
         `Booking confirmation email sent to ${data.patientEmail}`,
       );
+
+      // Trigger in-app notification
+      if (data.patientId) {
+        await this.createInAppNotification({
+          userId: data.patientId,
+          title: isPending ? 'Lịch hẹn đang xử lý' : 'Lịch hẹn đã xác nhận',
+          content: isPending
+            ? `Lịch hẹn khám ${data.serviceName} của bạn đang được hệ thống xử lý.`
+            : `Lịch hẹn khám ${data.serviceName} của bạn đã được xác nhận thành công.`,
+          type: NotificationType.BOOKING_CONFIRMED,
+          metadata: { bookingId: data.bookingId },
+        });
+      }
     } catch (error) {
       this.logger.error('Failed to send booking confirmation email:', error);
     }
@@ -140,6 +241,17 @@ export class NotificationsService {
 
       await this.mailService.sendMail(data.patientEmail, subject, html);
       this.logger.log(`Queue promotion email sent to ${data.patientEmail}`);
+
+      // Trigger in-app notification
+      if (data.patientId) {
+        await this.createInAppNotification({
+          userId: data.patientId,
+          title: 'Lịch hẹn đã được xác nhận',
+          content: `Lịch hẹn khám ${data.serviceName} của bạn đã được chuyển từ hàng đợi sang xác nhận.`,
+          type: NotificationType.BOOKING_CONFIRMED,
+          metadata: { bookingId: data.bookingId },
+        });
+      }
     } catch (error) {
       this.logger.error('Failed to send queue promotion email:', error);
     }
@@ -165,6 +277,17 @@ export class NotificationsService {
       this.logger.log(
         `Booking cancellation email sent to ${data.patientEmail}`,
       );
+
+      // Trigger in-app notification
+      if (data.patientId) {
+        await this.createInAppNotification({
+          userId: data.patientId,
+          title: 'Lịch hẹn đã bị hủy',
+          content: `Lịch hẹn khám ${data.serviceName} vào ngày ${data.bookingDate} đã bị hủy.`,
+          type: NotificationType.BOOKING_CANCELLED,
+          metadata: { bookingId: data.bookingId },
+        });
+      }
     } catch (error) {
       this.logger.error('Failed to send booking cancellation email:', error);
     }
@@ -186,6 +309,17 @@ export class NotificationsService {
 
       await this.mailService.sendMail(data.patientEmail, subject, html);
       this.logger.log(`Booking reminder email sent to ${data.patientEmail}`);
+
+      // Trigger in-app notification
+      if (data.patientId) {
+        await this.createInAppNotification({
+          userId: data.patientId,
+          title: 'Nhắc nhở lịch khám',
+          content: `Bạn có lịch khám ${data.serviceName} vào ngày mai. Đừng quên nhé!`,
+          type: NotificationType.APPOINTMENT_REMINDER,
+          metadata: { bookingId: data.bookingId },
+        });
+      }
     } catch (error) {
       this.logger.error('Failed to send booking reminder email:', error);
     }
@@ -208,6 +342,23 @@ export class NotificationsService {
 
       await this.mailService.sendMail(data.patientEmail, subject, html);
       this.logger.log(`Post-visit email sent to ${data.patientEmail}`);
+
+      // Trigger in-app notification
+      if (data.patientId) {
+        await this.createInAppNotification({
+          userId: data.patientId,
+          title: data.hasPrescription
+            ? 'Đơn thuốc sẵn sàng'
+            : 'Thăm khám hoàn tất',
+          content: data.hasPrescription
+            ? `Đơn thuốc cho buổi khám ${data.serviceName} đã sẵn sàng. Vui lòng kiểm tra.`
+            : `Cảm ơn bạn đã tin tưởng Smart Clinic. Buổi thăm khám ${data.serviceName} đã hoàn tất.`,
+          type: data.hasPrescription
+            ? NotificationType.LAB_RESULT_READY
+            : NotificationType.SYSTEM,
+          metadata: { bookingId: data.bookingId },
+        });
+      }
     } catch (error) {
       this.logger.error('Failed to send post-visit email:', error);
     }
@@ -217,6 +368,7 @@ export class NotificationsService {
    * Send invoice email
    */
   async sendInvoiceEmail(data: {
+    patientId?: string; // Added to link in-app notification
     patientName: string;
     patientEmail: string;
     invoiceNumber: string;
@@ -236,6 +388,17 @@ export class NotificationsService {
 
       await this.mailService.sendMail(data.patientEmail, subject, html);
       this.logger.log(`Invoice email sent to ${data.patientEmail}`);
+
+      // Trigger in-app notification
+      if (data.patientId) {
+        await this.createInAppNotification({
+          userId: data.patientId,
+          title: 'Hóa đơn mới',
+          content: `Hóa đơn ${data.invoiceNumber} cho dịch vụ ${data.invoiceType} đã được phát hành.`,
+          type: NotificationType.INVOICE_ISSUED,
+          metadata: { invoiceNumber: data.invoiceNumber },
+        });
+      }
     } catch (error) {
       this.logger.error('Failed to send invoice email:', error);
     }

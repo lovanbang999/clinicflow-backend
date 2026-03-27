@@ -38,7 +38,14 @@ export class BookingReminderService {
           status: { in: [BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN] },
         },
         include: {
-          patientProfile: { include: { user: { select: { email: true } } } },
+          patientProfile: {
+            select: {
+              id: true,
+              userId: true,
+              fullName: true,
+              user: { select: { email: true } },
+            },
+          },
           doctor: true,
           service: true,
         },
@@ -54,6 +61,7 @@ export class BookingReminderService {
 
         await this.notificationsService.sendBookingReminder({
           bookingId: booking.bookingCode ?? booking.id,
+          patientId: booking.patientProfile?.userId ?? undefined,
           patientName: booking.patientProfile?.fullName ?? 'Quý bệnh nhân',
           patientEmail: email,
           doctorName: booking.doctor?.fullName ?? 'Bác sĩ',
@@ -99,7 +107,14 @@ export class BookingReminderService {
           status: { in: [BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN] },
         },
         include: {
-          patientProfile: { include: { user: { select: { email: true } } } },
+          patientProfile: {
+            select: {
+              id: true,
+              userId: true,
+              fullName: true,
+              user: { select: { email: true } },
+            },
+          },
           doctor: true,
           service: true,
         },
@@ -122,6 +137,7 @@ export class BookingReminderService {
 
         await this.notificationsService.sendBookingReminder({
           bookingId: booking.bookingCode ?? booking.id,
+          patientId: booking.patientProfile?.userId ?? undefined,
           patientName: booking.patientProfile?.fullName ?? 'Quý bệnh nhân',
           patientEmail: email,
           doctorName: booking.doctor?.fullName ?? 'Bác sĩ',

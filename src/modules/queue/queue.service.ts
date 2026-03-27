@@ -1,3 +1,7 @@
+import {
+  ApiResponse,
+  ResponseHelper,
+} from '../../common/interfaces/api-response.interface';
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -5,11 +9,10 @@ import { PromoteQueueDto } from './dto/promote-queue.dto';
 import { QueueFilterDto } from './dto/queue-filter.dto';
 import { QueueGateway } from './queue.gateway';
 import { BookingStatus, Prisma } from '@prisma/client';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 
-interface BookingWithRelations {
+export interface BookingWithRelations {
   id: string;
   bookingCode?: string | null;
   bookingDate: Date;
@@ -17,8 +20,10 @@ interface BookingWithRelations {
   endTime: string | null; // null for walk-in bookings
   isPreBooked: boolean;
   status: BookingStatus;
+  doctorId: string;
   patientProfile: {
     id: string;
+    userId: string | null;
     fullName: string;
     phone: string | null;
     email: string | null;
@@ -35,7 +40,22 @@ interface BookingWithRelations {
     name: string;
     durationMinutes: number;
     price: Prisma.Decimal;
+    maxSlotsPerHour: number;
   };
+}
+
+export interface QueueRecordWithRelations {
+  id: string;
+  bookingId: string;
+  doctorId: string;
+  queueDate: Date;
+  queuePosition: number;
+  estimatedWaitMinutes: number;
+  isPreBooked: boolean;
+  scheduledTime: string | null;
+  calledAt: Date | null;
+  completedAt: Date | null;
+  booking: BookingWithRelations;
 }
 
 @Injectable()
@@ -82,12 +102,31 @@ export class QueueService {
     const [queueRecords, total] = await Promise.all([
       this.prisma.bookingQueue.findMany({
         where,
-        include: {
+        select: {
+          id: true,
+          bookingId: true,
+          doctorId: true,
+          queueDate: true,
+          queuePosition: true,
+          estimatedWaitMinutes: true,
+          isPreBooked: true,
+          scheduledTime: true,
+          calledAt: true,
+          completedAt: true,
           booking: {
-            include: {
+            select: {
+              id: true,
+              bookingCode: true,
+              bookingDate: true,
+              startTime: true,
+              endTime: true,
+              isPreBooked: true,
+              status: true,
+              doctorId: true,
               patientProfile: {
                 select: {
                   id: true,
+                  userId: true,
                   fullName: true,
                   email: true,
                   phone: true,
@@ -112,6 +151,7 @@ export class QueueService {
                   name: true,
                   durationMinutes: true,
                   price: true,
+                  maxSlotsPerHour: true,
                 },
               },
               medicalRecord: {
@@ -182,15 +222,36 @@ export class QueueService {
   /**
    * Get queue by booking ID
    */
-  async findByBookingId(bookingId: string) {
+  async findByBookingId(
+    bookingId: string,
+  ): Promise<ApiResponse<QueueRecordWithRelations>> {
     const queueRecord = await this.prisma.bookingQueue.findUnique({
       where: { bookingId },
-      include: {
+      select: {
+        id: true,
+        bookingId: true,
+        doctorId: true,
+        queueDate: true,
+        queuePosition: true,
+        estimatedWaitMinutes: true,
+        isPreBooked: true,
+        scheduledTime: true,
+        calledAt: true,
+        completedAt: true,
         booking: {
-          include: {
+          select: {
+            id: true,
+            bookingCode: true,
+            bookingDate: true,
+            startTime: true,
+            endTime: true,
+            isPreBooked: true,
+            status: true,
+            doctorId: true,
             patientProfile: {
               select: {
                 id: true,
+                userId: true,
                 fullName: true,
                 email: true,
                 phone: true,
@@ -302,7 +363,7 @@ export class QueueService {
 
     // Get queue record (will throw if not found)
     const queueResponse = await this.findByBookingId(bookingId);
-    const queueRecord = queueResponse.data;
+    const queueRecord = queueResponse.data as QueueRecordWithRelations;
 
     if (!queueRecord) {
       throw new ApiException(
@@ -470,7 +531,7 @@ export class QueueService {
     bookingId: string,
     promotedBy: string,
     reason: string,
-  ) {
+  ): Promise<{ booking: BookingWithRelations }> {
     const result = await this.prisma.$transaction(async (tx) => {
       // Get queue record
       const queueRecord = await tx.bookingQueue.findUnique({
@@ -481,6 +542,7 @@ export class QueueService {
               patientProfile: {
                 select: {
                   id: true,
+                  userId: true,
                   fullName: true,
                   email: true,
                   phone: true,
@@ -501,6 +563,7 @@ export class QueueService {
                   name: true,
                   durationMinutes: true,
                   price: true,
+                  maxSlotsPerHour: true,
                 },
               },
             },
@@ -523,10 +586,19 @@ export class QueueService {
         data: {
           status: BookingStatus.CONFIRMED,
         },
-        include: {
+        select: {
+          id: true,
+          bookingCode: true,
+          bookingDate: true,
+          startTime: true,
+          endTime: true,
+          isPreBooked: true,
+          status: true,
+          doctorId: true,
           patientProfile: {
             select: {
               id: true,
+              userId: true,
               fullName: true,
               email: true,
               phone: true,
@@ -547,6 +619,7 @@ export class QueueService {
               name: true,
               durationMinutes: true,
               price: true,
+              maxSlotsPerHour: true,
             },
           },
         },
@@ -666,6 +739,7 @@ export class QueueService {
       if (!email) return;
       await this.notificationsService.sendQueuePromotion({
         bookingId: booking.id,
+        patientId: booking.patientProfile.userId ?? undefined,
         patientName: booking.patientProfile.fullName,
         patientEmail: email,
         doctorName: booking.doctor.fullName,

@@ -33,6 +33,7 @@ interface BookingWithRelations {
   patientNotes: string | null;
   patientProfile: {
     id: string;
+    userId: string | null;
     fullName: string;
     phone: string | null;
     email: string | null;
@@ -55,6 +56,7 @@ interface BookingWithRelations {
 // Reusable select for patientProfile in booking includes
 const patientProfileSelect = {
   id: true,
+  userId: true, // Needed for in-app notifications
   fullName: true,
   phone: true,
   email: true,
@@ -607,6 +609,7 @@ export class BookingsService {
         this.notificationsService
           .sendBookingConfirmation({
             bookingId: updatedBooking.bookingCode ?? updatedBooking.id,
+            patientId: updatedBooking.patientProfile.userId ?? undefined,
             patientName: updatedBooking.patientProfile.fullName,
             patientEmail: email,
             doctorName: updatedBooking.doctor.fullName,
@@ -1531,6 +1534,7 @@ export class BookingsService {
     try {
       await this.notificationsService.sendBookingConfirmation({
         bookingId: booking.id,
+        patientId: booking.patientProfile.userId ?? undefined,
         patientName: booking.patientProfile.fullName,
         patientEmail: email,
         doctorName: booking.doctor.fullName,
@@ -1562,6 +1566,7 @@ export class BookingsService {
     try {
       await this.notificationsService.sendBookingCancellation({
         bookingId: booking.id,
+        patientId: booking.patientProfile.userId ?? undefined,
         patientName: booking.patientProfile.fullName,
         patientEmail: email,
         doctorName: booking.doctor.fullName,
