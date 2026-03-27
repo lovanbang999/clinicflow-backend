@@ -2,26 +2,26 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BookingStatus, UserRole } from '@prisma/client';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
+import { GetRevenueChartQueryDto } from './dto/get-revenue-chart.query.dto';
 
 @Injectable()
 export class AdminDashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private async fetchCompletedBookingsWithPrice(filter: {
-    gte?: Date;
-    lte?: Date;
-  }) {
-    return this.prisma.booking.findMany({
+  private async fetchPaidInvoices(filter: { gte?: Date; lte?: Date }) {
+    return this.prisma.invoice.findMany({
       where: {
-        status: BookingStatus.COMPLETED,
+        status: 'PAID',
         ...(filter.gte || filter.lte
-          ? { createdAt: { gte: filter.gte, lte: filter.lte } }
+          ? { paidAt: { gte: filter.gte, lte: filter.lte } }
           : {}),
       },
       select: {
-        service: { select: { price: true } },
-        createdAt: true,
-        doctorId: true,
+        totalAmount: true,
+        paidAt: true,
+        booking: {
+          select: { doctorId: true },
+        },
       },
     });
   }
@@ -31,6 +31,19 @@ export class AdminDashboardService {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
+    const monthPaidInvoices = await this.fetchPaidInvoices({
+      gte: startOfMonth,
+    });
+
+    const doctorRevenue = new Map<string, number>();
+
+    for (const inv of monthPaidInvoices) {
+      const dId = inv.booking.doctorId;
+      doctorRevenue.set(
+        dId,
+        (doctorRevenue.get(dId) || 0) + Number(inv.totalAmount),
+      );
+    }
     const [
       totalPatients,
       totalDoctors,
@@ -56,10 +69,10 @@ export class AdminDashboardService {
       }),
     ]);
 
-    // Revenue: SUM(service.price) of all COMPLETED bookings
-    const allCompleted = await this.fetchCompletedBookingsWithPrice({});
-    const totalRevenue = allCompleted.reduce(
-      (sum, b) => sum + Number(b.service.price),
+    // Revenue: SUM(totalAmount) of all PAID invoices
+    const allPaid = await this.fetchPaidInvoices({});
+    const totalRevenue = allPaid.reduce(
+      (sum, inv) => sum + Number(inv.totalAmount),
       0,
     );
 
@@ -71,15 +84,18 @@ export class AdminDashboardService {
       where: { createdAt: { gte: startOfLastMonth, lt: startOfMonth } },
     });
 
-    // Month-on-month revenue
-    const currentMonthRevenue = allCompleted
-      .filter((b) => b.createdAt >= startOfMonth)
-      .reduce((sum, b) => sum + Number(b.service.price), 0);
-    const lastMonthRevenue = allCompleted
+    // Month-on-month revenue (based on paidAt)
+    const currentMonthRevenue = allPaid
+      .filter((inv) => inv.paidAt && inv.paidAt >= startOfMonth)
+      .reduce((sum, inv) => sum + Number(inv.totalAmount), 0);
+    const lastMonthRevenue = allPaid
       .filter(
-        (b) => b.createdAt >= startOfLastMonth && b.createdAt < startOfMonth,
+        (inv) =>
+          inv.paidAt &&
+          inv.paidAt >= startOfLastMonth &&
+          inv.paidAt < startOfMonth,
       )
-      .reduce((sum, b) => sum + Number(b.service.price), 0);
+      .reduce((sum, inv) => sum + Number(inv.totalAmount), 0);
 
     const revenueGrowthPct =
       lastMonthRevenue > 0
@@ -145,12 +161,12 @@ export class AdminDashboardService {
       }),
     ]);
 
-    const completedWithPrice = await this.fetchCompletedBookingsWithPrice({
+    const paidInvoices = await this.fetchPaidInvoices({
       gte: start,
       lte: end,
     });
-    const revenue = completedWithPrice.reduce(
-      (sum, b) => sum + Number(b.service.price),
+    const revenue = paidInvoices.reduce(
+      (sum, inv) => sum + Number(inv.totalAmount),
       0,
     );
 
@@ -172,29 +188,83 @@ export class AdminDashboardService {
   }
 
   // GET /admin/dashboard/top-doctors?limit=5
-  // Panel: top doctors ranked by completed visit count
+  // Panel: top doctors ranked by revenue from PAID invoices this month
   async getTopDoctors(limit: number = 5) {
-    const topRaw = await this.prisma.booking.groupBy({
-      by: ['doctorId'],
-      where: { status: BookingStatus.COMPLETED },
-      _count: { id: true },
-      orderBy: { _count: { id: 'desc' } },
-      take: limit,
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const topRaw = await this.prisma.invoice.groupBy({
+      by: ['bookingId'],
+      where: {
+        status: 'PAID',
+        paidAt: { gte: startOfMonth },
+      },
+      _sum: { totalAmount: true },
+      orderBy: { _sum: { totalAmount: 'desc' } },
+      take: limit * 2, // Take more to account for multiple invoices per doctor
     });
 
-    const ids = topRaw.map((d) => d.doctorId);
-    const users = await this.prisma.user.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, fullName: true, avatar: true },
+    // We need to map bookingId back to doctorId
+    const bookingIds = topRaw.map((r) => r.bookingId);
+
+    const doctorRevenueMap = new Map<string, number>();
+    const doctorCountMap = new Map<string, number>();
+    const doctorInfoMap = new Map<
+      string,
+      { fullName: string; avatar: string | null; specialties: string[] }
+    >();
+
+    // Re-fetch bookings with doctor profile to get specialties
+    const bookingsWithProfiles = await this.prisma.booking.findMany({
+      where: { id: { in: bookingIds } },
+      select: {
+        id: true,
+        doctorId: true,
+        doctor: {
+          select: {
+            fullName: true,
+            avatar: true,
+            doctorProfile: { select: { specialties: true } },
+          },
+        },
+      },
     });
 
-    const userMap = new Map(users.map((u) => [u.id, u]));
-    const topDoctors = topRaw.map((d) => ({
-      id: d.doctorId,
-      fullName: userMap.get(d.doctorId)?.fullName ?? 'Unknown',
-      avatar: userMap.get(d.doctorId)?.avatar ?? null,
-      visitCount: d._count.id,
-    }));
+    for (const row of topRaw) {
+      const booking = bookingsWithProfiles.find((b) => b.id === row.bookingId);
+      if (booking) {
+        const dId = booking.doctorId;
+        doctorRevenueMap.set(
+          dId,
+          (doctorRevenueMap.get(dId) || 0) + Number(row._sum.totalAmount),
+        );
+        doctorCountMap.set(dId, (doctorCountMap.get(dId) || 0) + 1);
+
+        if (!doctorInfoMap.has(dId)) {
+          doctorInfoMap.set(dId, {
+            fullName: booking.doctor.fullName,
+            avatar: booking.doctor.avatar,
+            specialties: booking.doctor.doctorProfile?.specialties || [],
+          });
+        }
+      }
+    }
+
+    const topDoctors = Array.from(doctorRevenueMap.entries())
+      .map(([id, revenue]) => {
+        const info = doctorInfoMap.get(id);
+        const specialties = info?.specialties || [];
+        return {
+          id,
+          name: info?.fullName ?? 'Unknown',
+          avatar: info?.avatar ?? null,
+          specialty: specialties.length > 0 ? specialties[0] : 'General',
+          patientsCount: doctorCountMap.get(id) || 0,
+          revenue,
+        };
+      })
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, limit);
 
     return ResponseHelper.success(
       { topDoctors },
@@ -204,43 +274,88 @@ export class AdminDashboardService {
     );
   }
 
-  // GET /admin/dashboard/revenue-chart?months=6
-  // Chart: monthly revenue for the last N months
-  async getRevenueChart(months: number = 6) {
+  // GET /admin/dashboard/revenue-chart
+  // Supporting period: 'week', 'month', 'quarter' OR months count
+  async getRevenueChart(query: GetRevenueChartQueryDto) {
+    const { months = 6, period = 'month' } = query;
     const now = new Date();
-    const since = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1);
+    let since: Date;
+    let isDaily = false;
+    let points = 6;
 
-    const completedBookings = await this.fetchCompletedBookingsWithPrice({
+    if (period === 'week') {
+      since = new Date(now);
+      since.setDate(now.getDate() - 6); // Last 7 days including today
+      since.setHours(0, 0, 0, 0);
+      isDaily = true;
+      points = 7;
+    } else if (period === 'month') {
+      since = new Date(now);
+      since.setDate(now.getDate() - 29); // Last 30 days
+      since.setHours(0, 0, 0, 0);
+      isDaily = true;
+      points = 30;
+    } else if (period === 'quarter') {
+      since = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+      since.setHours(0, 0, 0, 0);
+      isDaily = false;
+      points = 3;
+    } else {
+      // Manual month count
+      since = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1);
+      since.setHours(0, 0, 0, 0);
+      isDaily = false;
+      points = months;
+    }
+
+    const paidInvoices = await this.fetchPaidInvoices({
       gte: since,
     });
 
-    // Build map with all N months pre-filled at 0
-    const revenueByMonth = new Map<string, number>();
-    for (let i = months - 1; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      revenueByMonth.set(key, 0);
+    const revenueByPoint = new Map<string, number>();
+
+    if (isDaily) {
+      for (let i = points - 1; i >= 0; i--) {
+        const d = new Date(since);
+        d.setDate(since.getDate() + (points - 1 - i));
+        const key = d.toISOString().split('T')[0];
+        revenueByPoint.set(key, 0);
+      }
+    } else {
+      for (let i = points - 1; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        revenueByPoint.set(key, 0);
+      }
     }
 
-    for (const b of completedBookings) {
-      const key = `${b.createdAt.getFullYear()}-${String(b.createdAt.getMonth() + 1).padStart(2, '0')}`;
-      if (revenueByMonth.has(key)) {
-        revenueByMonth.set(
+    for (const inv of paidInvoices) {
+      let key: string;
+      if (!inv.paidAt) continue;
+
+      if (isDaily) {
+        key = inv.paidAt.toISOString().split('T')[0];
+      } else {
+        key = `${inv.paidAt.getFullYear()}-${String(inv.paidAt.getMonth() + 1).padStart(2, '0')}`;
+      }
+
+      if (revenueByPoint.has(key)) {
+        revenueByPoint.set(
           key,
-          revenueByMonth.get(key)! + Number(b.service.price),
+          revenueByPoint.get(key)! + Number(inv.totalAmount),
         );
       }
     }
 
-    const chart = Array.from(revenueByMonth.entries()).map(
-      ([month, revenue]) => ({
-        date: `${month}-01`,
+    const chart = Array.from(revenueByPoint.entries()).map(
+      ([point, revenue]) => ({
+        date: isDaily ? point : `${point}-01`,
         revenue,
       }),
     );
 
     return ResponseHelper.success(
-      { months, chart },
+      { period, months: isDaily ? undefined : months, chart },
       'ADMIN.DASHBOARD.REVENUE_CHART',
       'Revenue chart data retrieved successfully',
       200,
@@ -289,6 +404,71 @@ export class AdminDashboardService {
       },
       'ADMIN.DASHBOARD.BOOKING_OVERVIEW',
       'Booking overview retrieved successfully',
+      200,
+    );
+  }
+
+  // GET /admin/dashboard/top-services?limit=5
+  // Panel: top services by revenue from PAID invoices this month
+  async getTopServices(limit: number = 5) {
+    const startOfThisMonth = new Date();
+    startOfThisMonth.setDate(1);
+    startOfThisMonth.setHours(0, 0, 0, 0);
+
+    // Sum totalAmount from PAID invoices grouped by booked service
+    const topInvoices = await this.prisma.invoice.findMany({
+      where: {
+        status: 'PAID',
+        paidAt: { gte: startOfThisMonth },
+      },
+      include: {
+        booking: {
+          select: {
+            serviceId: true,
+            service: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    const serviceRevenueMap = new Map<
+      string,
+      { name: string; revenue: number; count: number }
+    >();
+
+    for (const inv of topInvoices) {
+      if (!inv.booking?.serviceId) continue;
+
+      const sId = inv.booking.serviceId;
+      const sName = inv.booking.service.name;
+      const amount = Number(inv.totalAmount);
+
+      const existing = serviceRevenueMap.get(sId) || {
+        name: sName,
+        revenue: 0,
+        count: 0,
+      };
+      serviceRevenueMap.set(sId, {
+        name: sName,
+        revenue: existing.revenue + amount,
+        count: existing.count + 1,
+      });
+    }
+
+    const topServices = Array.from(serviceRevenueMap.entries())
+      .map(([id, data]) => ({
+        id,
+        name: data.name,
+        bookingsCount: data.count,
+        estimatedRevenue: data.revenue,
+      }))
+      .sort((a, b) => b.estimatedRevenue - a.estimatedRevenue)
+      .slice(0, limit);
+
+    return ResponseHelper.success(
+      { topServices },
+      'ADMIN.DASHBOARD.TOP_SERVICES',
+      'Top services retrieved successfully',
       200,
     );
   }

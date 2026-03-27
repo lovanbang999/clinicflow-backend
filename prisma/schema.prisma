@@ -127,6 +127,7 @@ enum NotificationType {
   LAB_RESULT_READY
   INVOICE_ISSUED
   SYSTEM
+  ADMIN_ACTIVITY
 }
 
 enum NotificationChannel {

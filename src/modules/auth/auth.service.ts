@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../notifications/mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
@@ -35,6 +36,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -159,6 +161,13 @@ export class AuthService {
 
     // Send verification email
     await this.mailService.sendVerificationEmail(email, fullName, otpCode);
+
+    // Notify admins of new registration
+    await this.notificationsService.notifyAdmins({
+      title: 'Thành viên mới',
+      content: `${fullName} vừa đăng ký tài khoản bệnh nhân.`,
+      metadata: { userId: user.id },
+    });
 
     return ResponseHelper.success(
       { email },

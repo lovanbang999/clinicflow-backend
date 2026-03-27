@@ -181,6 +181,13 @@ export class BookingsService {
       console.error('Failed to auto-create invoice:', e);
     }
 
+    // Notify admins of new booking
+    await this.notificationsService.notifyAdmins({
+      title: 'Lịch hẹn mới',
+      content: `${booking.patientProfile.fullName} vừa đặt khám ${booking.service.name}.`,
+      metadata: { bookingId: booking.id },
+    });
+
     return ResponseHelper.success(
       booking,
       MessageCodes.BOOKING_CREATED,
@@ -337,6 +344,13 @@ export class BookingsService {
     } catch (e) {
       console.error('Failed to auto-create invoice:', e);
     }
+
+    // Notify admins of new booking (by staff)
+    await this.notificationsService.notifyAdmins({
+      title: 'Lịch hẹn mới (từ nhân viên)',
+      content: `${booking.patientProfile.fullName} được đặt khám ${booking.service.name}.`,
+      metadata: { bookingId: booking.id },
+    });
 
     return ResponseHelper.success(
       booking,
@@ -630,6 +644,21 @@ export class BookingsService {
       }
     }
 
+    // Notify admins of status change
+    const statusLabels: Record<string, string> = {
+      CONFIRMED: 'đã xác nhận',
+      CHECKED_IN: 'đã check-in',
+      COMPLETED: 'đã hoàn thành',
+      CANCELLED: 'đã hủy',
+    };
+    if (statusLabels[status]) {
+      await this.notificationsService.notifyAdmins({
+        title: 'Cập nhật lịch hẹn',
+        content: `Lịch hẹn của ${updatedBooking.patientProfile.fullName} ${statusLabels[status]}.`,
+        metadata: { bookingId: updatedBooking.id, status: status },
+      });
+    }
+
     return ResponseHelper.success(
       updatedBooking,
       MessageCodes.BOOKING_UPDATED,
@@ -650,6 +679,16 @@ export class BookingsService {
       },
       userId,
     );
+
+    const booking = result.data;
+    if (!booking) return result;
+
+    // Notify admins of cancellation
+    await this.notificationsService.notifyAdmins({
+      title: 'Lịch hẹn đã hủy',
+      content: `Lịch hẹn của ${booking.patientProfile.fullName} đã bị hủy.`,
+      metadata: { bookingId: id },
+    });
 
     return ResponseHelper.success(
       result.data,
@@ -989,7 +1028,6 @@ export class BookingsService {
           scheduledTime: booking.startTime ?? null,
         },
       });
-
       return { booking: updatedBooking, queue: queueRecord };
     });
 
@@ -999,6 +1037,21 @@ export class BookingsService {
       'CHECK_IN',
       result,
     );
+
+    // Notify admins of status change
+    const statusLabels: Record<string, string> = {
+      CONFIRMED: 'đã xác nhận',
+      CHECKED_IN: 'đã check-in',
+      COMPLETED: 'đã hoàn thành',
+      CANCELLED: 'đã hủy',
+    };
+    if (statusLabels[BookingStatus.CHECKED_IN]) {
+      await this.notificationsService.notifyAdmins({
+        title: 'Cập nhật lịch hẹn',
+        content: `Lịch hẹn của ${booking.patientProfile.fullName} ${statusLabels[BookingStatus.CHECKED_IN]}.`,
+        metadata: { bookingId: booking.id, status: BookingStatus.CHECKED_IN },
+      });
+    }
 
     // Recalculate estimated times for all walk-in patients of this doctor today
     this.recalculateEstimatedTimes(

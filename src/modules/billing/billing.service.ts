@@ -721,6 +721,20 @@ export class BillingService {
         .catch((err) => console.error('Failed to send invoice email', err));
     }
 
+    // Notify admins of payment
+    const patientName =
+      updatedInvoice.booking?.patientProfile?.fullName || 'Khách';
+    await this.notificationsService.notifyAdmins({
+      title: 'Thanh toán mới',
+      content: `${patientName} đã thanh toán hóa đơn ${
+        updatedInvoice.invoiceNumber
+      } (${this.formatVNCurrency(Number(updatedInvoice.totalAmount))}).`,
+      metadata: {
+        invoiceId: updatedInvoice.id,
+        amount: updatedInvoice.totalAmount,
+      },
+    });
+
     return ResponseHelper.success(
       updatedInvoice,
       'BILLING.INVOICE_FINALIZED',

@@ -15,6 +15,8 @@ import { GetTopDoctorsQueryDto } from './dto/get-top-doctors.query.dto';
 import { RevenueChartResponseDto } from './dto/revenue-chart.response.dto';
 import { GetRevenueChartQueryDto } from './dto/get-revenue-chart.query.dto';
 import { BookingOverviewResponseDto } from './dto/booking-overview.response.dto';
+import { TopServicesResponseDto } from './dto/top-services.response.dto';
+import { GetTopServicesQueryDto } from './dto/get-top-services.query.dto';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
@@ -23,7 +25,7 @@ import { RolesGuard } from 'src/common/guards/roles.guard';
 @ApiBearerAuth('JWT-auth')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN)
-@Controller('admin')
+@Controller('admin/dashboard')
 export class AdminDashboardController {
   constructor(private readonly dashboardService: AdminDashboardService) {}
 
@@ -31,7 +33,7 @@ export class AdminDashboardController {
    * GET /admin/dashboard/overview
    * KPI overview.
    */
-  @Get('dashboard/overview')
+  @Get('overview')
   @ApiOperation({
     summary: 'KPI overview (ADMIN only)',
     description:
@@ -53,7 +55,7 @@ export class AdminDashboardController {
    * GET /admin/dashboard/monthly-stats
    * Monthly statistics.
    */
-  @Get('dashboard/monthly-stats')
+  @Get('monthly-stats')
   @ApiOperation({
     summary: 'Monthly statistics (ADMIN only)',
     description:
@@ -75,7 +77,7 @@ export class AdminDashboardController {
    * GET /admin/dashboard/top-doctors
    * Top doctors by completed visits.
    */
-  @Get('dashboard/top-doctors')
+  @Get('top-doctors')
   @ApiOperation({
     summary: 'Top doctors by completed visits (ADMIN only)',
     description:
@@ -95,7 +97,7 @@ export class AdminDashboardController {
    * GET /admin/dashboard/revenue-chart
    * Monthly revenue chart data.
    */
-  @Get('dashboard/revenue-chart')
+  @Get('revenue-chart')
   @ApiOperation({
     summary: 'Monthly revenue chart data (ADMIN only)',
     description:
@@ -109,14 +111,14 @@ export class AdminDashboardController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required' })
   getRevenueChart(@Query() query: GetRevenueChartQueryDto) {
-    return this.dashboardService.getRevenueChart(query.months ?? 6);
+    return this.dashboardService.getRevenueChart(query);
   }
 
   /**
    * GET /admin/dashboard/booking-overview
    * Booking status overview.
    */
-  @Get('dashboard/booking-overview')
+  @Get('booking-overview')
   @ApiOperation({
     summary: 'Booking status overview (ADMIN only)',
     description:
@@ -131,5 +133,25 @@ export class AdminDashboardController {
   @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required' })
   getBookingOverview() {
     return this.dashboardService.getBookingOverview();
+  }
+
+  /**
+   * GET /admin/dashboard/top-services
+   * Top services by usage.
+   */
+  @Get('top-services')
+  @ApiOperation({
+    summary: 'Top services by usage this month (ADMIN only)',
+    description:
+      'Returns services ranked by booking count for the current month.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Top services retrieved successfully',
+    type: TopServicesResponseDto,
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required' })
+  getTopServices(@Query() query: GetTopServicesQueryDto) {
+    return this.dashboardService.getTopServices(query.limit ?? 5);
   }
 }
