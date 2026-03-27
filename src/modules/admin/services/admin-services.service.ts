@@ -69,27 +69,45 @@ export class AdminServicesService {
    * List all services with optional search / isActive filter.
    */
   async findAllServices(filterDto: FilterServiceDto) {
-    const { isActive, search } = filterDto;
+    const { isActive, search, category, page = 1, limit = 10 } = filterDto;
     const where: Prisma.ServiceWhereInput = {};
 
     if (typeof isActive === 'boolean') {
       where.isActive = isActive;
     }
 
+    if (category) {
+      where.category = { equals: category, mode: 'insensitive' };
+    }
+
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
         { description: { contains: search, mode: 'insensitive' } },
+        { tags: { has: search } },
       ];
     }
 
-    const services = await this.prisma.service.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-    });
+    const [services, total] = await Promise.all([
+      this.prisma.service.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.service.count({ where }),
+    ]);
 
     return ResponseHelper.success(
-      services,
+      {
+        services,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      },
       'ADMIN.SERVICES.LIST',
       'Services retrieved successfully',
       200,
@@ -167,6 +185,9 @@ export class AdminServicesService {
         price: dto.price,
         durationMinutes: dto.durationMinutes,
         maxSlotsPerHour: dto.maxSlotsPerHour,
+        category: dto.category,
+        preparationNotes: dto.preparationNotes,
+        tags: dto.tags || [],
         isActive: dto.isActive ?? true,
       },
     });
@@ -226,6 +247,11 @@ export class AdminServicesService {
           maxSlotsPerHour: dto.maxSlotsPerHour,
         }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        ...(dto.category !== undefined && { category: dto.category }),
+        ...(dto.preparationNotes !== undefined && {
+          preparationNotes: dto.preparationNotes,
+        }),
+        ...(dto.tags !== undefined && { tags: dto.tags }),
       },
     });
 

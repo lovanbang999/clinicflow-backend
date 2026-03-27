@@ -59,4 +59,20 @@ export class AdminCreateServiceDto {
   @IsBoolean()
   @Type(() => Boolean)
   isActive?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  preparationNotes?: string;
+
+  @ApiProperty({ required: false, type: [String] })
+  @IsOptional()
+  @IsString({ each: true })
+  tags?: string[];
 }
