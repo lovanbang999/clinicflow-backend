@@ -12,9 +12,15 @@ import { AdminSchedulesController } from './schedules/admin-schedules.controller
 import { AdminUsersController } from './users/admin-users.controller';
 
 import { AdminPatientsModule } from './patients/admin-patients.module';
+import { AdminAnalyticsModule } from './analytics/admin-analytics.module';
 
 @Module({
-  imports: [PrismaModule, UsersModule, AdminPatientsModule],
+  imports: [
+    PrismaModule,
+    UsersModule,
+    AdminPatientsModule,
+    AdminAnalyticsModule,
+  ],
   controllers: [
     AdminDashboardController,
     AdminUsersController,

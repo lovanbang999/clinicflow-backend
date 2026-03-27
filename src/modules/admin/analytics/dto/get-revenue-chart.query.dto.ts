@@ -1,11 +1,12 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsInt, Min, Max, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
+import { DateRangeQueryDto } from './date-range.query.dto';
 
-export class GetRevenueChartQueryDto {
+export class GetRevenueChartQueryDto extends DateRangeQueryDto {
   @ApiPropertyOptional({
     description:
-      'Number of past months to include in the chart. Ignored if period is provided.',
+      'Number of past months to include in the chart. Ignored if from/to or period is provided.',
     default: 6,
     minimum: 1,
     maximum: 24,
