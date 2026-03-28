@@ -9,7 +9,9 @@ import {
   UseGuards,
   HttpStatus,
   HttpCode,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -108,6 +110,29 @@ export class AdminPatientsController {
   @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required' })
   findAll(@Query() query: PatientSearchQueryDto) {
     return this.patientsService.findAll(query);
+  }
+
+  /**
+   * GET /admin/patients/export
+   * Export patients to Excel.
+   */
+  @Get('export')
+  @ApiOperation({
+    summary: 'Export patients to Excel (ADMIN only)',
+    description:
+      'Generates and downloads an Excel file containing the filtered patient list.',
+  })
+  async export(@Query() query: PatientSearchQueryDto, @Res() res: Response) {
+    const buffer = await this.patientsService.exportToExcel(query);
+
+    res.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': 'attachment; filename="patients.xlsx"',
+      'Content-Length': buffer.byteLength,
+    });
+
+    res.end(buffer);
   }
 
   /**

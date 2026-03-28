@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Workbook } from 'exceljs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AdminCreatePatientDto } from './dto/create-patient.dto';
 import { AdminUpdatePatientDto } from './dto/update-patient.dto';
@@ -416,6 +417,111 @@ export class AdminPatientsService {
       'Patients retrieved successfully',
       200,
     );
+  }
+
+  async exportToExcel(query: PatientSearchQueryDto) {
+    const { search, gender, status, bloodType, patientCode, isGuest } = query;
+
+    // Build PatientProfile where clause
+    const where: Prisma.PatientProfileWhereInput = {};
+
+    if (isGuest !== undefined) {
+      where.isGuest = isGuest;
+    }
+
+    if (patientCode) {
+      where.patientCode = { contains: patientCode, mode: 'insensitive' };
+    }
+
+    if (search) {
+      where.OR = [
+        { fullName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
+        { patientCode: { contains: search, mode: 'insensitive' } },
+        { insuranceNumber: { contains: search, mode: 'insensitive' } },
+        { nationalId: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (gender) {
+      const genders = gender.split(',').map((g) => g.trim() as Gender);
+      where.gender = { in: genders };
+    }
+
+    if (bloodType) {
+      const bloodTypes = bloodType.split(',').map((bt) => bt.trim());
+      where.bloodType = { in: bloodTypes };
+    }
+
+    if (status) {
+      const statuses = status.split(',').map((s) => s.trim());
+      const hasActive = statuses.includes('active');
+      const hasInactive = statuses.includes('inactive');
+      if (hasActive && !hasInactive) {
+        where.user = { isActive: true };
+      } else if (hasInactive && !hasActive) {
+        where.user = { isActive: false };
+      }
+    }
+
+    const profiles = await this.prisma.patientProfile.findMany({
+      where,
+      include: {
+        user: {
+          select: {
+            isActive: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const workbook = new Workbook();
+    const worksheet = workbook.addWorksheet('Patients');
+
+    worksheet.columns = [
+      { header: 'Patient Code', key: 'patientCode', width: 15 },
+      { header: 'Full Name', key: 'fullName', width: 25 },
+      { header: 'Email', key: 'email', width: 25 },
+      { header: 'Phone', key: 'phone', width: 15 },
+      { header: 'Gender', key: 'gender', width: 10 },
+      { header: 'Date of Birth', key: 'dateOfBirth', width: 15 },
+      { header: 'Status', key: 'status', width: 10 },
+      { header: 'Blood Type', key: 'bloodType', width: 10 },
+      { header: 'Type', key: 'type', width: 10 },
+      { header: 'National ID', key: 'nationalId', width: 15 },
+      { header: 'Insurance Number', key: 'insuranceNumber', width: 20 },
+    ];
+
+    const formatDate = (d: Date | null | undefined): string =>
+      d ? d.toISOString().split('T')[0] : '';
+
+    profiles.forEach((p) => {
+      worksheet.addRow({
+        patientCode: p.patientCode,
+        fullName: p.fullName,
+        email: p.email ?? '',
+        phone: p.phone ?? '',
+        gender: p.gender ?? '',
+        dateOfBirth: formatDate(p.dateOfBirth),
+        status: p.isGuest ? 'Guest' : p.user?.isActive ? 'Active' : 'Inactive',
+        bloodType: p.bloodType ?? '',
+        type: p.isGuest ? 'Guest' : 'Registered',
+        nationalId: p.nationalId ?? '',
+        insuranceNumber: p.insuranceNumber ?? '',
+      });
+    });
+
+    // Styling
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE0E0E0' },
+    };
+
+    return workbook.xlsx.writeBuffer();
   }
 
   // STATS (counts PatientProfile, including guests)
