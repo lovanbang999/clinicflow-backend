@@ -250,6 +250,83 @@ export class LabOrdersService {
     );
   }
 
+  async getTechnicianStats() {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const [pending, inProgress, completedToday] = await Promise.all([
+      this.prisma.labOrder.count({
+        where: { status: LabOrderStatus.PAID },
+      }),
+      this.prisma.labOrder.count({
+        where: { status: LabOrderStatus.IN_PROGRESS },
+      }),
+      this.prisma.labOrder.count({
+        where: {
+          status: LabOrderStatus.COMPLETED,
+          updatedAt: {
+            gte: startOfDay,
+            lte: endOfDay,
+          },
+        },
+      }),
+    ]);
+
+    return ResponseHelper.success(
+      { pending, inProgress, completedToday },
+      'LAB.TECHNICIAN_STATS',
+      'Technician stats fetched',
+      200,
+    );
+  }
+
+  async getTechnicianHistory() {
+    const rawOrders = await this.prisma.labOrder.findMany({
+      where: {
+        status: LabOrderStatus.COMPLETED,
+      },
+      include: {
+        result: true,
+        booking: {
+          select: {
+            bookingCode: true,
+            doctor: { select: { fullName: true } },
+            patientProfile: {
+              select: {
+                fullName: true,
+                patientCode: true,
+                gender: true,
+                dateOfBirth: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 50,
+    });
+
+    const orders = rawOrders.map((order) => {
+      const { booking, ...rest } = order;
+      if (!booking) return rest;
+      return {
+        ...rest,
+        booking: { bookingCode: booking.bookingCode, doctor: booking.doctor },
+        patientProfile: booking.patientProfile,
+      };
+    });
+
+    return ResponseHelper.success(
+      orders,
+      'LAB.TECHNICIAN_HISTORY',
+      'Technician history fetched',
+      200,
+    );
+  }
+
   async addResult(
     resultAuthorId: string,
     labOrderId: string,
