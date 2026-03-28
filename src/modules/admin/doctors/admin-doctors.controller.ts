@@ -1,11 +1,14 @@
 import {
   Controller,
   Get,
+  Post,
   Patch,
   Body,
   Param,
   Query,
   UseGuards,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -19,6 +22,7 @@ import { UserRole } from '@prisma/client';
 
 import { AdminDoctorsService } from './admin-doctors.service';
 import { FilterDoctorDto } from './dto/filter-doctor.dto';
+import { AdminCreateDoctorDto } from './dto/admin-create-doctor.dto';
 import { AdminUpdateDoctorProfileDto } from './dto/admin-update-doctor-profile.dto';
 import { AdminSuspendUserDto } from '../users/dto/admin-suspend-user.dto';
 import { DoctorStatsResponseDto } from './dto/doctor-stats.response.dto';
@@ -90,6 +94,23 @@ export class AdminDoctorsController {
   @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required' })
   getDoctors(@Query() filterDto: FilterDoctorDto) {
     return this.doctorsService.findAllDoctors(filterDto);
+  }
+
+  /**
+   * POST /admin/doctors
+   * Create a new doctor user
+   */
+  @Post('doctors')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Create a new doctor (ADMIN only)',
+    description: 'Creates a user with DOCTOR role and an empty DoctorProfile.',
+  })
+  @ApiResponse({ status: 201, description: 'Doctor created successfully' })
+  @ApiResponse({ status: 409, description: 'Email or phone already exists' })
+  @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required' })
+  createDoctor(@Body() dto: AdminCreateDoctorDto) {
+    return this.doctorsService.createDoctor(dto);
   }
 
   /**

@@ -10,6 +10,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -71,6 +72,15 @@ export class AdminUsersController {
   @ApiResponse({ status: 200, description: 'Users retrieved successfully' })
   @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required' })
   getUsers(@Query() filterDto: FilterUserDto) {
+    if (
+      filterDto.role &&
+      (filterDto.role === UserRole.DOCTOR ||
+        filterDto.role === UserRole.PATIENT)
+    ) {
+      throw new ForbiddenException(
+        'Cannot query DOCTOR or PATIENT roles from this endpoint',
+      );
+    }
     return this.usersService.findAll(filterDto);
   }
 
@@ -124,6 +134,11 @@ export class AdminUsersController {
   @ApiResponse({ status: 409, description: 'Email or phone already exists' })
   @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required' })
   createUser(@Body() dto: AdminCreateUserDto) {
+    if (dto.role === UserRole.DOCTOR || dto.role === UserRole.PATIENT) {
+      throw new ForbiddenException(
+        'Use dedicated endpoints to create doctors and patients',
+      );
+    }
     return this.usersService.create(dto);
   }
 

@@ -9,6 +9,7 @@ import {
   IsNotEmpty,
   MaxLength,
   ValidateIf,
+  IsBoolean,
 } from 'class-validator';
 import { Gender } from '@prisma/client';
 
@@ -17,6 +18,17 @@ export class AdminCreatePatientDto {
   @IsEmail()
   @IsNotEmpty()
   email: string;
+
+  @ApiProperty({
+    description:
+      'Whether to create a system Account (true) or just a guest profile (false)',
+    example: true,
+    required: false,
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  createAppAccount?: boolean;
 
   @ApiProperty({ example: 'John Patient' })
   @IsString()

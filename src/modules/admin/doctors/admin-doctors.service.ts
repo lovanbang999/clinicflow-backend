@@ -1,17 +1,22 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UsersService } from '../../users/users.service';
 import { Prisma, UserRole, BookingStatus } from '@prisma/client';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { ApiException } from '../../../common/exceptions/api.exception';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
 
 import { FilterDoctorDto } from './dto/filter-doctor.dto';
+import { AdminCreateDoctorDto } from './dto/admin-create-doctor.dto';
 import { AdminUpdateDoctorProfileDto } from './dto/admin-update-doctor-profile.dto';
 import { AdminSuspendUserDto } from '../users/dto/admin-suspend-user.dto';
 
 @Injectable()
 export class AdminDoctorsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly usersService: UsersService,
+  ) {}
 
   async getDoctorStatistics() {
     const now = new Date();
@@ -287,5 +292,15 @@ export class AdminDoctorsService {
       `Doctor ${dto.isActive ? 'reinstated' : 'suspended'} successfully`,
       200,
     );
+  }
+
+  /**
+   * Create a new doctor user
+   */
+  async createDoctor(dto: AdminCreateDoctorDto) {
+    return this.usersService.create({
+      ...dto,
+      role: UserRole.DOCTOR,
+    });
   }
 }
