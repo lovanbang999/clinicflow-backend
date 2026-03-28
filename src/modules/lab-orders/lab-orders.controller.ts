@@ -69,6 +69,22 @@ export class LabOrdersController {
     return this.labOrdersService.getReadyToPerformOrders();
   }
 
+  @Get('technician/stats')
+  @Roles(UserRole.ADMIN, UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'Get daily stats for technician dashboard' })
+  getTechnicianStats() {
+    return this.labOrdersService.getTechnicianStats();
+  }
+
+  @Get('technician/history')
+  @Roles(UserRole.ADMIN, UserRole.TECHNICIAN)
+  @ApiOperation({
+    summary: 'Get history of completed lab orders for technician',
+  })
+  getTechnicianHistory() {
+    return this.labOrdersService.getTechnicianHistory();
+  }
+
   @Get(':id')
   @Roles(
     UserRole.ADMIN,
