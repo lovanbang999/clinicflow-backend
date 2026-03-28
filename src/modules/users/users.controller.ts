@@ -24,6 +24,7 @@ import {
   RegisterPatientDto,
   CreateGuestPatientDto,
 } from './dto/quick-create-patient.dto';
+import { UpdatePatientProfileDto } from './dto/update-patient-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { FilterUserDto } from './dto/filter-user.dto';
@@ -158,6 +159,38 @@ export class UsersController {
   })
   findAllPatients(@Query() filterDto: FilterPatientDto) {
     return this.usersService.findAllPatients(filterDto);
+  }
+
+  @Get('receptionist/patients/stats')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ApiOperation({
+    summary: 'Get patient statistics (ADMIN/RECEPTIONIST only)',
+    description:
+      'Returns summary counts: total, new today, and active appointments.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Statistics retrieved successfully',
+  })
+  getPatientsStats() {
+    return this.usersService.getPatientsStats();
+  }
+
+  @Patch('receptionist/patients/:id')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ApiOperation({
+    summary: 'Update patient profile (ADMIN/RECEPTIONIST only)',
+    description: 'Atomically updates User and PatientProfile record.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Patient updated successfully',
+  })
+  updatePatientProfile(
+    @Param('id') id: string,
+    @Body() dto: UpdatePatientProfileDto,
+  ) {
+    return this.usersService.updatePatientProfile(id, dto);
   }
 
   @Get()

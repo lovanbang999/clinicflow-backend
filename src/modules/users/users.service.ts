@@ -9,7 +9,8 @@ import {
   RegisterPatientDto,
   CreateGuestPatientDto,
 } from './dto/quick-create-patient.dto';
-import { Prisma, UserRole } from '@prisma/client';
+import { UpdatePatientProfileDto } from './dto/update-patient-profile.dto';
+import { Prisma, UserRole, Gender, BookingStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
@@ -435,6 +436,29 @@ export class UsersService {
       where.isGuest = isGuest;
     }
 
+    if (filterDto.gender) {
+      const genders = filterDto.gender
+        .split(',')
+        .map((g) => g.trim() as Gender);
+      where.gender = { in: genders };
+    }
+
+    if (filterDto.bloodType) {
+      const bloodTypes = filterDto.bloodType.split(',').map((bt) => bt.trim());
+      where.bloodType = { in: bloodTypes };
+    }
+
+    if (filterDto.status) {
+      const statuses = filterDto.status.split(',').map((s) => s.trim());
+      const hasActive = statuses.includes('active');
+      const hasInactive = statuses.includes('inactive');
+      if (hasActive && !hasInactive) {
+        where.user = { isActive: true };
+      } else if (hasInactive && !hasActive) {
+        where.user = { isActive: false };
+      }
+    }
+
     const [profiles, total] = await Promise.all([
       this.prisma.patientProfile.findMany({
         where,
@@ -496,6 +520,132 @@ export class UsersService {
       },
       MessageCodes.USER_LIST_RETRIEVED,
       'Patient profiles retrieved successfully',
+      200,
+    );
+  }
+
+  /**
+   * Get patient statistics for receptionist dashboard
+   */
+  async getPatientsStats() {
+    const now = new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setUTCHours(0, 0, 0, 0);
+
+    const [totalPatients, newToday, activeAppointments] = await Promise.all([
+      this.prisma.patientProfile.count(),
+      this.prisma.patientProfile.count({
+        where: { createdAt: { gte: startOfToday } },
+      }),
+      this.prisma.booking.count({
+        where: {
+          bookingDate: { gte: startOfToday },
+          status: {
+            in: [
+              BookingStatus.PENDING,
+              BookingStatus.CONFIRMED,
+              BookingStatus.CHECKED_IN,
+            ],
+          },
+        },
+      }),
+    ]);
+
+    return ResponseHelper.success(
+      {
+        totalPatients,
+        newToday,
+        activeAppointments,
+      },
+      MessageCodes.PATIENT_STATS_RETRIEVED,
+      'Patient statistics retrieved successfully',
+      200,
+    );
+  }
+
+  /**
+   * Update patient profile (RECEPTIONIST/ADMIN)
+   */
+  async updatePatientProfile(id: string, dto: UpdatePatientProfileDto) {
+    const {
+      email,
+      fullName,
+      phone,
+      gender,
+      dateOfBirth,
+      address,
+      bloodType,
+      ...profileData
+    } = dto;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      // Find the profile
+      const profile = await tx.patientProfile.findUnique({
+        where: { id },
+        include: { user: true },
+      });
+      if (!profile) {
+        throw new ApiException(
+          MessageCodes.PATIENT_NOT_FOUND,
+          'Patient profile not found',
+          404,
+        );
+      }
+
+      // Update PatientProfile
+      const profileUpdateData: Prisma.PatientProfileUpdateInput = {
+        fullName:
+          fullName !== undefined ? fullName?.trim() || undefined : undefined,
+        phone: phone !== undefined ? phone?.trim() || null : undefined,
+        email: email !== undefined ? email?.trim() || null : undefined,
+        gender,
+        dateOfBirth:
+          dateOfBirth !== undefined
+            ? dateOfBirth?.trim()
+              ? new Date(dateOfBirth)
+              : null
+            : undefined,
+        address: address !== undefined ? address?.trim() || null : undefined,
+        bloodType:
+          bloodType !== undefined ? bloodType?.trim() || null : undefined,
+        nationalId: profileData.nationalId?.trim() || undefined,
+        insuranceNumber: profileData.insuranceNumber?.trim() || undefined,
+        insuranceProvider: profileData.insuranceProvider?.trim() || undefined,
+        insuranceExpiry: profileData.insuranceExpiry?.trim()
+          ? new Date(profileData.insuranceExpiry)
+          : undefined,
+        allergies: profileData.allergies?.trim() || undefined,
+        chronicConditions: profileData.chronicConditions?.trim() || undefined,
+        familyHistory: profileData.familyHistory?.trim() || undefined,
+      };
+
+      const updatedProfile = await tx.patientProfile.update({
+        where: { id },
+        data: profileUpdateData,
+      });
+
+      // Update User record if exists
+      if (profile.userId) {
+        await tx.user.update({
+          where: { id: profile.userId },
+          data: {
+            email,
+            fullName,
+            phone,
+            gender,
+            dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+            address,
+          },
+        });
+      }
+
+      return updatedProfile;
+    });
+
+    return ResponseHelper.success(
+      result,
+      MessageCodes.PATIENT_UPDATED,
+      'Patient profile updated successfully',
       200,
     );
   }

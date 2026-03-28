@@ -44,4 +44,28 @@ export class FilterPatientDto {
   @IsOptional()
   @Transform(({ value }) => parseInt(String(value), 10))
   limit?: number = 10;
+
+  @ApiProperty({
+    description: 'Filter by gender: MALE, FEMALE, OTHER',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
+  @ApiProperty({
+    description: 'Filter by status: active, inactive',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiProperty({
+    description: 'Filter by blood type',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  bloodType?: string;
 }
