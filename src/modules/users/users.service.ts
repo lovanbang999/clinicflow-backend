@@ -669,6 +669,10 @@ export class UsersService {
 
     if (role) {
       where.role = role;
+    } else {
+      where.role = {
+        in: [UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN],
+      };
     }
 
     if (typeof isActive === 'boolean') {
@@ -1249,13 +1253,23 @@ export class UsersService {
    * Get user statistics
    */
   async getStatistics() {
+    const staffRoles = [
+      UserRole.ADMIN,
+      UserRole.RECEPTIONIST,
+      UserRole.TECHNICIAN,
+    ];
+
     const [totalUsers, activeUsers, usersByRole, doctorProfileCount] =
       await Promise.all([
-        this.prisma.user.count({ where: { deletedAt: null } }),
-        this.prisma.user.count({ where: { isActive: true, deletedAt: null } }),
+        this.prisma.user.count({
+          where: { deletedAt: null, role: { in: staffRoles } },
+        }),
+        this.prisma.user.count({
+          where: { isActive: true, deletedAt: null, role: { in: staffRoles } },
+        }),
         this.prisma.user.groupBy({
           by: ['role'],
-          where: { deletedAt: null },
+          where: { deletedAt: null, role: { in: staffRoles } },
           _count: true,
         }),
         this.prisma.doctorProfile.count(),

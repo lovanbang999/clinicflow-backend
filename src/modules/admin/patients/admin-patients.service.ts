@@ -30,10 +30,45 @@ export class AdminPatientsService {
       dateOfBirth,
       address,
       bloodType,
+      createAppAccount,
       ...profileData
     } = dto;
 
     const normalizedPhone = phone?.trim() || null;
+
+    if (!createAppAccount) {
+      const patientCode = await generatePatientCode(this.prisma);
+      const profile = await this.prisma.patientProfile.create({
+        data: {
+          userId: null,
+          fullName,
+          phone: normalizedPhone,
+          email,
+          dateOfBirth: dateOfBirth?.trim() ? new Date(dateOfBirth) : null,
+          gender,
+          address: address?.trim() || null,
+          patientCode,
+          isGuest: true,
+          bloodType: bloodType?.trim() || null,
+          nationalId: profileData.nationalId?.trim() || null,
+          insuranceNumber: profileData.insuranceNumber?.trim() || null,
+          insuranceProvider: profileData.insuranceProvider?.trim() || null,
+          insuranceExpiry: profileData.insuranceExpiry?.trim()
+            ? new Date(profileData.insuranceExpiry)
+            : null,
+          allergies: profileData.allergies?.trim() || null,
+          chronicConditions: profileData.chronicConditions?.trim() || null,
+          familyHistory: profileData.familyHistory?.trim() || null,
+        },
+      });
+
+      return ResponseHelper.success(
+        { profile },
+        MessageCodes.PATIENT_CREATED,
+        'Guest patient profile created successfully',
+        201,
+      );
+    }
 
     // Check unique email / phone on User table
     const queryOr: Prisma.UserWhereInput[] = [{ email }];
