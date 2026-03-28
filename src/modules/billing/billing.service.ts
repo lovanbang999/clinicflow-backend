@@ -483,7 +483,14 @@ export class BillingService {
   ) {
     const invoice = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
-      include: { payments: true },
+      include: {
+        payments: true,
+        booking: {
+          include: {
+            patientProfile: { select: { fullName: true } },
+          },
+        },
+      },
     });
 
     if (!invoice) {
@@ -575,6 +582,27 @@ export class BillingService {
               },
               data: { status: LabOrderStatus.PAID },
             });
+
+            // Notify technicians that new lab orders are ready to be performed
+            const technicians = await tx.user.findMany({
+              where: { role: 'TECHNICIAN' },
+              select: { id: true },
+            });
+
+            const patientName =
+              invoice.booking?.patientProfile?.fullName || 'Khách';
+            for (const tech of technicians) {
+              await this.notificationsService.createInAppNotification({
+                userId: tech.id,
+                title: 'Phiếu xét nghiệm mới',
+                content: `Bệnh nhân ${patientName} đã thanh toán. Vui lòng thực hiện các chỉ định xét nghiệm.`,
+                type: 'LAB_RESULT_READY', // Or a new type if preferred
+                metadata: {
+                  invoiceId: invoice.id,
+                  bookingId: invoice.bookingId,
+                },
+              });
+            }
           }
         }
       } else if (invoice.status === InvoiceStatus.DRAFT) {
