@@ -716,6 +716,38 @@ export class BookingsService {
    * Start examination (Move from CHECKED_IN to IN_PROGRESS)
    */
   async startExamination(id: string, userId: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id },
+      select: { doctorId: true },
+    });
+
+    if (!booking) {
+      throw new ApiException(
+        MessageCodes.BOOKING_NOT_FOUND,
+        'Booking not found',
+        404,
+        'Start examination failed',
+      );
+    }
+
+    // Single Active Patient Rule: Check if doctor already has an active examination
+    const activeExam = await this.prisma.booking.findFirst({
+      where: {
+        doctorId: booking.doctorId,
+        status: BookingStatus.IN_PROGRESS,
+        medicalRecord: null, // Medical record block is only generated upon Save Draft or Complete
+      },
+    });
+
+    if (activeExam) {
+      throw new ApiException(
+        MessageCodes.BOOKING_DOCTOR_BUSY,
+        'Bác sĩ đang khám cho một bệnh nhân khác. Vui lòng lưu nháp hoặc hoàn tất phiên khám hiện tại trước khi gọi bệnh nhân tiếp theo.',
+        400,
+        'Start examination failed',
+      );
+    }
+
     return this.updateStatus(
       id,
       {
@@ -987,10 +1019,18 @@ export class BookingsService {
 
         const [totalVisits, lastVisitRecord] = await Promise.all([
           this.prisma.booking.count({
-            where: { doctorId, patientProfileId, status: BookingStatus.COMPLETED },
+            where: {
+              doctorId,
+              patientProfileId,
+              status: BookingStatus.COMPLETED,
+            },
           }),
           this.prisma.booking.findFirst({
-            where: { doctorId, patientProfileId, status: BookingStatus.COMPLETED },
+            where: {
+              doctorId,
+              patientProfileId,
+              status: BookingStatus.COMPLETED,
+            },
             orderBy: { bookingDate: 'desc' },
             select: { bookingDate: true, service: { select: { name: true } } },
           }),
@@ -1020,7 +1060,6 @@ export class BookingsService {
       200,
     );
   }
-
 
   async checkIn(bookingId: string, userId: string) {
     const booking = await this.prisma.booking.findUnique({
