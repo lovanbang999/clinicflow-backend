@@ -924,8 +924,104 @@ export class BookingsService {
   }
 
   /**
-   * Check in a patient for their appointment
+   * Get unique patients who have had completed visits with this doctor.
+   * Supports pagination and search by name / patient code / phone.
    */
+  async getMyPatients(
+    doctorId: string,
+    options: { search?: string; page?: number; limit?: number },
+  ) {
+    const { search, page = 1, limit = 10 } = options;
+
+    const patientWhere: Prisma.PatientProfileWhereInput = {};
+    if (search) {
+      patientWhere.OR = [
+        { fullName: { contains: search, mode: 'insensitive' } },
+        { patientCode: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    // Get distinct patientProfileIds that have at least one COMPLETED booking with this doctor
+    const completedPatientIds = await this.prisma.booking.findMany({
+      where: {
+        doctorId,
+        status: BookingStatus.COMPLETED,
+        patientProfile: search ? patientWhere : undefined,
+      },
+      select: { patientProfileId: true },
+      distinct: ['patientProfileId'],
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: { bookingDate: 'desc' },
+    });
+
+    const totalDistinct = await this.prisma.booking.findMany({
+      where: {
+        doctorId,
+        status: BookingStatus.COMPLETED,
+        patientProfile: search ? patientWhere : undefined,
+      },
+      select: { patientProfileId: true },
+      distinct: ['patientProfileId'],
+    });
+
+    const ids = completedPatientIds.map((b) => b.patientProfileId);
+
+    // For each patient, fetch profile + stats
+    const patients = await Promise.all(
+      ids.map(async (patientProfileId) => {
+        const profile = await this.prisma.patientProfile.findUnique({
+          where: { id: patientProfileId },
+          select: {
+            id: true,
+            patientCode: true,
+            fullName: true,
+            phone: true,
+            gender: true,
+            dateOfBirth: true,
+            bloodType: true,
+            allergies: true,
+          },
+        });
+
+        const [totalVisits, lastVisitRecord] = await Promise.all([
+          this.prisma.booking.count({
+            where: { doctorId, patientProfileId, status: BookingStatus.COMPLETED },
+          }),
+          this.prisma.booking.findFirst({
+            where: { doctorId, patientProfileId, status: BookingStatus.COMPLETED },
+            orderBy: { bookingDate: 'desc' },
+            select: { bookingDate: true, service: { select: { name: true } } },
+          }),
+        ]);
+
+        return {
+          ...profile,
+          totalVisits,
+          lastVisitDate: lastVisitRecord?.bookingDate ?? null,
+          lastServiceName: lastVisitRecord?.service?.name ?? null,
+        };
+      }),
+    );
+
+    return ResponseHelper.success(
+      {
+        patients,
+        pagination: {
+          total: totalDistinct.length,
+          page,
+          limit,
+          totalPages: Math.ceil(totalDistinct.length / limit),
+        },
+      },
+      MessageCodes.BOOKING_LIST_RETRIEVED,
+      'My patients retrieved successfully',
+      200,
+    );
+  }
+
+
   async checkIn(bookingId: string, userId: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { id: bookingId },

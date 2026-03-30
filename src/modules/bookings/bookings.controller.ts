@@ -120,10 +120,35 @@ export class BookingsController {
     return this.bookingsService.createByReceptionist(createBookingDto, userId);
   }
 
+  @Get('doctor/my-patients')
+  @Roles(UserRole.DOCTOR)
+  @ApiOperation({
+    summary: 'Get unique patients of this doctor',
+    description:
+      'Returns a paginated list of unique patients who have had at least one completed visit with the authenticated doctor.',
+  })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiResponse({ status: 200, description: 'Patients retrieved successfully' })
+  getMyPatients(
+    @CurrentUser('id') doctorId: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.bookingsService.getMyPatients(doctorId, {
+      search,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 10,
+    });
+  }
+
   @Get()
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
   @ApiOperation({
     summary: 'List all bookings',
+
     description:
       'Retrieve a paginated list of all bookings with advanced filtering options for admin/receptionist.',
   })
