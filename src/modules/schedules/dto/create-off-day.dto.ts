@@ -5,6 +5,7 @@ import {
   IsString,
   IsNotEmpty,
   IsOptional,
+  IsBoolean,
 } from 'class-validator';
 
 export class CreateOffDayDto {
@@ -32,4 +33,13 @@ export class CreateOffDayDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  @ApiProperty({
+    description: 'If true, automatically cancel all affected appointments',
+    example: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  cancelAffected?: boolean;
 }

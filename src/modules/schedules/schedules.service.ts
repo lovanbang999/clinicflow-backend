@@ -256,6 +256,72 @@ export class SchedulesService {
   }
 
   /**
+   * Preview an off day — returns affected appointments without creating anything.
+   * Used for the 2-step confirmation UI flow.
+   */
+  async previewOffDay(doctorId: string, date: string) {
+    // Validate doctor exists
+    const doctor = await this.prisma.user.findUnique({
+      where: { id: doctorId },
+    });
+    if (!doctor || doctor.role !== UserRole.DOCTOR) {
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'Doctor not found',
+        404,
+        'Preview failed',
+      );
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const offDate = new Date(date);
+    if (offDate < today) {
+      throw new BadRequestException('Cannot preview off day for past dates');
+    }
+
+    const dateStart = new Date(date);
+    dateStart.setHours(0, 0, 0, 0);
+    const dateEnd = new Date(dateStart);
+    dateEnd.setHours(23, 59, 59, 999);
+
+    const affectedAppointments = await this.prisma.booking.findMany({
+      where: {
+        doctorId,
+        bookingDate: { gte: dateStart, lte: dateEnd },
+        status: {
+          in: [
+            BookingStatus.PENDING,
+            BookingStatus.CONFIRMED,
+            BookingStatus.CHECKED_IN,
+          ],
+        },
+      },
+      include: {
+        patientProfile: { select: { fullName: true, phone: true } },
+        service: { select: { name: true } },
+      },
+      orderBy: { startTime: 'asc' },
+    });
+
+    return ResponseHelper.success(
+      {
+        affectedAppointments: affectedAppointments.map((b) => ({
+          id: b.id,
+          patientName: b.patientProfile?.fullName ?? 'Unknown',
+          patientPhone: b.patientProfile?.phone ?? '',
+          serviceName: b.service?.name ?? '',
+          startTime: b.startTime,
+          status: b.status,
+        })),
+      },
+      MessageCodes.SCHEDULE_LIST_RETRIEVED,
+      'Preview retrieved successfully',
+      200,
+    );
+  }
+
+  /**
    * Create off day for a doctor
    */
   async createOffDay(dto: CreateOffDayDto) {
@@ -342,16 +408,24 @@ export class SchedulesService {
 
     // Create off day
     const offDay = await this.prisma.doctorOffDay.create({
-      data: {
-        doctorId,
-        offDate: new Date(date),
-        reason,
-      },
+      data: { doctorId, offDate: new Date(date), reason },
     });
+
+    // If cancelAffected is requested, bulk-cancel all matching bookings
+    if (dto.cancelAffected && affectedAppointments.length > 0) {
+      const ids = affectedAppointments.map((b) => b.id);
+      await this.prisma.booking.updateMany({
+        where: { id: { in: ids } },
+        data: { status: BookingStatus.CANCELLED },
+      });
+    }
 
     return ResponseHelper.success(
       {
-        ...offDay,
+        id: offDay.id,
+        doctorId: offDay.doctorId,
+        date: offDay.offDate.toISOString().split('T')[0],
+        reason: offDay.reason,
         affectedAppointments: affectedAppointments.map((b) => ({
           id: b.id,
           patientName: b.patientProfile?.fullName ?? 'Unknown',
@@ -360,6 +434,7 @@ export class SchedulesService {
           startTime: b.startTime,
           status: b.status,
         })),
+        cancelledCount: dto.cancelAffected ? affectedAppointments.length : 0,
       },
       MessageCodes.SCHEDULE_CREATED,
       'Off day created successfully',
@@ -390,7 +465,12 @@ export class SchedulesService {
     });
 
     return ResponseHelper.success(
-      offDays,
+      offDays.map((od) => ({
+        id: od.id,
+        doctorId: od.doctorId,
+        date: od.offDate.toISOString().split('T')[0],
+        reason: od.reason,
+      })),
       MessageCodes.SCHEDULE_LIST_RETRIEVED,
       'Off days retrieved successfully',
       200,

@@ -191,37 +191,34 @@ export class SchedulesController {
 
   @Post('off-days')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR)
-  @ApiOperation({
-    summary: 'Create off day (ADMIN/DOCTOR only)',
-  })
+  @ApiOperation({ summary: 'Create off day (ADMIN/DOCTOR only)' })
   @ApiResponse({
     status: 201,
-    description: 'Off day created successfully',
-    schema: {
-      example: {
-        success: true,
-        statusCode: 201,
-        message: 'Off day created successfully',
-        messageCode: 'SCHEDULE.CREATE.SUCCESS',
-        data: {
-          id: 'uuid',
-          doctorId: 'uuid',
-          date: '2024-12-26',
-          reason: 'Holiday',
-        },
-      },
-    },
+    description:
+      'Off day created successfully. If cancelAffected=true, affected appointments are also cancelled.',
   })
-  @ApiResponse({
-    status: 400,
-    description: 'Invalid data or past date',
-  })
-  @ApiResponse({
-    status: 409,
-    description: 'Off day already exists',
-  })
+  @ApiResponse({ status: 400, description: 'Invalid data or past date' })
+  @ApiResponse({ status: 409, description: 'Off day already exists' })
   createOffDay(@Body() dto: CreateOffDayDto) {
     return this.schedulesService.createOffDay(dto);
+  }
+
+  @Get('off-days/preview')
+  @Roles(UserRole.ADMIN, UserRole.DOCTOR)
+  @ApiOperation({
+    summary:
+      'Preview affected appointments for a potential off day (ADMIN/DOCTOR only).',
+    description:
+      'Returns all active appointments that would be affected. Does NOT create an off day.',
+  })
+  @ApiQuery({ name: 'doctorId', required: true })
+  @ApiQuery({ name: 'date', required: true, example: '2024-12-26' })
+  @ApiResponse({ status: 200, description: 'Affected appointments returned' })
+  previewOffDay(
+    @Query('doctorId') doctorId: string,
+    @Query('date') date: string,
+  ) {
+    return this.schedulesService.previewOffDay(doctorId, date);
   }
 
   @Get('off-days/:doctorId')
