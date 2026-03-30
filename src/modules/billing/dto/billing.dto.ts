@@ -5,6 +5,8 @@ import {
   IsNumber,
   Min,
   IsUUID,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { InvoiceStatus, InvoiceType, PaymentMethod } from '@prisma/client';
@@ -29,6 +31,25 @@ export class CreateInvoiceDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Optional list of lab order IDs to include',
+  })
+  @IsArray()
+  @IsUUID('4', { each: true })
+  @IsOptional()
+  labOrderIds?: string[];
+
+  @ApiPropertyOptional({
+    type: () => [AddInvoiceItemDto],
+    description: 'Optional extra items to add manually',
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AddInvoiceItemDto)
+  @IsOptional()
+  items?: AddInvoiceItemDto[];
 }
 
 export class AddInvoiceItemDto {

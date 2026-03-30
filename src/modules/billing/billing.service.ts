@@ -99,19 +99,25 @@ export class BillingService {
         });
       }
 
+      let totalToUpdate = seedSubtotal;
+
       // For LAB: auto-seed items from PENDING lab orders not yet assigned to any invoice
       if (invoiceType === InvoiceType.LAB) {
+        const labOrderWhere: Prisma.LabOrderWhereInput = {
+          bookingId: dto.bookingId,
+          status: LabOrderStatus.PENDING,
+          invoiceItem: null, // not yet added to any invoice
+        };
+        if (dto.labOrderIds && dto.labOrderIds.length > 0) {
+          labOrderWhere.id = { in: dto.labOrderIds };
+        }
+
         const pendingOrders = await tx.labOrder.findMany({
-          where: {
-            bookingId: dto.bookingId,
-            status: LabOrderStatus.PENDING,
-            invoiceItem: null, // not yet added to any invoice
-          },
+          where: labOrderWhere,
           orderBy: { createdAt: 'asc' },
           include: { service: { select: { price: true } } }, // Fetch real service price
         });
 
-        let labSubtotal = 0;
         for (let i = 0; i < pendingOrders.length; i++) {
           const order = pendingOrders[i];
           const price = order.service?.price ? Number(order.service.price) : 0;
@@ -128,16 +134,39 @@ export class BillingService {
               sortOrder: i,
             },
           });
-          labSubtotal += Number(item.totalPrice);
+          totalToUpdate += Number(item.totalPrice);
         }
+      }
 
-        // Recalculate totals after seeding
-        if (labSubtotal > 0) {
-          await tx.invoice.update({
-            where: { id: inv.id },
-            data: { subtotal: labSubtotal, totalAmount: labSubtotal },
+      // Add manual items if provided
+      if (dto.items && dto.items.length > 0) {
+        for (let i = 0; i < dto.items.length; i++) {
+          const mItem = dto.items[i];
+          const qty = mItem.quantity ?? 1;
+          const tPrice = Number(mItem.unitPrice) * qty;
+
+          const item = await tx.invoiceItem.create({
+            data: {
+              invoiceId: inv.id,
+              serviceId: mItem.serviceId,
+              labOrderId: mItem.labOrderId,
+              itemName: mItem.itemName,
+              unitPrice: mItem.unitPrice,
+              quantity: qty,
+              totalPrice: tPrice,
+              sortOrder: mItem.sortOrder ?? 100 + i,
+            },
           });
+          totalToUpdate += Number(item.totalPrice);
         }
+      }
+
+      // Recalculate totals
+      if (totalToUpdate !== seedSubtotal) {
+        await tx.invoice.update({
+          where: { id: inv.id },
+          data: { subtotal: totalToUpdate, totalAmount: totalToUpdate },
+        });
       }
 
       return tx.invoice.findUnique({
