@@ -394,6 +394,11 @@ export class BookingsService {
           },
         },
         {
+          patientProfile: {
+            patientCode: { contains: search, mode: 'insensitive' },
+          },
+        },
+        {
           patientProfile: { phone: { contains: search, mode: 'insensitive' } },
         },
       ];
