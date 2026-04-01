@@ -8,6 +8,7 @@ import {
   BookingSource,
   BookingPriority,
   RoomType,
+  ServiceCategoryType,
   User,
   Service,
   PatientProfile,
@@ -83,6 +84,7 @@ async function main() {
   await prisma.verificationCode.deleteMany();
   await prisma.icd10Code.deleteMany();
   await prisma.service.deleteMany();
+  await prisma.category.deleteMany();
   await prisma.room.deleteMany();
   await prisma.user.deleteMany();
 
@@ -595,6 +597,80 @@ async function main() {
   }
 
   // ============================================
+  // 4.5 CREATE CATEGORIES
+  // ============================================
+  console.log('\n📁 Creating categories...');
+
+  const categoriesData: {
+    code: string;
+    name: string;
+    description: string;
+    type: ServiceCategoryType;
+  }[] = [
+    {
+      code: 'CAT_NOIKHOA',
+      name: 'Nội khoa',
+      description: 'Các dịch vụ khám nội khoa chung',
+      type: 'EXAMINATION' as const,
+    },
+    {
+      code: 'CAT_NGOAIKHOA',
+      name: 'Ngoại khoa',
+      description: 'Các dịch vụ khám ngoại khoa',
+      type: 'EXAMINATION' as const,
+    },
+    {
+      code: 'CAT_DALIEU',
+      name: 'Da liễu',
+      description: 'Các dịch vụ khám da liễu',
+      type: 'EXAMINATION' as const,
+    },
+    {
+      code: 'CAT_NHAKHOA',
+      name: 'Nha khoa',
+      description: 'Các dịch vụ khám răng hàm mặt',
+      type: 'EXAMINATION' as const,
+    },
+    {
+      code: 'CAT_NHANKHOA',
+      name: 'Nhãn khoa',
+      description: 'Các dịch vụ khám mắt',
+      type: 'EXAMINATION' as const,
+    },
+    {
+      code: 'CAT_XETNGHIEM',
+      name: 'Xét nghiệm',
+      description: 'Các dịch vụ xét nghiệm cận lâm sàng',
+      type: 'LAB' as const,
+    },
+    {
+      code: 'CAT_CDHA',
+      name: 'Chẩn đoán hình ảnh',
+      description: 'Siêu âm, X-Quang, MRI, CT',
+      type: 'LAB' as const,
+    },
+    {
+      code: 'CAT_TMH',
+      name: 'Tai mũi họng',
+      description: 'Các dịch vụ khám chuyên khoa TMH',
+      type: 'EXAMINATION',
+    },
+    {
+      code: 'CAT_SANPHUKHOA',
+      name: 'Sản phụ khoa',
+      description: 'Các dịch vụ khám sản khoa và phụ khoa',
+      type: 'EXAMINATION',
+    },
+  ];
+
+  const categoryMap = new Map<string, string>();
+  for (const cat of categoriesData) {
+    const created = await prisma.category.create({ data: cat });
+    categoryMap.set(cat.name, created.id);
+  }
+  console.log(`  ✅ Created ${categoriesData.length} categories`);
+
+  // ============================================
   // 5. CREATE SERVICES
   // ============================================
   console.log('\n🏥 Creating services...');
@@ -603,7 +679,7 @@ async function main() {
     {
       name: 'Khám tổng quát',
       description: 'Khám sức khỏe định kỳ, tư vấn các vấn đề sức khỏe chung',
-      category: 'Nội khoa',
+      categoryId: categoryMap.get('Nội khoa')!,
       durationMinutes: 30,
       price: 200000,
       maxSlotsPerHour: 3,
@@ -611,7 +687,7 @@ async function main() {
     {
       name: 'Khám tim mạch',
       description: 'Siêu âm tim, điện tâm đồ, tư vấn điều trị bệnh tim mạch',
-      category: 'Nội khoa',
+      categoryId: categoryMap.get('Nội khoa')!,
       durationMinutes: 45,
       price: 300000,
       maxSlotsPerHour: 2,
@@ -619,7 +695,7 @@ async function main() {
     {
       name: 'Khám da liễu',
       description: 'Điều trị mụn, nám, viêm da, dị ứng da',
-      category: 'Da liễu',
+      categoryId: categoryMap.get('Da liễu')!,
       durationMinutes: 30,
       price: 250000,
       maxSlotsPerHour: 2,
@@ -627,7 +703,7 @@ async function main() {
     {
       name: 'Khám răng hàm mặt',
       description: 'Khám tổng quát, lấy cao răng, nhổ răng, trám răng',
-      category: 'Nha khoa',
+      categoryId: categoryMap.get('Nha khoa')!,
       durationMinutes: 45,
       price: 350000,
       maxSlotsPerHour: 2,
@@ -635,7 +711,7 @@ async function main() {
     {
       name: 'Khám mắt',
       description: 'Đo thị lực, khám bệnh về mắt, kê đơn kính',
-      category: 'Nhãn khoa',
+      categoryId: categoryMap.get('Nhãn khoa')!,
       durationMinutes: 30,
       price: 200000,
       maxSlotsPerHour: 3,
@@ -643,7 +719,7 @@ async function main() {
     {
       name: 'Xét nghiệm',
       description: 'Xét nghiệm máu, nước tiểu, các xét nghiệm chuyên sâu',
-      category: 'Xét nghiệm',
+      categoryId: categoryMap.get('Xét nghiệm')!,
       durationMinutes: 15,
       price: 150000,
       maxSlotsPerHour: 4,
@@ -651,7 +727,7 @@ async function main() {
     {
       name: 'Siêu âm tổng quát',
       description: 'Siêu âm bụng, siêu âm tuyến giáp, siêu âm vú',
-      category: 'Chẩn đoán hình ảnh',
+      categoryId: categoryMap.get('Chẩn đoán hình ảnh')!,
       durationMinutes: 30,
       price: 280000,
       maxSlotsPerHour: 2,
@@ -659,7 +735,7 @@ async function main() {
     {
       name: 'Nội soi',
       description: 'Nội soi dạ dày, nội soi đại tràng',
-      category: 'Nội khoa',
+      categoryId: categoryMap.get('Nội khoa')!,
       durationMinutes: 60,
       price: 500000,
       maxSlotsPerHour: 1,
@@ -667,7 +743,7 @@ async function main() {
     {
       name: 'Khám tai mũi họng',
       description: 'Khám và điều trị bệnh tai mũi họng',
-      category: 'Tai mũi họng',
+      categoryId: categoryMap.get('Tai mũi họng')!,
       durationMinutes: 30,
       price: 220000,
       maxSlotsPerHour: 2,
@@ -675,7 +751,7 @@ async function main() {
     {
       name: 'Khám sản phụ khoa',
       description: 'Khám thai, tư vấn sức khỏe phụ nữ',
-      category: 'Sản phụ khoa',
+      categoryId: categoryMap.get('Sản phụ khoa')!,
       durationMinutes: 45,
       price: 300000,
       maxSlotsPerHour: 2,

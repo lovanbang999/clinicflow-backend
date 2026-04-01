@@ -26,7 +26,15 @@ export class ServicesService {
       durationMinutes,
       price,
       maxSlotsPerHour,
+      categoryId,
     } = createServiceDto;
+
+    const category = await this.prisma.category.findUnique({
+      where: { id: categoryId },
+    });
+    if (!category) {
+      throw new BadRequestException('Invalid category ID');
+    }
 
     // Check for duplicate service name
     const existingService = await this.prisma.service.findFirst({
@@ -74,6 +82,7 @@ export class ServicesService {
         durationMinutes,
         price,
         maxSlotsPerHour,
+        categoryId,
         isActive: true,
       },
     });
@@ -89,8 +98,26 @@ export class ServicesService {
   /**
    * Get all services with optional filters
    */
-  async findAll(filters?: { isActive?: boolean; search?: string }) {
+  async findAll(filters?: {
+    isActive?: boolean;
+    search?: string;
+    category?: string;
+    categoryType?: 'EXAMINATION' | 'LAB';
+  }) {
     const where: Prisma.ServiceWhereInput = {};
+
+    if (filters?.category && filters.category !== 'all') {
+      where.categoryId = filters.category;
+    }
+
+    if (filters?.categoryType) {
+      where.category = {
+        ...(where.category
+          ? (where.category as Prisma.CategoryWhereInput)
+          : {}),
+        type: filters.categoryType,
+      };
+    }
 
     if (filters?.isActive !== undefined) {
       where.isActive = filters.isActive;
@@ -115,6 +142,9 @@ export class ServicesService {
 
     const services = await this.prisma.service.findMany({
       where,
+      include: {
+        category: { select: { id: true, name: true, code: true } },
+      },
       orderBy: {
         name: 'asc',
       },
@@ -134,6 +164,9 @@ export class ServicesService {
   async findOne(id: string) {
     const service = await this.prisma.service.findUnique({
       where: { id },
+      include: {
+        category: { select: { id: true, name: true, code: true } },
+      },
     });
 
     if (!service) {
@@ -171,8 +204,21 @@ export class ServicesService {
       );
     }
 
-    const { name, iconUrl, durationMinutes, price, maxSlotsPerHour } =
-      updateServiceDto;
+    const {
+      name,
+      iconUrl,
+      durationMinutes,
+      price,
+      maxSlotsPerHour,
+      categoryId,
+    } = updateServiceDto;
+
+    if (categoryId) {
+      const cat = await this.prisma.category.findUnique({
+        where: { id: categoryId },
+      });
+      if (!cat) throw new BadRequestException('Invalid category ID');
+    }
 
     // If updating name, check for duplicates
     if (name) {
