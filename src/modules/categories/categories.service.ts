@@ -1,12 +1,12 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-} from '@nestjs/common';
+import { Injectable, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
+import { ApiException } from '../../common/exceptions/api.exception';
+import { MessageCodes } from '../../common/constants/message-codes.const';
+
+import { CategoryQueryDto } from './dto/category-query.dto';
 
 @Injectable()
 export class CategoriesService {
@@ -17,7 +17,11 @@ export class CategoriesService {
       where: { code: createCategoryDto.code },
     });
     if (existing) {
-      throw new ConflictException('Category code already exists');
+      throw new ApiException(
+        MessageCodes.CATEGORY_CODE_EXISTS,
+        'Category code already exists',
+        HttpStatus.CONFLICT,
+      );
     }
 
     const category = await this.prisma.category.create({
@@ -31,15 +35,26 @@ export class CategoriesService {
     );
   }
 
-  async findAll(isActive?: string) {
-    const where =
-      isActive !== undefined ? { isActive: isActive === 'true' } : {};
-    const categories = await this.prisma.category.findMany({
-      where,
-      orderBy: { name: 'asc' },
-    });
-    return ResponseHelper.success(
-      categories,
+  async findAll(query: CategoryQueryDto) {
+    const { isActive, page = 1, limit = 10 } = query;
+    const where = isActive !== undefined ? { isActive } : {};
+
+    const skip = (page - 1) * limit;
+    const [total, items] = await Promise.all([
+      this.prisma.category.count({ where }),
+      this.prisma.category.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    return ResponseHelper.successPagination(
+      items,
+      total,
+      page,
+      limit,
       'CATEGORIES_RETRIEVED',
       'Categories retrieved',
       200,
@@ -53,7 +68,13 @@ export class CategoriesService {
         _count: { select: { services: true } },
       },
     });
-    if (!category) throw new NotFoundException('Category not found');
+    if (!category) {
+      throw new ApiException(
+        MessageCodes.CATEGORY_NOT_FOUND,
+        'Category not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
     return ResponseHelper.success(
       category,
       'CATEGORY_RETRIEVED',
@@ -64,13 +85,25 @@ export class CategoriesService {
 
   async update(id: string, updateCategoryDto: UpdateCategoryDto) {
     const category = await this.prisma.category.findUnique({ where: { id } });
-    if (!category) throw new NotFoundException('Category not found');
+    if (!category) {
+      throw new ApiException(
+        MessageCodes.CATEGORY_NOT_FOUND,
+        'Category not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
 
     if (updateCategoryDto.code && updateCategoryDto.code !== category.code) {
       const existing = await this.prisma.category.findUnique({
         where: { code: updateCategoryDto.code },
       });
-      if (existing) throw new ConflictException('Category code already exists');
+      if (existing) {
+        throw new ApiException(
+          MessageCodes.CATEGORY_CODE_EXISTS,
+          'Category code already exists',
+          HttpStatus.CONFLICT,
+        );
+      }
     }
 
     const updated = await this.prisma.category.update({
@@ -87,14 +120,22 @@ export class CategoriesService {
 
   async remove(id: string) {
     const category = await this.prisma.category.findUnique({ where: { id } });
-    if (!category) throw new NotFoundException('Category not found');
+    if (!category) {
+      throw new ApiException(
+        MessageCodes.CATEGORY_NOT_FOUND,
+        'Category not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
 
     const serviceCount = await this.prisma.service.count({
       where: { categoryId: id },
     });
     if (serviceCount > 0) {
-      throw new ConflictException(
+      throw new ApiException(
+        MessageCodes.CATEGORY_HAS_SERVICES,
         'Cannot delete category with associated services',
+        HttpStatus.CONFLICT,
       );
     }
 

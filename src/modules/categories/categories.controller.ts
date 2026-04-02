@@ -18,6 +18,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { UserRole } from '@prisma/client';
+import { CategoryQueryDto } from './dto/category-query.dto';
 
 @ApiTags('categories')
 @Controller('categories')
@@ -36,8 +37,8 @@ export class CategoriesController {
   @Get()
   @Public()
   @ApiOperation({ summary: 'Get all categories' })
-  findAll(@Query('isActive') isActive?: string) {
-    return this.categoriesService.findAll(isActive);
+  findAll(@Query() query: CategoryQueryDto) {
+    return this.categoriesService.findAll(query);
   }
 
   @Get(':id')
