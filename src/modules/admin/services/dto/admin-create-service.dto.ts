@@ -63,7 +63,7 @@ export class AdminCreateServiceDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
-  category?: string;
+  categoryId?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()

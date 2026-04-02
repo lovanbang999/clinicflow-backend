@@ -62,7 +62,7 @@ export class AdminUpdateServiceDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
-  category?: string;
+  categoryId?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()

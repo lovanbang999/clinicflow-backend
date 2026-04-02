@@ -18,6 +18,8 @@ import { MedicalRecordsModule } from './modules/medical-records/medical-records.
 import { LabOrdersModule } from './modules/lab-orders/lab-orders.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { ReceptionistAnalyticsModule } from './modules/receptionist/analytics/receptionist-analytics.module';
+import { VisitServiceOrdersModule } from './modules/visit-service-orders/visit-service-orders.module';
+import { CategoriesModule } from './modules/categories/categories.module';
 
 @Module({
   imports: [
@@ -46,6 +48,8 @@ import { ReceptionistAnalyticsModule } from './modules/receptionist/analytics/re
     LabOrdersModule,
     BillingModule,
     ReceptionistAnalyticsModule,
+    VisitServiceOrdersModule,
+    CategoriesModule,
   ],
   providers: [
     // Global guard - apply JWT auth to all routes by default

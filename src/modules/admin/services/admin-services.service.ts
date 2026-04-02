@@ -76,8 +76,8 @@ export class AdminServicesService {
       where.isActive = isActive;
     }
 
-    if (category) {
-      where.category = { equals: category, mode: 'insensitive' };
+    if (category && category !== 'all') {
+      where.categoryId = category;
     }
 
     if (search) {
@@ -185,7 +185,7 @@ export class AdminServicesService {
         price: dto.price,
         durationMinutes: dto.durationMinutes,
         maxSlotsPerHour: dto.maxSlotsPerHour,
-        category: dto.category,
+        categoryId: dto.categoryId,
         preparationNotes: dto.preparationNotes,
         tags: dto.tags || [],
         isActive: dto.isActive ?? true,
@@ -247,7 +247,7 @@ export class AdminServicesService {
           maxSlotsPerHour: dto.maxSlotsPerHour,
         }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
-        ...(dto.category !== undefined && { category: dto.category }),
+        ...(dto.categoryId !== undefined && { categoryId: dto.categoryId }),
         ...(dto.preparationNotes !== undefined && {
           preparationNotes: dto.preparationNotes,
         }),
