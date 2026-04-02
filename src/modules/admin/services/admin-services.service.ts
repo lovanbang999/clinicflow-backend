@@ -91,6 +91,7 @@ export class AdminServicesService {
     const [services, total] = await Promise.all([
       this.prisma.service.findMany({
         where,
+        include: { category: true },
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
@@ -119,7 +120,10 @@ export class AdminServicesService {
    * Detail of a single service with booking stats.
    */
   async findOneService(id: string) {
-    const service = await this.prisma.service.findUnique({ where: { id } });
+    const service = await this.prisma.service.findUnique({
+      where: { id },
+      include: { category: true },
+    });
     if (!service) {
       throw new ApiException(
         MessageCodes.SERVICE_NOT_FOUND,
