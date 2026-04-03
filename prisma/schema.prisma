@@ -671,6 +671,21 @@ model MedicalRecord {
   chiefComplaint   String?
   clinicalFindings String?
   doctorNotes      String?
+  
+  // Vitals (Step1)
+  bloodPressure    String? // "120/80"
+  heartRate        Int?
+  temperature      Decimal? @db.Decimal(4, 1)
+  spO2             Int?
+  weightKg         Decimal? @db.Decimal(5, 2)
+  heightCm         Decimal? @db.Decimal(5, 1)
+  bmi              Decimal? @db.Decimal(4, 1)
+  
+  // History
+  medicalHistory   String?
+  allergies        String?
+  additionalSymptoms String?
+
   symptomsAt       DateTime? // Timestamp when Step1 was saved
 
   // Step4 — Diagnosis
@@ -738,6 +753,7 @@ model VisitServiceOrder {
 
   medicalRecord MedicalRecord @relation(fields: [medicalRecordId], references: [id], onDelete: Cascade)
   service       Service       @relation(fields: [serviceId], references: [id])
+  prescriptionItems PrescriptionItem[]
 
   @@index([medicalRecordId])
   @@index([patientProfileId])
@@ -772,6 +788,9 @@ model Prescription {
 model PrescriptionItem {
   id             String @id @default(uuid())
   prescriptionId String
+
+  visitServiceOrderId String?
+  visitServiceOrder   VisitServiceOrder? @relation(fields: [visitServiceOrderId], references: [id], onDelete: SetNull)
 
   medicineName String // "Ibuprofen"
   dosage       String // "400mg"

@@ -11,6 +11,15 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class PrescriptionItemDto {
+  @ApiPropertyOptional({
+    example: 'visit-service-order-uuid',
+    description:
+      'ID of the specific service order this prescription relates to',
+  })
+  @IsOptional()
+  @IsString()
+  visitServiceOrderId?: string;
+
   @ApiProperty({ example: 'Ibuprofen' })
   @IsString()
   medicineName: string;
