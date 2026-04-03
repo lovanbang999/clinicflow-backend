@@ -792,6 +792,9 @@ model PrescriptionItem {
   visitServiceOrderId String?
   visitServiceOrder   VisitServiceOrder? @relation(fields: [visitServiceOrderId], references: [id], onDelete: SetNull)
 
+  labOrderId          String?
+  labOrder            LabOrder?      @relation(fields: [labOrderId], references: [id], onDelete: SetNull) 
+
   medicineName String // "Ibuprofen"
   dosage       String // "400mg"
   frequency    String // "3 lần/ngày"
@@ -832,6 +835,7 @@ model LabOrder {
   service       Service?      @relation(fields: [serviceId], references: [id])
   result        LabResult?
   invoiceItem   InvoiceItem?
+  prescriptionItems PrescriptionItem[]
 
   @@index([patientProfileId])
   @@index([medicalRecordId])

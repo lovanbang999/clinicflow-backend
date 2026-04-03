@@ -20,6 +20,14 @@ export class PrescriptionItemDto {
   @IsString()
   visitServiceOrderId?: string;
 
+  @ApiPropertyOptional({
+    example: 'lab-order-uuid',
+    description: 'ID of the specific lab order this prescription relates to',
+  })
+  @IsOptional()
+  @IsString()
+  labOrderId?: string;
+
   @ApiProperty({ example: 'Ibuprofen' })
   @IsString()
   medicineName: string;
