@@ -66,6 +66,7 @@ async function main() {
   await prisma.labOrder.deleteMany();
   await prisma.prescriptionItem.deleteMany();
   await prisma.prescription.deleteMany();
+  await prisma.visitServiceOrder.deleteMany();
   await prisma.medicalRecord.deleteMany();
   await prisma.bookingStatusHistory.deleteMany();
   await prisma.bookingQueue.deleteMany();
@@ -201,9 +202,9 @@ async function main() {
       },
       serviceNames: [
         'Khám tổng quát',
-        'Xét nghiệm',
+        'Xét nghiệm máu tổng quát',
         'Siêu âm tổng quát',
-        'Nội soi',
+        'Nội soi dạ dày',
       ],
     },
     {
@@ -223,7 +224,11 @@ async function main() {
         reviewCount: 89,
         bio: 'Chuyên gia tim mạch với 12 năm kinh nghiệm, từng tu nghiệp tại Nhật Bản',
       },
-      serviceNames: ['Khám tim mạch', 'Xét nghiệm', 'Siêu âm tổng quát'],
+      serviceNames: [
+        'Khám tim mạch',
+        'Xét nghiệm máu tổng quát',
+        'Siêu âm tổng quát',
+      ],
     },
     {
       user: {
@@ -242,7 +247,7 @@ async function main() {
         reviewCount: 156,
         bio: 'Bác sĩ da liễu với chuyên môn sâu về điều trị mụn và thẩm mỹ da',
       },
-      serviceNames: ['Khám da liễu', 'Xét nghiệm'],
+      serviceNames: ['Khám da liễu', 'Xét nghiệm máu tổng quát'],
     },
     {
       user: {
@@ -280,7 +285,7 @@ async function main() {
         reviewCount: 203,
         bio: 'Bác sĩ mắt giàu kinh nghiệm, chuyên về phẫu thuật khúc xạ và điều trị bệnh lý võng mạc',
       },
-      serviceNames: ['Khám mắt', 'Xét nghiệm'],
+      serviceNames: ['Khám mắt', 'Xét nghiệm máu tổng quát'],
     },
     {
       user: {
@@ -299,7 +304,7 @@ async function main() {
         reviewCount: 175,
         bio: 'Chuyên gia tai mũi họng với hơn 16 năm kinh nghiệm điều trị các bệnh lý tai mũi họng phức tạp',
       },
-      serviceNames: ['Khám tai mũi họng', 'Xét nghiệm'],
+      serviceNames: ['Khám tai mũi họng', 'Xét nghiệm máu tổng quát'],
     },
     {
       user: {
@@ -318,7 +323,11 @@ async function main() {
         reviewCount: 210,
         bio: 'Bác sĩ sản phụ khoa tận tâm, có kinh nghiệm chăm sóc sức khỏe phụ nữ và theo dõi thai kỳ',
       },
-      serviceNames: ['Khám sản phụ khoa', 'Siêu âm tổng quát', 'Xét nghiệm'],
+      serviceNames: [
+        'Khám sản phụ khoa',
+        'Siêu âm tổng quát',
+        'Xét nghiệm máu tổng quát',
+      ],
     },
   ];
 
@@ -614,6 +623,30 @@ async function main() {
       type: 'EXAMINATION' as const,
     },
     {
+      code: 'CAT_XETNGHIEM',
+      name: 'Xét nghiệm (Lab)',
+      description: 'Các dịch vụ xét nghiệm cận lâm sàng',
+      type: 'LAB' as const,
+    },
+    {
+      code: 'CAT_CDHA',
+      name: 'Chẩn đoán hình ảnh',
+      description: 'Siêu âm, X-Quang, MRI, CT',
+      type: 'LAB' as const,
+    },
+    {
+      code: 'CAT_TDDN',
+      name: 'Thăm dò chức năng',
+      description: 'Điện tâm đồ, đo loãng xương...',
+      type: 'LAB' as const,
+    },
+    {
+      code: 'CAT_THUTHUAT',
+      name: 'Thủ thuật',
+      description: 'Nội soi, tiểu phẫu...',
+      type: 'LAB' as const,
+    },
+    {
       code: 'CAT_NGOAIKHOA',
       name: 'Ngoại khoa',
       description: 'Các dịch vụ khám ngoại khoa',
@@ -638,28 +671,16 @@ async function main() {
       type: 'EXAMINATION' as const,
     },
     {
-      code: 'CAT_XETNGHIEM',
-      name: 'Xét nghiệm',
-      description: 'Các dịch vụ xét nghiệm cận lâm sàng',
-      type: 'LAB' as const,
-    },
-    {
-      code: 'CAT_CDHA',
-      name: 'Chẩn đoán hình ảnh',
-      description: 'Siêu âm, X-Quang, MRI, CT',
-      type: 'LAB' as const,
-    },
-    {
       code: 'CAT_TMH',
       name: 'Tai mũi họng',
       description: 'Các dịch vụ khám chuyên khoa TMH',
-      type: 'EXAMINATION',
+      type: 'EXAMINATION' as const,
     },
     {
       code: 'CAT_SANPHUKHOA',
       name: 'Sản phụ khoa',
       description: 'Các dịch vụ khám sản khoa và phụ khoa',
-      type: 'EXAMINATION',
+      type: 'EXAMINATION' as const,
     },
   ];
 
@@ -685,8 +706,80 @@ async function main() {
       maxSlotsPerHour: 3,
     },
     {
+      name: 'Xét nghiệm máu tổng quát',
+      description: 'Kiểm tra các chỉ số máu cơ bản',
+      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
+      durationMinutes: 15,
+      price: 150000,
+      maxSlotsPerHour: 4,
+    },
+    {
+      name: 'Xét nghiệm nước tiểu',
+      description: 'Kiểm tra đường tiết niệu và thận',
+      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
+      durationMinutes: 15,
+      price: 80000,
+      maxSlotsPerHour: 4,
+    },
+    {
+      name: 'Xét nghiệm HbA1c',
+      description: 'Kiểm tra đường huyết trung bình',
+      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
+      durationMinutes: 15,
+      price: 160000,
+      maxSlotsPerHour: 4,
+    },
+    {
+      name: 'Siêu âm tim',
+      description: 'Kiểm tra cấu trúc và chức năng tim',
+      categoryId: categoryMap.get('Chẩn đoán hình ảnh')!,
+      durationMinutes: 30,
+      price: 350000,
+      maxSlotsPerHour: 2,
+    },
+    {
+      name: 'Siêu âm tổng quát',
+      description: 'Siêu âm bụng, tuyến giáp, vú',
+      categoryId: categoryMap.get('Chẩn đoán hình ảnh')!,
+      durationMinutes: 30,
+      price: 280000,
+      maxSlotsPerHour: 2,
+    },
+    {
+      name: 'X-quang ngực thẳng',
+      description: 'Kiểm tra phổi và tim',
+      categoryId: categoryMap.get('Chẩn đoán hình ảnh')!,
+      durationMinutes: 20,
+      price: 200000,
+      maxSlotsPerHour: 3,
+    },
+    {
+      name: 'Điện tâm đồ (ECG)',
+      description: 'Đo nhịp tim và hoạt động của tim',
+      categoryId: categoryMap.get('Thăm dò chức năng')!,
+      durationMinutes: 20,
+      price: 120000,
+      maxSlotsPerHour: 3,
+    },
+    {
+      name: 'Đo loãng xương',
+      description: 'Kiểm tra mật độ xương',
+      categoryId: categoryMap.get('Thăm dò chức năng')!,
+      durationMinutes: 30,
+      price: 250000,
+      maxSlotsPerHour: 2,
+    },
+    {
+      name: 'Nội soi dạ dày',
+      description: 'Nội soi kiểm tra dạ dày và tá tràng',
+      categoryId: categoryMap.get('Thủ thuật')!,
+      durationMinutes: 45,
+      price: 600000,
+      maxSlotsPerHour: 1,
+    },
+    {
       name: 'Khám tim mạch',
-      description: 'Siêu âm tim, điện tâm đồ, tư vấn điều trị bệnh tim mạch',
+      description: 'Tư vấn điều trị bệnh tim mạch',
       categoryId: categoryMap.get('Nội khoa')!,
       durationMinutes: 45,
       price: 300000,
@@ -694,7 +787,7 @@ async function main() {
     },
     {
       name: 'Khám da liễu',
-      description: 'Điều trị mụn, nám, viêm da, dị ứng da',
+      description: 'Điều trị mụn, nám, viêm da',
       categoryId: categoryMap.get('Da liễu')!,
       durationMinutes: 30,
       price: 250000,
@@ -702,7 +795,7 @@ async function main() {
     },
     {
       name: 'Khám răng hàm mặt',
-      description: 'Khám tổng quát, lấy cao răng, nhổ răng, trám răng',
+      description: 'Khám tổng quát răng hàm mặt',
       categoryId: categoryMap.get('Nha khoa')!,
       durationMinutes: 45,
       price: 350000,
@@ -710,35 +803,11 @@ async function main() {
     },
     {
       name: 'Khám mắt',
-      description: 'Đo thị lực, khám bệnh về mắt, kê đơn kính',
+      description: 'Khám bệnh về mắt',
       categoryId: categoryMap.get('Nhãn khoa')!,
       durationMinutes: 30,
       price: 200000,
       maxSlotsPerHour: 3,
-    },
-    {
-      name: 'Xét nghiệm',
-      description: 'Xét nghiệm máu, nước tiểu, các xét nghiệm chuyên sâu',
-      categoryId: categoryMap.get('Xét nghiệm')!,
-      durationMinutes: 15,
-      price: 150000,
-      maxSlotsPerHour: 4,
-    },
-    {
-      name: 'Siêu âm tổng quát',
-      description: 'Siêu âm bụng, siêu âm tuyến giáp, siêu âm vú',
-      categoryId: categoryMap.get('Chẩn đoán hình ảnh')!,
-      durationMinutes: 30,
-      price: 280000,
-      maxSlotsPerHour: 2,
-    },
-    {
-      name: 'Nội soi',
-      description: 'Nội soi dạ dày, nội soi đại tràng',
-      categoryId: categoryMap.get('Nội khoa')!,
-      durationMinutes: 60,
-      price: 500000,
-      maxSlotsPerHour: 1,
     },
     {
       name: 'Khám tai mũi họng',
@@ -750,7 +819,7 @@ async function main() {
     },
     {
       name: 'Khám sản phụ khoa',
-      description: 'Khám thai, tư vấn sức khỏe phụ nữ',
+      description: 'Khám thai, tư vấn phụ khoa',
       categoryId: categoryMap.get('Sản phụ khoa')!,
       durationMinutes: 45,
       price: 300000,
@@ -923,7 +992,7 @@ async function main() {
   const doctorLeBinh = createdDoctors[1]; // Tim mạch
   const khamTongQuat = serviceMap.get('Khám tổng quát')!;
   const khamTimMach = serviceMap.get('Khám tim mạch')!;
-  const xetNghiem = serviceMap.get('Xét nghiệm')!;
+  const xetNghiem = serviceMap.get('Xét nghiệm máu tổng quát')!;
 
   const bookingDates = [
     new Date(dateOnly), // today
