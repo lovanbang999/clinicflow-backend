@@ -9,7 +9,6 @@ import {
 import { LabOrderStatus, Prisma, VisitStep } from '@prisma/client';
 import { format } from 'date-fns';
 import { vi } from 'date-fns/locale';
-
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
@@ -105,6 +104,16 @@ export class MedicalRecordsService {
         chiefComplaint: dto.chiefComplaint,
         clinicalFindings: dto.clinicalFindings,
         doctorNotes: dto.doctorNotes,
+        bloodPressure: dto.bloodPressure,
+        heartRate: dto.heartRate,
+        temperature: dto.temperature,
+        spO2: dto.spO2,
+        weightKg: dto.weightKg,
+        heightCm: dto.heightCm,
+        bmi: dto.bmi,
+        medicalHistory: dto.medicalHistory,
+        allergies: dto.allergies,
+        additionalSymptoms: dto.additionalSymptoms,
         symptomsAt: new Date(),
         version: 1,
       },
@@ -112,6 +121,16 @@ export class MedicalRecordsService {
         chiefComplaint: dto.chiefComplaint,
         clinicalFindings: dto.clinicalFindings,
         doctorNotes: dto.doctorNotes,
+        bloodPressure: dto.bloodPressure,
+        heartRate: dto.heartRate,
+        temperature: dto.temperature,
+        spO2: dto.spO2,
+        weightKg: dto.weightKg,
+        heightCm: dto.heightCm,
+        bmi: dto.bmi,
+        medicalHistory: dto.medicalHistory,
+        allergies: dto.allergies,
+        additionalSymptoms: dto.additionalSymptoms,
         symptomsAt: new Date(),
         visitStep: VisitStep.SYMPTOMS_TAKEN,
         version: { increment: 1 },
@@ -364,6 +383,7 @@ export class MedicalRecordsService {
         await tx.prescriptionItem.createMany({
           data: dto.items.map((item, idx) => ({
             prescriptionId: prescription.id,
+            visitServiceOrderId: item.visitServiceOrderId,
             medicineName: item.medicineName,
             dosage: item.dosage,
             frequency: item.frequency,
@@ -541,6 +561,7 @@ export class MedicalRecordsService {
         {
           notes: undefined,
           items: dto.prescriptionItems.map((i) => ({
+            visitServiceOrderId: undefined, // Legacy flow does not support linking
             medicineName: i.medicineName,
             dosage: i.dosage,
             frequency: i.frequency,
