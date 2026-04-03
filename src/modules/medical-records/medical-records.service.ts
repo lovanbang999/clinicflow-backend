@@ -24,6 +24,26 @@ import { SaveSymptomsDto } from './dto/save-symptoms.dto';
 export class MedicalRecordsService {
   private readonly logger = new Logger(MedicalRecordsService.name);
 
+  private readonly visitIncludes = {
+    visitServiceOrders: {
+      include: { service: true },
+      orderBy: { createdAt: 'asc' },
+    },
+    labOrders: {
+      include: { result: true },
+      orderBy: { createdAt: 'asc' },
+    },
+    prescription: {
+      include: { items: { orderBy: { sortOrder: 'asc' } } },
+    },
+    booking: {
+      include: {
+        doctor: true,
+        patientProfile: true,
+      },
+    },
+  } as const;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
@@ -135,6 +155,7 @@ export class MedicalRecordsService {
         visitStep: VisitStep.SYMPTOMS_TAKEN,
         version: { increment: 1 },
       },
+      include: this.visitIncludes,
     });
 
     return ResponseHelper.success(
@@ -224,6 +245,7 @@ export class MedicalRecordsService {
           orderedAt: new Date(),
           version: { increment: 1 },
         },
+        include: this.visitIncludes,
       });
 
       const orders = await tx.visitServiceOrder.findMany({
@@ -273,15 +295,11 @@ export class MedicalRecordsService {
   async getVisitResults(bookingId: string) {
     const record = await this.prisma.medicalRecord.findUnique({
       where: { bookingId },
-      include: {
-        visitServiceOrders: {
-          include: { service: true },
-          orderBy: { createdAt: 'asc' },
-        },
-        prescription: { include: { items: { orderBy: { sortOrder: 'asc' } } } },
-      },
+      include: this.visitIncludes,
     });
+
     if (!record) throw new NotFoundException('Medical record not found');
+
     return ResponseHelper.success(record, 'EMR.RESULTS_FETCHED', '', 200);
   }
 
@@ -328,6 +346,7 @@ export class MedicalRecordsService {
         diagnosedAt: new Date(),
         version: { increment: 1 },
       },
+      include: this.visitIncludes,
     });
 
     return ResponseHelper.success(
@@ -355,7 +374,8 @@ export class MedicalRecordsService {
       );
     if (
       record.visitStep !== VisitStep.DIAGNOSED &&
-      record.visitStep !== VisitStep.PRESCRIBED
+      record.visitStep !== VisitStep.PRESCRIBED &&
+      record.visitStep !== VisitStep.COMPLETED
     ) {
       throw new BadRequestException(
         `Cannot prescribe: visit step is "${record.visitStep}". Finalize diagnosis (B4) first.`,
@@ -384,6 +404,7 @@ export class MedicalRecordsService {
           data: dto.items.map((item, idx) => ({
             prescriptionId: prescription.id,
             visitServiceOrderId: item.visitServiceOrderId,
+            labOrderId: item.labOrderId,
             medicineName: item.medicineName,
             dosage: item.dosage,
             frequency: item.frequency,
@@ -459,12 +480,7 @@ export class MedicalRecordsService {
 
       return tx.medicalRecord.findUnique({
         where: { id: record.id },
-        include: {
-          prescription: {
-            include: { items: { orderBy: { sortOrder: 'asc' } } },
-          },
-          visitServiceOrders: { include: { service: true } },
-        },
+        include: this.visitIncludes,
       });
     });
 
