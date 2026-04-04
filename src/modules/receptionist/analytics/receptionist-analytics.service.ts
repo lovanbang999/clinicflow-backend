@@ -178,27 +178,56 @@ export class ReceptionistAnalyticsService {
         _sum: { amountPaid: true },
         _count: { _all: true },
       }),
-      // Top Services
-      this.prisma.booking.groupBy({
-        by: ['serviceId'],
-        where: { createdAt: { gte: filterGte, lte: filterLte } },
-        _count: { _all: true },
-        orderBy: { _count: { serviceId: 'desc' } },
-        take: 5,
+      // Top Services (Revenue Based)
+      this.prisma.invoice.findMany({
+        where: {
+          status: InvoiceStatus.PAID,
+          paidAt: { gte: filterGte, lte: filterLte },
+        },
+        include: {
+          booking: {
+            select: {
+              serviceId: true,
+              service: { select: { name: true } },
+            },
+          },
+        },
       }),
     ]);
 
-    // Resolve service names for top services
-    const serviceIds = topServicesRaw.map((s) => s.serviceId);
-    const services = await this.prisma.service.findMany({
-      where: { id: { in: serviceIds } },
-      select: { id: true, name: true },
-    });
+    const serviceRevenueMap = new Map<
+      string,
+      { name: string; revenue: number; count: number }
+    >();
 
-    const topServices = topServicesRaw.map((s) => ({
-      name: services.find((svc) => svc.id === s.serviceId)?.name || 'Unknown',
-      count: s._count._all,
-    }));
+    for (const inv of topServicesRaw) {
+      if (!inv.booking?.serviceId) continue;
+
+      const sId = inv.booking.serviceId;
+      const sName = inv.booking.service.name;
+      const amount = Number(inv.totalAmount);
+
+      const existing = serviceRevenueMap.get(sId) || {
+        name: sName,
+        revenue: 0,
+        count: 0,
+      };
+      serviceRevenueMap.set(sId, {
+        name: sName,
+        revenue: existing.revenue + amount,
+        count: existing.count + 1,
+      });
+    }
+
+    const topServices = Array.from(serviceRevenueMap.entries())
+      .map(([id, data]) => ({
+        id,
+        name: data.name,
+        count: data.count,
+        revenue: data.revenue,
+      }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
 
     return ResponseHelper.success(
       {
