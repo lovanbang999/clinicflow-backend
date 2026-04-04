@@ -298,7 +298,10 @@ export class MedicalRecordsService {
       include: this.visitIncludes,
     });
 
-    if (!record) throw new NotFoundException('Medical record not found');
+    if (!record) {
+      // In early stages of an exam, the record might not exist yet. Return 200 with null.
+      return ResponseHelper.success(null, 'EMR.NO_RECORD_YET', '', 200);
+    }
 
     return ResponseHelper.success(record, 'EMR.RESULTS_FETCHED', '', 200);
   }
