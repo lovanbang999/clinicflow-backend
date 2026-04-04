@@ -16,6 +16,7 @@ import {
 } from '@prisma/client';
 
 import { NotificationsService } from '../notifications/notifications.service';
+import { LabOrdersGateway } from '../lab-orders/lab-orders.gateway';
 import { format } from 'date-fns';
 
 @Injectable()
@@ -23,6 +24,7 @@ export class BillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly labOrdersGateway: LabOrdersGateway,
   ) {}
 
   private formatVNCurrency(amount: number): string {
@@ -605,11 +607,21 @@ export class BillingService {
             where: { invoiceId, labOrderId: { not: null } },
           });
           if (labItems.length > 0) {
+            const labOrderIds = labItems.map((i) => i.labOrderId as string);
+
             await tx.labOrder.updateMany({
-              where: {
-                id: { in: labItems.map((i) => i.labOrderId as string) },
-              },
+              where: { id: { in: labOrderIds } },
               data: { status: LabOrderStatus.PAID },
+            });
+
+            const patientName =
+              invoice.booking?.patientProfile?.fullName || 'Khách';
+
+            // Push real-time event to all connected technicians
+            this.labOrdersGateway.broadcastNewLabOrder({
+              labOrderIds,
+              patientName,
+              invoiceId: invoice.id,
             });
 
             // Notify technicians that new lab orders are ready to be performed
@@ -618,14 +630,12 @@ export class BillingService {
               select: { id: true },
             });
 
-            const patientName =
-              invoice.booking?.patientProfile?.fullName || 'Khách';
             for (const tech of technicians) {
               await this.notificationsService.createInAppNotification({
                 userId: tech.id,
                 title: 'Phiếu xét nghiệm mới',
                 content: `Bệnh nhân ${patientName} đã thanh toán. Vui lòng thực hiện các chỉ định xét nghiệm.`,
-                type: 'LAB_RESULT_READY', // Or a new type if preferred
+                type: 'LAB_RESULT_READY',
                 metadata: {
                   invoiceId: invoice.id,
                   bookingId: invoice.bookingId,

@@ -6,10 +6,14 @@ import { CreateLabOrderDto } from './dto/create-lab-order.dto';
 import { UploadLabResultDto } from './dto/upload-lab-result.dto';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { LabOrderStatus } from '@prisma/client';
+import { LabOrdersGateway } from './lab-orders.gateway';
 
 @Injectable()
 export class LabOrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly labOrdersGateway: LabOrdersGateway,
+  ) {}
 
   /**
    * Doctor create lab order
@@ -373,6 +377,12 @@ export class LabOrdersService {
         data: { status: LabOrderStatus.COMPLETED },
         include: { result: true },
       });
+    });
+
+    // Push real-time event to the doctor viewing this booking
+    this.labOrdersGateway.broadcastLabResultCompleted(order.bookingId, {
+      labOrderId,
+      testName: order.testName,
     });
 
     return ResponseHelper.success(
