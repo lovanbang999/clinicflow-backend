@@ -21,6 +21,7 @@ import { ReceptionistAnalyticsModule } from './modules/receptionist/analytics/re
 import { VisitServiceOrdersModule } from './modules/visit-service-orders/visit-service-orders.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { AiModule } from './modules/ai/ai.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
     VisitServiceOrdersModule,
     CategoriesModule,
     AnalyticsModule,
+    AiModule,
   ],
   providers: [
     // Global guard - apply JWT auth to all routes by default

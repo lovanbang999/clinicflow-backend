@@ -218,6 +218,7 @@ model User {
   notifications        Notification[]
   auditLogs            AuditLog[]     @relation("ActorLogs")
   systemConfigsUpdated SystemConfig[] @relation("UpdatedByUser")
+  aiChatSessions       AiChatSession[]
 
   @@index([email])
   @@index([role])
@@ -585,6 +586,7 @@ model Booking {
   medicalRecord   MedicalRecord?
   invoices        Invoice[]
   labOrders       LabOrder[]
+  aiChatSessions  AiChatSession[]
 
   @@index([patientProfileId])
   @@index([doctorId])
@@ -1057,4 +1059,81 @@ model SystemConfig {
 
   @@index([category])
   @@map("system_configs")
+}
+
+// ============================================
+// AI CHAT
+// ============================================
+
+enum AiSessionOutcome {
+  ONGOING      // Session still active
+  BOOKING_MADE // Patient successfully booked an appointment via AI
+  ABANDONED    // User exited without booking ("New Chat" or closed widget)
+  REPORTED     // User reported an issue with the AI response
+}
+
+enum AiMessageRole {
+  USER
+  MODEL
+  TOOL
+}
+
+// Represents a single chat conversation between a patient and the AI
+model AiChatSession {
+  id               String  @id @default(uuid())
+  userId           String
+  patientProfileId String?
+
+  modelName   String           @default("gemini-2.5-flash") // Which AI model handled this session
+  totalTokens Int              @default(0) // Accumulated token count for cost analysis
+  outcome     AiSessionOutcome @default(ONGOING)
+
+  // Filled when outcome = BOOKING_MADE
+  bookingId String?
+
+  // Feedback / issue report
+  feedbackRating Int?      // 1-5 stars (future)
+  feedbackNote   String?   // Free-text from "Report Issue"
+  reportedAt     DateTime?
+
+  startedAt DateTime  @default(now())
+  endedAt   DateTime? // null = still active or abandoned without explicit end
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking  Booking?        @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  messages AiChatMessage[]
+
+  @@index([userId, startedAt(sort: Desc)])
+  @@index([outcome])
+  @@index([startedAt])
+  @@map("ai_chat_sessions")
+}
+
+// Individual messages within a session (append-only)
+model AiChatMessage {
+  id        String @id @default(uuid())
+  sessionId String
+
+  role      AiMessageRole // USER | MODEL | TOOL
+  content   String
+
+  // Tool call metadata (only for role = "tool")
+  toolName   String? // e.g. "getSpecialtyBySymptoms", "createBookingFromChat"
+  toolInput  Json?   // Raw input passed to the tool
+  toolOutput Json?   // Result returned by the tool
+  toolError  String? // Error message if tool execution failed
+
+  tokenCount Int? // Estimated token count for cost analysis
+
+  createdAt DateTime @default(now())
+  // No updatedAt — append-only
+
+  session AiChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@index([toolName]) // Tool usage analytics
+  @@map("ai_chat_messages")
 }
