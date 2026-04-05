@@ -12,6 +12,7 @@ import {
   User,
   Service,
   PatientProfile,
+  Room,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as fs from 'fs';
@@ -59,6 +60,8 @@ async function main() {
   // ============================================
   console.log('\n🗑️  Clearing existing data...');
 
+  await prisma.aiChatMessage.deleteMany();
+  await prisma.aiChatSession.deleteMany();
   await prisma.payment.deleteMany();
   await prisma.invoiceItem.deleteMany();
   await prisma.invoice.deleteMany();
@@ -154,8 +157,10 @@ async function main() {
     },
   ];
 
+  const createdRooms: Room[] = [];
   for (const roomData of roomsData) {
-    await prisma.room.create({ data: roomData });
+    const room = await prisma.room.create({ data: roomData });
+    createdRooms.push(room);
   }
   console.log(`  ✅ Created ${roomsData.length} rooms`);
 
@@ -964,9 +969,20 @@ async function main() {
         const startTime = `${String(hour).padStart(2, '0')}:00`;
         const endTime = `${String(hour + 1).padStart(2, '0')}:00`;
 
+        // Assign a consultation room simply by matching index
+        const consultationRooms = createdRooms.filter(
+          (r) => r.type === RoomType.CONSULTATION,
+        );
+        const assignedRoom =
+          consultationRooms[
+            createdDoctors.findIndex((d) => d.id === doctor.id) %
+              consultationRooms.length
+          ];
+
         await prisma.doctorScheduleSlot.create({
           data: {
             doctorId: doctor.id,
+            roomId: assignedRoom?.id,
             date: slotDate,
             startTime,
             endTime,
@@ -1071,6 +1087,19 @@ async function main() {
         priority: bData.priority,
       },
     });
+
+    // Update slot cache
+    await prisma.doctorScheduleSlot.updateMany({
+      where: {
+        doctorId: bData.doctor.id,
+        date: bData.bookingDate,
+        startTime: bData.startTime,
+      },
+      data: {
+        preBookedCount: { increment: 1 },
+        bookedCount: { increment: 1 },
+      },
+    });
   }
   console.log(`  ✅ Created ${preBookings.length} pre-bookings`);
 
@@ -1148,6 +1177,111 @@ async function main() {
   console.log(
     `  ✅ Total ${sampleBookingTotal} bookings created (${preBookings.length} pre-booked, ${walkInBookings.length} walk-in)`,
   );
+
+  // ============================================
+  // 10. CREATE SAMPLE CLINICAL/BILLING WORKFLOW
+  // ============================================
+  console.log('\\n💼 Creating sample clinical workflow (EMR & Invoices)...');
+
+  // Create an invoice for the first pre-booking
+  const sampleBooking = preBookings[0];
+  const sampleBookingRecord = await prisma.booking.findFirst({
+    where: {
+      bookingDate: sampleBooking.bookingDate,
+      doctorId: sampleBooking.doctor.id,
+      startTime: sampleBooking.startTime,
+    },
+  });
+
+  if (sampleBookingRecord) {
+    // 10.1 EMR & Vitals
+    const medicalRecord = await prisma.medicalRecord.create({
+      data: {
+        bookingId: sampleBookingRecord.id,
+        patientProfileId: sampleBookingRecord.patientProfileId,
+        doctorId: sampleBookingRecord.doctorId,
+        visitStep: 'COMPLETED',
+        chiefComplaint: 'Đau đầu, chóng mặt thường xuyên',
+        clinicalFindings: 'Huyết áp hơi cao, cần theo dõi thêm',
+        bloodPressure: '135/85',
+        heartRate: 85,
+        temperature: 37.1,
+        weightKg: 65,
+        heightCm: 165,
+        bmi: 23.9,
+        diagnosisCode: 'I10',
+        diagnosisName: 'Tăng huyết áp vô căn (nguyên phát)',
+        treatmentPlan: 'Uống thuốc theo toa, tái khám sau 1 tháng',
+        isFinalized: true,
+      },
+    });
+
+    // 10.2 Service Order
+    await prisma.visitServiceOrder.create({
+      data: {
+        medicalRecordId: medicalRecord.id,
+        serviceId: sampleBookingRecord.serviceId,
+        patientProfileId: sampleBookingRecord.patientProfileId,
+        bookingId: sampleBookingRecord.id,
+        status: 'COMPLETED',
+        orderedBy: sampleBookingRecord.doctorId,
+        resultText: 'Bình thường',
+        isAbnormal: false,
+      },
+    });
+
+    // 10.3 Invoice + E-invoice fields (VAT)
+    const subtotal = sampleBooking.service.price;
+    const vatRate = 0; // Medical services typically 0% VAT
+    const invoice = await prisma.invoice.create({
+      data: {
+        bookingId: sampleBookingRecord.id,
+        patientProfileId: sampleBookingRecord.patientProfileId,
+        invoiceType: 'CONSULTATION',
+        invoiceNumber: `INV-2026-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`,
+        subtotal: subtotal,
+        vatRate: vatRate,
+        vatAmount: 0,
+        taxAmount: 0,
+        totalAmount: subtotal,
+        status: 'PAID',
+        paidAt: new Date(),
+        einvoiceStatus: 'ISSUED',
+        einvoiceCode: `EINV-${Math.floor(Math.random() * 1000000)}`,
+        items: {
+          create: [
+            {
+              itemName: sampleBooking.service.name,
+              serviceId: sampleBookingRecord.serviceId,
+              unitPrice: subtotal,
+              quantity: 1,
+              totalPrice: subtotal,
+            },
+          ],
+        },
+      },
+    });
+
+    await prisma.payment.create({
+      data: {
+        invoiceId: invoice.id,
+        amountPaid: subtotal,
+        patientPaid: subtotal,
+        paymentMethod: 'CASH',
+        confirmedBy: admin.id,
+      },
+    });
+
+    // Also update booking status
+    await prisma.booking.update({
+      where: { id: sampleBookingRecord.id },
+      data: { status: 'COMPLETED' },
+    });
+
+    console.log(
+      `  ✅ Created sample EMR & E-Invoice for booking: ${sampleBookingRecord.bookingCode}`,
+    );
+  }
 
   // ============================================
   // 11. CREATE ICD-10 CODES (FULL DATASET IMPORT)
