@@ -5,13 +5,13 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
-import { PrismaModule } from '../prisma/prisma.module';
+import { DatabaseModule } from '../database/database.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import type { StringValue } from 'ms';
 
 @Module({
   imports: [
-    PrismaModule,
+    DatabaseModule,
     PassportModule,
     NotificationsModule,
     JwtModule.registerAsync({

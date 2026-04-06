@@ -1,21 +1,26 @@
-import { Injectable, HttpStatus } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, HttpStatus, Inject } from '@nestjs/common';
+import {
+  ICatalogRepository,
+  I_CATALOG_REPOSITORY,
+} from '../database/interfaces/catalog.repository.interface';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { MessageCodes } from '../../common/constants/message-codes.const';
-
 import { CategoryQueryDto } from './dto/category-query.dto';
 
 @Injectable()
 export class CategoriesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_CATALOG_REPOSITORY)
+    private readonly catalogRepository: ICatalogRepository,
+  ) {}
 
   async create(createCategoryDto: CreateCategoryDto) {
-    const existing = await this.prisma.category.findUnique({
-      where: { code: createCategoryDto.code },
-    });
+    const existing = await this.catalogRepository.findCategoryByCode(
+      createCategoryDto.code,
+    );
     if (existing) {
       throw new ApiException(
         MessageCodes.CATEGORY_CODE_EXISTS,
@@ -24,9 +29,8 @@ export class CategoriesService {
       );
     }
 
-    const category = await this.prisma.category.create({
-      data: createCategoryDto,
-    });
+    const category =
+      await this.catalogRepository.createCategory(createCategoryDto);
     return ResponseHelper.success(
       category,
       'CATEGORY_CREATED',
@@ -40,15 +44,11 @@ export class CategoriesService {
     const where = isActive !== undefined ? { isActive } : {};
 
     const skip = (page - 1) * limit;
-    const [total, items] = await Promise.all([
-      this.prisma.category.count({ where }),
-      this.prisma.category.findMany({
-        where,
-        orderBy: { name: 'asc' },
-        skip,
-        take: limit,
-      }),
-    ]);
+    const { total, items } = await this.catalogRepository.findCategories(
+      where,
+      skip,
+      limit,
+    );
 
     return ResponseHelper.successPagination(
       items,
@@ -62,12 +62,7 @@ export class CategoriesService {
   }
 
   async findOne(id: string) {
-    const category = await this.prisma.category.findUnique({
-      where: { id },
-      include: {
-        _count: { select: { services: true } },
-      },
-    });
+    const category = await this.catalogRepository.findCategoryById(id, true);
     if (!category) {
       throw new ApiException(
         MessageCodes.CATEGORY_NOT_FOUND,
@@ -84,7 +79,7 @@ export class CategoriesService {
   }
 
   async update(id: string, updateCategoryDto: UpdateCategoryDto) {
-    const category = await this.prisma.category.findUnique({ where: { id } });
+    const category = await this.catalogRepository.findCategoryById(id);
     if (!category) {
       throw new ApiException(
         MessageCodes.CATEGORY_NOT_FOUND,
@@ -94,9 +89,9 @@ export class CategoriesService {
     }
 
     if (updateCategoryDto.code && updateCategoryDto.code !== category.code) {
-      const existing = await this.prisma.category.findUnique({
-        where: { code: updateCategoryDto.code },
-      });
+      const existing = await this.catalogRepository.findCategoryByCode(
+        updateCategoryDto.code,
+      );
       if (existing) {
         throw new ApiException(
           MessageCodes.CATEGORY_CODE_EXISTS,
@@ -106,10 +101,10 @@ export class CategoriesService {
       }
     }
 
-    const updated = await this.prisma.category.update({
-      where: { id },
-      data: updateCategoryDto,
-    });
+    const updated = await this.catalogRepository.updateCategory(
+      id,
+      updateCategoryDto,
+    );
     return ResponseHelper.success(
       updated,
       'CATEGORY_UPDATED',
@@ -119,7 +114,7 @@ export class CategoriesService {
   }
 
   async remove(id: string) {
-    const category = await this.prisma.category.findUnique({ where: { id } });
+    const category = await this.catalogRepository.findCategoryById(id);
     if (!category) {
       throw new ApiException(
         MessageCodes.CATEGORY_NOT_FOUND,
@@ -128,9 +123,8 @@ export class CategoriesService {
       );
     }
 
-    const serviceCount = await this.prisma.service.count({
-      where: { categoryId: id },
-    });
+    const serviceCount =
+      await this.catalogRepository.countServicesByCategory(id);
     if (serviceCount > 0) {
       throw new ApiException(
         MessageCodes.CATEGORY_HAS_SERVICES,
@@ -139,7 +133,7 @@ export class CategoriesService {
       );
     }
 
-    await this.prisma.category.delete({ where: { id } });
+    await this.catalogRepository.deleteCategory(id);
     return ResponseHelper.success(
       null,
       'CATEGORY_DELETED',

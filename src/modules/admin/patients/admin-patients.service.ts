@@ -1,10 +1,21 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { Workbook } from 'exceljs';
-import { PrismaService } from '../../prisma/prisma.service';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../../database/interfaces/user.repository.interface';
+import {
+  IProfileRepository,
+  I_PROFILE_REPOSITORY,
+} from '../../database/interfaces/profile.repository.interface';
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../../database/interfaces/booking.repository.interface';
 import { AdminCreatePatientDto } from './dto/create-patient.dto';
 import { AdminUpdatePatientDto } from './dto/update-patient.dto';
 import { PatientSearchQueryDto } from './dto/patient-query.dto';
-import { BookingStatus, Gender, Prisma, User, UserRole } from '@prisma/client';
+import { BookingStatus, Gender, Prisma, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { ApiException } from 'src/common/exceptions/api.exception';
@@ -12,14 +23,22 @@ import { ResponseHelper } from 'src/common/interfaces/api-response.interface';
 
 // Sequential counter helper — in production this should use DB sequence or redis
 // Here we just count existing profiles to generate the next code
-async function generatePatientCode(prisma: PrismaService): Promise<string> {
-  const count = await prisma.patientProfile.count();
+async function generatePatientCode(
+  profileRepository: IProfileRepository,
+): Promise<string> {
+  const count = await profileRepository.countPatientProfile({});
   return `BN-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
 }
 
 @Injectable()
 export class AdminPatientsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+  ) {}
 
   // CREATE — registered patient (User + PatientProfile)
   async create(dto: AdminCreatePatientDto) {
@@ -38,8 +57,8 @@ export class AdminPatientsService {
     const normalizedPhone = phone?.trim() || null;
 
     if (!createAppAccount) {
-      const patientCode = await generatePatientCode(this.prisma);
-      const profile = await this.prisma.patientProfile.create({
+      const patientCode = await generatePatientCode(this.profileRepository);
+      const profile = await this.profileRepository.createPatientProfile({
         data: {
           userId: null,
           fullName,
@@ -72,12 +91,12 @@ export class AdminPatientsService {
     }
 
     // Check unique email / phone on User table
-    const queryOr: Prisma.UserWhereInput[] = [{ email }];
+    const queryOr: any[] = [{ email }];
     if (normalizedPhone) {
       queryOr.push({ phone: normalizedPhone });
     }
 
-    const existingUser = await this.prisma.user.findFirst({
+    const existingUser = await this.userRepository.findFirst({
       where: { OR: queryOr },
     });
 
@@ -91,52 +110,47 @@ export class AdminPatientsService {
     }
 
     const hashedPassword = await bcrypt.hash('Patient@123', 10);
-    const patientCode = await generatePatientCode(this.prisma);
+    const patientCode = await generatePatientCode(this.profileRepository);
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
-          email,
-          fullName,
-          phone: normalizedPhone,
-          gender,
-          dateOfBirth: dateOfBirth?.trim() ? new Date(dateOfBirth) : null,
-          address: address?.trim() || null,
-          password: hashedPassword,
-          role: UserRole.PATIENT,
-          isActive: true,
-          isVerified: true,
-        },
-      });
+    const userCreateResult = await this.userRepository.createRegisteredPatient(
+      {
+        email,
+        fullName,
+        phone: normalizedPhone,
+        gender,
+        dateOfBirth: dateOfBirth?.trim() ? new Date(dateOfBirth) : null,
+        address: address?.trim() || null,
+        password: hashedPassword,
+        role: UserRole.PATIENT,
+        isActive: true,
+        isVerified: true,
+      },
+      {
+        fullName,
+        phone: normalizedPhone,
+        email,
+        dateOfBirth: dateOfBirth?.trim() ? new Date(dateOfBirth) : null,
+        gender,
+        address: address?.trim() || null,
+        patientCode,
+        isGuest: false,
+        bloodType: bloodType?.trim() || null,
+        nationalId: profileData.nationalId?.trim() || null,
+        insuranceNumber: profileData.insuranceNumber?.trim() || null,
+        insuranceProvider: profileData.insuranceProvider?.trim() || null,
+        insuranceExpiry: profileData.insuranceExpiry?.trim()
+          ? new Date(profileData.insuranceExpiry)
+          : null,
+        allergies: profileData.allergies?.trim() || null,
+        chronicConditions: profileData.chronicConditions?.trim() || null,
+        familyHistory: profileData.familyHistory?.trim() || null,
+      },
+    );
 
-      const profile = await tx.patientProfile.create({
-        data: {
-          userId: user.id,
-          // Denormalized fields from User
-          fullName,
-          phone: normalizedPhone,
-          email,
-          dateOfBirth: dateOfBirth?.trim() ? new Date(dateOfBirth) : null,
-          gender,
-          address: address?.trim() || null,
-          // Patient-specific
-          patientCode,
-          isGuest: false,
-          bloodType: bloodType?.trim() || null,
-          nationalId: profileData.nationalId?.trim() || null,
-          insuranceNumber: profileData.insuranceNumber?.trim() || null,
-          insuranceProvider: profileData.insuranceProvider?.trim() || null,
-          insuranceExpiry: profileData.insuranceExpiry?.trim()
-            ? new Date(profileData.insuranceExpiry)
-            : null,
-          allergies: profileData.allergies?.trim() || null,
-          chronicConditions: profileData.chronicConditions?.trim() || null,
-          familyHistory: profileData.familyHistory?.trim() || null,
-        },
-      });
-
-      return { ...user, profile };
-    });
+    const result = {
+      ...userCreateResult,
+      profile: userCreateResult.patientProfile,
+    };
 
     return ResponseHelper.success(
       result,
@@ -156,8 +170,8 @@ export class AdminPatientsService {
     address?: string;
     bloodType?: string;
   }) {
-    const patientCode = await generatePatientCode(this.prisma);
-    const profile = await this.prisma.patientProfile.create({
+    const patientCode = await generatePatientCode(this.profileRepository);
+    const profile = await this.profileRepository.createPatientProfile({
       data: {
         userId: null,
         fullName: dto.fullName,
@@ -185,7 +199,7 @@ export class AdminPatientsService {
     patientProfileId: string,
     dto: { email: string; password?: string },
   ) {
-    const profile = await this.prisma.patientProfile.findUnique({
+    const profile = await this.profileRepository.findUniquePatientProfile({
       where: { id: patientProfileId },
     });
 
@@ -209,9 +223,10 @@ export class AdminPatientsService {
 
     const hashedPassword = await bcrypt.hash(dto.password || 'Patient@123', 10);
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
+    const userCreateResult =
+      await this.userRepository.createGuestAsUserTransaction(
+        patientProfileId,
+        {
           email: dto.email,
           fullName: profile.fullName,
           phone: profile.phone,
@@ -223,19 +238,16 @@ export class AdminPatientsService {
           isActive: true,
           isVerified: false,
         },
-      });
-
-      const updatedProfile = await tx.patientProfile.update({
-        where: { id: patientProfileId },
-        data: {
-          userId: user.id,
+        {
           email: dto.email,
           isGuest: false,
         },
-      });
+      );
 
-      return { user, profile: updatedProfile };
-    });
+    const result = {
+      user: userCreateResult,
+      profile: { ...profile, ...userCreateResult.patientProfile },
+    };
 
     return ResponseHelper.success(
       result,
@@ -304,8 +316,8 @@ export class AdminPatientsService {
     }
 
     const [total, profiles] = await Promise.all([
-      this.prisma.patientProfile.count({ where }),
-      this.prisma.patientProfile.findMany({
+      this.profileRepository.countPatientProfile({ where }),
+      this.profileRepository.findManyPatientProfile({
         where,
         select: {
           id: true,
@@ -341,7 +353,7 @@ export class AdminPatientsService {
       profileIds.length === 0
         ? [[], []]
         : await Promise.all([
-            this.prisma.booking.findMany({
+            this.bookingRepository.findManyBooking({
               where: {
                 patientProfileId: { in: profileIds },
                 status: BookingStatus.COMPLETED,
@@ -354,7 +366,7 @@ export class AdminPatientsService {
                 doctor: { select: { fullName: true } },
               },
             }),
-            this.prisma.booking.findMany({
+            this.bookingRepository.findManyBooking({
               where: {
                 patientProfileId: { in: profileIds },
                 status: {
@@ -465,7 +477,7 @@ export class AdminPatientsService {
       }
     }
 
-    const profiles = await this.prisma.patientProfile.findMany({
+    const profiles = await this.profileRepository.findManyPatientProfile({
       where,
       include: {
         user: {
@@ -570,20 +582,20 @@ export class AdminPatientsService {
       activeAppointmentsLastMonth,
     ] = await Promise.all([
       // KPI 1 — total patient profiles (registered + guest)
-      this.prisma.patientProfile.count(),
-      this.prisma.patientProfile.count({
+      this.profileRepository.countPatientProfile({}),
+      this.profileRepository.countPatientProfile({
         where: { createdAt: { lt: startOfMonth } },
       }),
       // KPI 2 — new profiles this month
-      this.prisma.patientProfile.count({
+      this.profileRepository.countPatientProfile({
         where: { createdAt: { gte: startOfMonth } },
       }),
-      this.prisma.patientProfile.count({
+      this.profileRepository.countPatientProfile({
         where: { createdAt: { gte: startOfLastMonth, lt: startOfMonth } },
       }),
       // KPI 3 — unique profiles with bookings today
-      this.prisma.booking
-        .findMany({
+      this.bookingRepository
+        .findManyBooking({
           where: {
             bookingDate: { gte: startOfToday, lt: startOfTomorrow },
             status: notCancelledOrNoShow,
@@ -591,9 +603,9 @@ export class AdminPatientsService {
           distinct: ['patientProfileId'],
           select: { patientProfileId: true },
         })
-        .then((r) => r.length),
-      this.prisma.booking
-        .findMany({
+        .then((r: any[]) => r.length),
+      this.bookingRepository
+        .findManyBooking({
           where: {
             bookingDate: {
               gte: startOfSameLastWeek,
@@ -604,15 +616,15 @@ export class AdminPatientsService {
           distinct: ['patientProfileId'],
           select: { patientProfileId: true },
         })
-        .then((r) => r.length),
+        .then((r: any[]) => r.length),
       // KPI 4 — active bookings this month
-      this.prisma.booking.count({
+      this.bookingRepository.countBooking({
         where: {
           bookingDate: { gte: startOfMonth },
           status: activeStatuses,
         },
       }),
-      this.prisma.booking.count({
+      this.bookingRepository.countBooking({
         where: {
           bookingDate: { gte: startOfLastMonth, lt: startOfMonth },
           status: activeStatuses,
@@ -659,7 +671,7 @@ export class AdminPatientsService {
 
   // UPDATE
   async update(id: string, dto: AdminUpdatePatientDto) {
-    await this.findById(id);
+    const existingProfile = await this.findById(id);
 
     const {
       email,
@@ -672,17 +684,60 @@ export class AdminPatientsService {
       ...profileData
     } = dto;
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      // Find the profile
-      const profile = await tx.patientProfile.findUnique({ where: { id } });
-      if (!profile) throw new Error('Profile not found');
+    const profileUpdateData: Prisma.PatientProfileUpdateInput = {
+      fullName:
+        fullName !== undefined ? fullName?.trim() || undefined : undefined,
+      phone: phone !== undefined ? phone?.trim() || null : undefined,
+      email: email !== undefined ? email?.trim() || null : undefined,
+      gender,
+      dateOfBirth:
+        dateOfBirth !== undefined
+          ? dateOfBirth?.trim()
+            ? new Date(dateOfBirth)
+            : null
+          : undefined,
+      address: address !== undefined ? address?.trim() || null : undefined,
+      bloodType:
+        bloodType !== undefined ? bloodType?.trim() || null : undefined,
+      nationalId:
+        profileData.nationalId !== undefined
+          ? profileData.nationalId?.trim() || null
+          : undefined,
+      insuranceNumber:
+        profileData.insuranceNumber !== undefined
+          ? profileData.insuranceNumber?.trim() || null
+          : undefined,
+      insuranceProvider:
+        profileData.insuranceProvider !== undefined
+          ? profileData.insuranceProvider?.trim() || null
+          : undefined,
+      insuranceExpiry:
+        profileData.insuranceExpiry !== undefined
+          ? profileData.insuranceExpiry?.trim()
+            ? new Date(profileData.insuranceExpiry)
+            : null
+          : undefined,
+      allergies:
+        profileData.allergies !== undefined
+          ? profileData.allergies?.trim() || null
+          : undefined,
+      chronicConditions:
+        profileData.chronicConditions !== undefined
+          ? profileData.chronicConditions?.trim() || null
+          : undefined,
+      familyHistory:
+        profileData.familyHistory !== undefined
+          ? profileData.familyHistory?.trim() || null
+          : undefined,
+    };
 
-      // Update PatientProfile directly
-      const profileUpdateData: Prisma.PatientProfileUpdateInput = {
+    let userDataToUpdate: Prisma.UserUpdateInput | undefined = undefined;
+    if (existingProfile.userId) {
+      userDataToUpdate = {
+        email: email !== undefined ? email : undefined,
         fullName:
           fullName !== undefined ? fullName?.trim() || undefined : undefined,
         phone: phone !== undefined ? phone?.trim() || null : undefined,
-        email: email !== undefined ? email?.trim() || null : undefined,
         gender,
         dateOfBirth:
           dateOfBirth !== undefined
@@ -691,75 +746,18 @@ export class AdminPatientsService {
               : null
             : undefined,
         address: address !== undefined ? address?.trim() || null : undefined,
-        bloodType:
-          bloodType !== undefined ? bloodType?.trim() || null : undefined,
-        nationalId:
-          profileData.nationalId !== undefined
-            ? profileData.nationalId?.trim() || null
-            : undefined,
-        insuranceNumber:
-          profileData.insuranceNumber !== undefined
-            ? profileData.insuranceNumber?.trim() || null
-            : undefined,
-        insuranceProvider:
-          profileData.insuranceProvider !== undefined
-            ? profileData.insuranceProvider?.trim() || null
-            : undefined,
-        insuranceExpiry:
-          profileData.insuranceExpiry !== undefined
-            ? profileData.insuranceExpiry?.trim()
-              ? new Date(profileData.insuranceExpiry)
-              : null
-            : undefined,
-        allergies:
-          profileData.allergies !== undefined
-            ? profileData.allergies?.trim() || null
-            : undefined,
-        chronicConditions:
-          profileData.chronicConditions !== undefined
-            ? profileData.chronicConditions?.trim() || null
-            : undefined,
-        familyHistory:
-          profileData.familyHistory !== undefined
-            ? profileData.familyHistory?.trim() || null
-            : undefined,
       };
+    }
 
-      const updatedProfile = await tx.patientProfile.update({
-        where: { id },
-        data: profileUpdateData,
-      });
-
-      // Also sync User record if this is a registered patient
-      let updatedUser: User | null = null;
-      if (profile.userId) {
-        updatedUser = await tx.user.update({
-          where: { id: profile.userId },
-          data: {
-            email: email !== undefined ? email : undefined,
-            fullName:
-              fullName !== undefined
-                ? fullName?.trim() || undefined
-                : undefined,
-            phone: phone !== undefined ? phone?.trim() || null : undefined,
-            gender,
-            dateOfBirth:
-              dateOfBirth !== undefined
-                ? dateOfBirth?.trim()
-                  ? new Date(dateOfBirth)
-                  : null
-                : undefined,
-            address:
-              address !== undefined ? address?.trim() || null : undefined,
-          },
-        });
-      }
-
-      return { profile: updatedProfile, user: updatedUser };
-    });
+    const updatedProfile =
+      await this.profileRepository.updatePatientProfileTransaction(
+        id,
+        profileUpdateData,
+        userDataToUpdate,
+      );
 
     return ResponseHelper.success(
-      result,
+      updatedProfile,
       MessageCodes.PATIENT_UPDATED,
       'Patient updated successfully',
       200,
@@ -768,7 +766,7 @@ export class AdminPatientsService {
 
   // HEALTH PROFILE
   async getHealthProfile(id: string) {
-    const profile = await this.prisma.patientProfile.findUnique({
+    const profile = await this.profileRepository.findUniquePatientProfile({
       where: { id },
       select: {
         id: true,
@@ -805,7 +803,7 @@ export class AdminPatientsService {
 
   // INTERNAL HELPERS
   private async findById(id: string) {
-    const profile = await this.prisma.patientProfile.findUnique({
+    const profile = await this.profileRepository.findUniquePatientProfile({
       where: { id },
       include: {
         user: {

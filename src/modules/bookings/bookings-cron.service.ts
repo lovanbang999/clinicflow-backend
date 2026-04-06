@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { BookingsService } from './bookings.service';
-import { PrismaService } from '../prisma/prisma.service';
+import {
+  I_BOOKING_REPOSITORY,
+  IBookingRepository,
+} from '../database/interfaces/booking.repository.interface';
+import { Inject } from '@nestjs/common';
 import { BookingStatus } from '@prisma/client';
 
 @Injectable()
@@ -9,7 +13,8 @@ export class BookingsCronService {
   private readonly logger = new Logger(BookingsCronService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
     private readonly bookingsService: BookingsService,
   ) {}
 
@@ -36,7 +41,7 @@ export class BookingsCronService {
 
     // Find pre-bookings that are PENDING/CONFIRMED today, where
     // their startTime was more than 15 minutes ago and patient hasn't checked in.
-    const overdueBookings = await this.prisma.booking.findMany({
+    const overdueBookings = await this.bookingRepository.findManyBooking({
       where: {
         isPreBooked: true,
         status: {

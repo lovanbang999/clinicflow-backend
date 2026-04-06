@@ -1,9 +1,31 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Injectable, Inject } from '@nestjs/common';
+import {
+  I_BOOKING_REPOSITORY,
+  IBookingRepository,
+} from '../../database/interfaces/booking.repository.interface';
+
+interface SlotWithRelations {
+  id: string;
+  doctorId: string;
+  date: Date;
+  startTime: string;
+  endTime: string;
+  maxPatients: number;
+  bookedCount: number;
+  doctor: {
+    id: string;
+    fullName: string;
+    doctorProfile?: { specialties: string[] } | null;
+  };
+  room?: { name: string } | null;
+}
 
 @Injectable()
 export class ScheduleTool {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+  ) {}
 
   async execute(args: {
     serviceId?: string;
@@ -13,7 +35,7 @@ export class ScheduleTool {
   }) {
     const { specialtyName, date, limit = 5 } = args;
 
-    const whereClause: Record<string, any> = {
+    const whereClause: Record<string, unknown> = {
       status: 'SCHEDULED',
       isActive: true,
     };
@@ -24,7 +46,7 @@ export class ScheduleTool {
       whereClause.date = { gte: new Date() };
     }
 
-    const slots = await this.prisma.doctorScheduleSlot.findMany({
+    const slots = (await this.bookingRepository.findManyDoctorScheduleSlot({
       where: whereClause,
       include: {
         doctor: {
@@ -41,11 +63,11 @@ export class ScheduleTool {
         },
       },
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
-    });
+    })) as unknown as SlotWithRelations[];
 
     // filter available slots
     const availableSlots = slots.filter(
-      (slot) => slot.bookedCount < slot.maxPreBookings,
+      (slot) => slot.bookedCount < slot.maxPatients,
     );
 
     // Filter by specialty if provided

@@ -1,17 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from './notifications.service';
 import { BookingStatus } from '@prisma/client';
 import { format, addDays, startOfDay, endOfDay } from 'date-fns';
 import { vi } from 'date-fns/locale';
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../database/interfaces/booking.repository.interface';
+import { Inject } from '@nestjs/common';
 
 @Injectable()
 export class BookingReminderService {
   private readonly logger = new Logger(BookingReminderService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
     private readonly notificationsService: NotificationsService,
   ) {}
 
@@ -30,7 +35,7 @@ export class BookingReminderService {
     const end = endOfDay(tomorrow);
 
     try {
-      const bookings = await this.prisma.booking.findMany({
+      const bookings = await this.bookingRepository.findManyBooking({
         where: {
           bookingDate: { gte: start, lte: end },
           isPreBooked: true, // Walk-in bookings don't have a fixed time — skip reminders
@@ -96,7 +101,7 @@ export class BookingReminderService {
     const targetDate = format(oneHourLater, 'yyyy-MM-dd');
 
     try {
-      const bookings = await this.prisma.booking.findMany({
+      const bookings = await this.bookingRepository.findManyBooking({
         where: {
           bookingDate: {
             gte: startOfDay(oneHourLater),

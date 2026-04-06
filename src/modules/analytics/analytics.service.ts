@@ -1,15 +1,39 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject } from '@nestjs/common';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
-import { PrismaService } from '../prisma/prisma.service';
+import {
+  I_PROFILE_REPOSITORY,
+  IProfileRepository,
+} from '../database/interfaces/profile.repository.interface';
+import {
+  I_CLINICAL_REPOSITORY,
+  IClinicalRepository,
+} from '../database/interfaces/clinical.repository.interface';
+import {
+  I_FINANCE_REPOSITORY,
+  IFinanceRepository,
+} from '../database/interfaces/finance.repository.interface';
+import {
+  I_BOOKING_REPOSITORY,
+  IBookingRepository,
+} from '../database/interfaces/booking.repository.interface';
 
 @Injectable()
 export class AnalyticsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
+    @Inject(I_CLINICAL_REPOSITORY)
+    private readonly clinicalRepository: IClinicalRepository,
+    @Inject(I_FINANCE_REPOSITORY)
+    private readonly financeRepository: IFinanceRepository,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+  ) {}
 
   // PATIENT ANALYTICS
 
   async getPatientVisitTrend(userId: string) {
-    const profile = await this.prisma.patientProfile.findFirst({
+    const profile = await this.profileRepository.findFirstPatientProfile({
       where: { userId },
     });
     if (!profile) throw new NotFoundException('Patient profile not found');
@@ -17,7 +41,7 @@ export class AnalyticsService {
     const now = new Date();
     const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
 
-    const records = await this.prisma.medicalRecord.findMany({
+    const records = await this.clinicalRepository.findManyMedicalRecord({
       where: {
         patientProfileId: profile.id,
         createdAt: { gte: twelveMonthsAgo },
@@ -52,12 +76,12 @@ export class AnalyticsService {
   }
 
   async getPatientTopDiseases(userId: string) {
-    const profile = await this.prisma.patientProfile.findFirst({
+    const profile = await this.profileRepository.findFirstPatientProfile({
       where: { userId },
     });
     if (!profile) throw new NotFoundException('Patient profile not found');
 
-    const records = await this.prisma.medicalRecord.findMany({
+    const records = await this.clinicalRepository.findManyMedicalRecord({
       where: {
         patientProfileId: profile.id,
         diagnosisName: { not: null },
@@ -89,7 +113,7 @@ export class AnalyticsService {
   }
 
   async getPatientTotalSpending(userId: string) {
-    const profile = await this.prisma.patientProfile.findFirst({
+    const profile = await this.profileRepository.findFirstPatientProfile({
       where: { userId },
     });
     if (!profile) throw new NotFoundException('Patient profile not found');
@@ -98,11 +122,11 @@ export class AnalyticsService {
     const startOfYear = new Date(now.getFullYear(), 0, 1);
 
     const [allTimeAgg, thisYearAgg] = await Promise.all([
-      this.prisma.invoice.aggregate({
+      this.financeRepository.aggregateInvoice({
         where: { patientProfileId: profile.id, status: 'PAID' },
         _sum: { totalAmount: true },
       }),
-      this.prisma.invoice.aggregate({
+      this.financeRepository.aggregateInvoice({
         where: {
           patientProfileId: profile.id,
           status: 'PAID',
@@ -114,8 +138,8 @@ export class AnalyticsService {
 
     return ResponseHelper.success(
       {
-        total: Number(allTimeAgg._sum.totalAmount ?? 0),
-        thisYear: Number(thisYearAgg._sum.totalAmount ?? 0),
+        total: Number(allTimeAgg._sum?.totalAmount ?? 0),
+        thisYear: Number(thisYearAgg._sum?.totalAmount ?? 0),
       },
       'ANALYTICS.PATIENT_SPENDING',
       'Spending retrieved',
@@ -126,7 +150,7 @@ export class AnalyticsService {
 
   async getDoctorTopDiagnoses(userId: string) {
     // userId here is User.id — doctor's user id
-    const records = await this.prisma.medicalRecord.findMany({
+    const records = await this.clinicalRepository.findManyMedicalRecord({
       where: {
         doctorId: userId,
         diagnosisName: { not: null },
@@ -166,9 +190,9 @@ export class AnalyticsService {
 
     const counts = await Promise.all(
       statuses.map((status) =>
-        this.prisma.booking
-          .count({ where: { doctorId: userId, status } })
-          .then((count) => ({ status, count })),
+        this.bookingRepository
+          .countBooking({ where: { doctorId: userId, status } })
+          .then((count: number) => ({ status, count })),
       ),
     );
 
@@ -183,7 +207,7 @@ export class AnalyticsService {
     const now = new Date();
     const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
-    const bookings = await this.prisma.booking.findMany({
+    const bookings = await this.bookingRepository.findManyBooking({
       where: {
         doctorId: userId,
         bookingDate: { gte: sixMonthsAgo },

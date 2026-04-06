@@ -1,7 +1,15 @@
-import { Injectable, HttpStatus } from '@nestjs/common';
+import {
+  IClinicalRepository,
+  I_CLINICAL_REPOSITORY,
+} from '../database/interfaces/clinical.repository.interface';
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../database/interfaces/booking.repository.interface';
+import { Injectable, HttpStatus, Inject } from '@nestjs/common';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { MessageCodes } from '../../common/constants/message-codes.const';
-import { PrismaService } from '../prisma/prisma.service';
+
 import { CreateLabOrderDto } from './dto/create-lab-order.dto';
 import { UploadLabResultDto } from './dto/upload-lab-result.dto';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
@@ -11,7 +19,10 @@ import { LabOrdersGateway } from './lab-orders.gateway';
 @Injectable()
 export class LabOrdersService {
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(I_CLINICAL_REPOSITORY)
+    private readonly clinicalRepository: IClinicalRepository,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
     private readonly labOrdersGateway: LabOrdersGateway,
   ) {}
 
@@ -21,7 +32,7 @@ export class LabOrdersService {
    * Receptionist will create a LAB invoice to collect payment, backend automatically seeds items from PENDING orders.
    */
   async createOrder(doctorId: string, dto: CreateLabOrderDto) {
-    const booking = await this.prisma.booking.findUnique({
+    const booking = await this.bookingRepository.findUnique({
       where: { id: dto.bookingId },
     });
 
@@ -42,12 +53,12 @@ export class LabOrdersService {
     }
 
     // Ensure medical record exists
-    let medicalRecord = await this.prisma.medicalRecord.findUnique({
+    let medicalRecord = await this.clinicalRepository.findUniqueMedicalRecord({
       where: { bookingId: dto.bookingId },
     });
 
     if (!medicalRecord) {
-      medicalRecord = await this.prisma.medicalRecord.create({
+      medicalRecord = await this.clinicalRepository.createMedicalRecord({
         data: {
           bookingId: dto.bookingId,
           patientProfileId: booking.patientProfileId,
@@ -57,7 +68,7 @@ export class LabOrdersService {
       });
     }
 
-    const labOrder = await this.prisma.labOrder.create({
+    const labOrder = await this.clinicalRepository.createLabOrder({
       data: {
         bookingId: dto.bookingId,
         medicalRecordId: medicalRecord.id,
@@ -79,7 +90,7 @@ export class LabOrdersService {
   }
 
   async getOrdersByBooking(bookingId: string) {
-    const orders = await this.prisma.labOrder.findMany({
+    const orders = await this.clinicalRepository.findManyLabOrder({
       where: { bookingId },
       include: {
         result: true,
@@ -102,7 +113,7 @@ export class LabOrdersService {
    * Used for receptionist to know when to create a LAB invoice.
    */
   async getPendingUnbilledOrders(bookingId: string) {
-    const orders = await this.prisma.labOrder.findMany({
+    const orders = await this.clinicalRepository.findManyLabOrder({
       where: {
         bookingId,
         status: LabOrderStatus.PENDING,
@@ -119,7 +130,7 @@ export class LabOrdersService {
   }
 
   async getPendingOrders() {
-    const rawOrders = await this.prisma.labOrder.findMany({
+    const rawOrders = await this.clinicalRepository.findManyLabOrder({
       where: {
         status: {
           in: [LabOrderStatus.PENDING, LabOrderStatus.IN_PROGRESS],
@@ -163,7 +174,7 @@ export class LabOrdersService {
   }
 
   async getOrderById(id: string) {
-    const rawOrder = await this.prisma.labOrder.findUnique({
+    const rawOrder = await this.clinicalRepository.findUniqueLabOrder({
       where: { id },
       include: {
         result: true,
@@ -213,7 +224,7 @@ export class LabOrdersService {
    * Technician view list of lab orders that have been paid (PAID) and are ready to perform.
    */
   async getReadyToPerformOrders() {
-    const rawOrders = await this.prisma.labOrder.findMany({
+    const rawOrders = await this.clinicalRepository.findManyLabOrder({
       where: {
         status: { in: [LabOrderStatus.PAID, LabOrderStatus.IN_PROGRESS] },
       },
@@ -262,13 +273,13 @@ export class LabOrdersService {
     endOfDay.setHours(23, 59, 59, 999);
 
     const [pending, inProgress, completedToday] = await Promise.all([
-      this.prisma.labOrder.count({
+      this.clinicalRepository.countLabOrder({
         where: { status: LabOrderStatus.PAID },
       }),
-      this.prisma.labOrder.count({
+      this.clinicalRepository.countLabOrder({
         where: { status: LabOrderStatus.IN_PROGRESS },
       }),
-      this.prisma.labOrder.count({
+      this.clinicalRepository.countLabOrder({
         where: {
           status: LabOrderStatus.COMPLETED,
           updatedAt: {
@@ -288,7 +299,7 @@ export class LabOrdersService {
   }
 
   async getTechnicianHistory() {
-    const rawOrders = await this.prisma.labOrder.findMany({
+    const rawOrders = await this.clinicalRepository.findManyLabOrder({
       where: {
         status: LabOrderStatus.COMPLETED,
       },
@@ -336,7 +347,7 @@ export class LabOrdersService {
     labOrderId: string,
     dto: UploadLabResultDto,
   ) {
-    const order = await this.prisma.labOrder.findUnique({
+    const order = await this.clinicalRepository.findUniqueLabOrder({
       where: { id: labOrderId },
     });
 
@@ -348,36 +359,38 @@ export class LabOrdersService {
       );
     }
 
-    const updatedOrder = await this.prisma.$transaction(async (tx) => {
-      // Upsert lab result
-      await tx.labResult.upsert({
-        where: { labOrderId },
-        create: {
-          labOrderId,
-          resultText: dto.resultText,
-          resultFileUrl: dto.resultFileUrl,
-          isAbnormal: dto.isAbnormal,
-          abnormalNote: dto.abnormalNote,
-          recordedBy: resultAuthorId,
-          resultDate: new Date(),
-        },
-        update: {
-          resultText: dto.resultText,
-          resultFileUrl: dto.resultFileUrl,
-          isAbnormal: dto.isAbnormal,
-          abnormalNote: dto.abnormalNote,
-          recordedBy: resultAuthorId,
-          resultDate: new Date(),
-        },
-      });
+    const updatedOrder = await this.clinicalRepository.transaction(
+      async (tx) => {
+        // Upsert lab result
+        await tx.labResult.upsert({
+          where: { labOrderId },
+          create: {
+            labOrderId,
+            resultText: dto.resultText,
+            resultFileUrl: dto.resultFileUrl,
+            isAbnormal: dto.isAbnormal,
+            abnormalNote: dto.abnormalNote,
+            recordedBy: resultAuthorId,
+            resultDate: new Date(),
+          },
+          update: {
+            resultText: dto.resultText,
+            resultFileUrl: dto.resultFileUrl,
+            isAbnormal: dto.isAbnormal,
+            abnormalNote: dto.abnormalNote,
+            recordedBy: resultAuthorId,
+            resultDate: new Date(),
+          },
+        });
 
-      // Update order status → COMPLETED
-      return tx.labOrder.update({
-        where: { id: labOrderId },
-        data: { status: LabOrderStatus.COMPLETED },
-        include: { result: true },
-      });
-    });
+        // Update order status → COMPLETED
+        return tx.labOrder.update({
+          where: { id: labOrderId },
+          data: { status: LabOrderStatus.COMPLETED },
+          include: { result: true },
+        });
+      },
+    );
 
     // Push real-time event to the doctor viewing this booking
     this.labOrdersGateway.broadcastLabResultCompleted(order.bookingId, {
@@ -394,7 +407,7 @@ export class LabOrdersService {
   }
 
   async updateOrderStatus(labOrderId: string, status: LabOrderStatus) {
-    const order = await this.prisma.labOrder.findUnique({
+    const order = await this.clinicalRepository.findUniqueLabOrder({
       where: { id: labOrderId },
     });
 
@@ -406,7 +419,7 @@ export class LabOrdersService {
       );
     }
 
-    const updatedOrder = await this.prisma.labOrder.update({
+    const updatedOrder = await this.clinicalRepository.updateLabOrder({
       where: { id: labOrderId },
       data: { status },
     });
@@ -420,7 +433,7 @@ export class LabOrdersService {
   }
 
   async deleteOrder(doctorId: string, labOrderId: string) {
-    const order = await this.prisma.labOrder.findUnique({
+    const order = await this.clinicalRepository.findUniqueLabOrder({
       where: { id: labOrderId },
     });
 
@@ -448,7 +461,7 @@ export class LabOrdersService {
       );
     }
 
-    await this.prisma.labOrder.delete({
+    await this.clinicalRepository.deleteLabOrder({
       where: { id: labOrderId },
     });
 

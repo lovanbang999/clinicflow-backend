@@ -1,13 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { PrismaService } from '../prisma/prisma.service';
 import { subDays } from 'date-fns';
+import {
+  ISystemRepository,
+  I_SYSTEM_REPOSITORY,
+} from '../database/interfaces/system.repository.interface';
+import { Inject } from '@nestjs/common';
 
 @Injectable()
 export class NotificationsCleanupService {
   private readonly logger = new Logger(NotificationsCleanupService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_SYSTEM_REPOSITORY)
+    private readonly systemRepository: ISystemRepository,
+  ) {}
 
   /**
    * Run every night at 2:00 AM
@@ -19,7 +26,7 @@ export class NotificationsCleanupService {
     try {
       const thirtyDaysAgo = subDays(new Date(), 30);
 
-      const result = await this.prisma.notification.deleteMany({
+      const result = await this.systemRepository.deleteManyNotification({
         where: {
           createdAt: {
             lt: thirtyDaysAgo,

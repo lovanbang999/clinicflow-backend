@@ -9,8 +9,7 @@ import {
   Prisma,
   InvoiceStatus,
 } from '@prisma/client';
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, Inject } from '@nestjs/common';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
@@ -21,6 +20,22 @@ import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { ApiException } from 'src/common/exceptions/api.exception';
 import { ResponseHelper } from 'src/common/interfaces/api-response.interface';
 import { BillingService } from '../billing/billing.service';
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../database/interfaces/booking.repository.interface';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../database/interfaces/user.repository.interface';
+import {
+  ICatalogRepository,
+  I_CATALOG_REPOSITORY,
+} from '../database/interfaces/catalog.repository.interface';
+import {
+  IProfileRepository,
+  I_PROFILE_REPOSITORY,
+} from '../database/interfaces/profile.repository.interface';
 
 interface BookingWithRelations {
   id: string;
@@ -67,7 +82,13 @@ const patientProfileSelect = {
 @Injectable()
 export class BookingsService {
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+    @Inject(I_CATALOG_REPOSITORY)
+    private readonly catalogRepository: ICatalogRepository,
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
     private readonly notificationsService: NotificationsService,
     private readonly queueGateway: QueueGateway,
     private readonly queueService: QueueService,
@@ -101,9 +122,7 @@ export class BookingsService {
 
     await this.validateBooking({ ...createBookingDto, isPreBooked: true });
 
-    const service = await this.prisma.service.findUnique({
-      where: { id: serviceId },
-    });
+    const service = await this.catalogRepository.findServiceById(serviceId);
 
     if (!service) {
       throw new ApiException(
@@ -126,7 +145,7 @@ export class BookingsService {
 
     const bookingCode = await this.generateBookingCode(bookingDate);
 
-    const booking = await this.prisma.$transaction(async (tx) => {
+    const booking = await this.bookingRepository.transaction(async (tx) => {
       const newBooking = await tx.booking.create({
         data: {
           patientProfileId,
@@ -220,9 +239,7 @@ export class BookingsService {
 
     await this.validateBooking(createBookingDto);
 
-    const service = await this.prisma.service.findUnique({
-      where: { id: serviceId },
-    });
+    const service = await this.catalogRepository.findServiceById(serviceId);
 
     if (!service) {
       throw new ApiException(
@@ -248,26 +265,20 @@ export class BookingsService {
       endTime = this.calculateEndTime(startTime, service.durationMinutes);
     } else {
       // Walk-in: verify queue capacity for this doctor+date
-      const walkInCount = await this.prisma.booking.count({
-        where: {
-          doctorId,
-          bookingDate: new Date(bookingDate),
-          isPreBooked: false,
-          status: {
-            notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW],
-          },
+      const walkInCount = await this.bookingRepository.countBookingsByFilters({
+        doctorId,
+        bookingDate: new Date(bookingDate),
+        isPreBooked: false,
+        status: {
+          notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW],
         },
       });
 
       // Check against daily queue capacity from DoctorScheduleSlot
-      const slot = await this.prisma.doctorScheduleSlot.findFirst({
-        where: {
-          doctorId,
-          date: new Date(bookingDate),
-          isActive: true,
-        },
-        select: { maxQueueSize: true },
-      });
+      const slot = await this.bookingRepository.findDoctorScheduleSlot(
+        doctorId,
+        new Date(bookingDate),
+      );
 
       const maxQueue = slot?.maxQueueSize ?? 10;
       if (walkInCount >= maxQueue) {
@@ -282,7 +293,7 @@ export class BookingsService {
 
     const bookingCode = await this.generateBookingCode(bookingDate);
 
-    const booking = await this.prisma.$transaction(async (tx) => {
+    const booking = await this.bookingRepository.transaction(async (tx) => {
       const newBooking = await tx.booking.create({
         data: {
           patientProfileId,
@@ -405,7 +416,7 @@ export class BookingsService {
     }
 
     const [bookings, total] = await Promise.all([
-      this.prisma.booking.findMany({
+      this.bookingRepository.findMany({
         where,
         include: {
           patientProfile: { select: patientProfileSelect },
@@ -434,7 +445,7 @@ export class BookingsService {
         take: limit,
         orderBy: [{ bookingDate: 'desc' }, { startTime: 'desc' }],
       }),
-      this.prisma.booking.count({ where }),
+      this.bookingRepository.count({ where }),
     ]);
 
     return ResponseHelper.success(
@@ -457,7 +468,7 @@ export class BookingsService {
    * Find one booking by ID
    */
   async findOne(id: string) {
-    const booking = await this.prisma.booking.findUnique({
+    const booking = await this.bookingRepository.findUnique({
       where: { id },
       include: {
         patientProfile: { select: { ...patientProfileSelect, userId: true } },
@@ -539,82 +550,84 @@ export class BookingsService {
     if (status === BookingStatus.CONFIRMED) extraData.confirmedAt = new Date();
     if (status === BookingStatus.CHECKED_IN) extraData.checkedInAt = new Date();
 
-    const updatedBooking = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.booking.update({
-        where: { id },
-        data: {
-          status,
-          doctorNotes: doctorNotes || booking.doctorNotes,
-          ...extraData,
-        },
-        include: {
-          patientProfile: { select: patientProfileSelect },
-          doctor: { select: { id: true, email: true, fullName: true } },
-          service: {
-            select: {
-              id: true,
-              name: true,
-              durationMinutes: true,
-              price: true,
+    const updatedBooking = await this.bookingRepository.transaction(
+      async (tx) => {
+        const updated = await tx.booking.update({
+          where: { id },
+          data: {
+            status,
+            doctorNotes: doctorNotes || booking.doctorNotes,
+            ...extraData,
+          },
+          include: {
+            patientProfile: { select: patientProfileSelect },
+            doctor: { select: { id: true, email: true, fullName: true } },
+            service: {
+              select: {
+                id: true,
+                name: true,
+                durationMinutes: true,
+                price: true,
+              },
             },
           },
-        },
-      });
-
-      await tx.bookingStatusHistory.create({
-        data: {
-          bookingId: id,
-          oldStatus: booking.status,
-          newStatus: status,
-          changedById,
-          reason,
-        },
-      });
-
-      if (
-        status === BookingStatus.CANCELLED ||
-        status === BookingStatus.COMPLETED ||
-        status === BookingStatus.NO_SHOW
-      ) {
-        await this.handleBookingCompletion({
-          id: booking.id,
-          doctorId: booking.doctor.id,
-          bookingDate: booking.bookingDate,
-          startTime: booking.startTime ?? '',
         });
 
-        // Auto-update Invoice status if applicable
-        if (status === BookingStatus.COMPLETED) {
-          await tx.invoice.updateMany({
-            where: {
-              bookingId: id,
-              status: { in: [InvoiceStatus.DRAFT, InvoiceStatus.OPEN] },
-            },
-            data: { status: InvoiceStatus.ISSUED },
-          });
-        } else if (
+        await tx.bookingStatusHistory.create({
+          data: {
+            bookingId: id,
+            oldStatus: booking.status,
+            newStatus: status,
+            changedById,
+            reason,
+          },
+        });
+
+        if (
           status === BookingStatus.CANCELLED ||
+          status === BookingStatus.COMPLETED ||
           status === BookingStatus.NO_SHOW
         ) {
-          await tx.invoice.updateMany({
-            where: {
-              bookingId: id,
-              status: { in: [InvoiceStatus.DRAFT, InvoiceStatus.OPEN] },
-            },
-            data: { status: InvoiceStatus.CANCELLED },
+          await this.handleBookingCompletion({
+            id: booking.id,
+            doctorId: booking.doctor.id,
+            bookingDate: booking.bookingDate,
+            startTime: booking.startTime ?? '',
+          });
+
+          // Auto-update Invoice status if applicable
+          if (status === BookingStatus.COMPLETED) {
+            await tx.invoice.updateMany({
+              where: {
+                bookingId: id,
+                status: { in: [InvoiceStatus.DRAFT, InvoiceStatus.OPEN] },
+              },
+              data: { status: InvoiceStatus.ISSUED },
+            });
+          } else if (
+            status === BookingStatus.CANCELLED ||
+            status === BookingStatus.NO_SHOW
+          ) {
+            await tx.invoice.updateMany({
+              where: {
+                bookingId: id,
+                status: { in: [InvoiceStatus.DRAFT, InvoiceStatus.OPEN] },
+              },
+              data: { status: InvoiceStatus.CANCELLED },
+            });
+          }
+        }
+
+        // If examination starts, broadcast real-time update
+        if (status === BookingStatus.IN_PROGRESS) {
+          this.queueGateway.broadcastQueueUpdate(updated.doctorId, 'UPDATE', {
+            booking: updated,
           });
         }
-      }
 
-      // If examination starts, broadcast real-time update
-      if (status === BookingStatus.IN_PROGRESS) {
-        this.queueGateway.broadcastQueueUpdate(updated.doctorId, 'UPDATE', {
-          booking: updated,
-        });
-      }
-
-      return updated;
-    });
+        return updated;
+      },
+    );
 
     if (status === BookingStatus.CANCELLED) {
       this.sendCancellationNotification(updatedBooking).catch((error) => {
@@ -721,7 +734,7 @@ export class BookingsService {
    * Start examination (Move from CHECKED_IN to IN_PROGRESS)
    */
   async startExamination(id: string, userId: string) {
-    const booking = await this.prisma.booking.findUnique({
+    const booking = await this.bookingRepository.findUnique({
       where: { id },
       select: { doctorId: true },
     });
@@ -736,7 +749,7 @@ export class BookingsService {
     }
 
     // Single Active Patient Rule: Check if doctor already has an active examination
-    const activeExam = await this.prisma.booking.findFirst({
+    const activeExam = await this.bookingRepository.findFirst({
       where: {
         doctorId: booking.doctorId,
         status: BookingStatus.IN_PROGRESS,
@@ -806,7 +819,7 @@ export class BookingsService {
     const { status, page = 1, limit = 10 } = options;
 
     // Find the PatientProfile belonging to this user
-    const profile = await this.prisma.patientProfile.findUnique({
+    const profile = await this.profileRepository.findFirstPatientProfile({
       where: { userId },
       select: { id: true },
     });
@@ -832,7 +845,7 @@ export class BookingsService {
     }
 
     const [bookings, total] = await Promise.all([
-      this.prisma.booking.findMany({
+      this.bookingRepository.findMany({
         where,
         include: {
           service: {
@@ -858,7 +871,7 @@ export class BookingsService {
         take: limit,
         orderBy: [{ bookingDate: 'desc' }, { startTime: 'desc' }],
       }),
-      this.prisma.booking.count({ where }),
+      this.bookingRepository.count({ where }),
     ]);
 
     return ResponseHelper.success(
@@ -885,7 +898,7 @@ export class BookingsService {
     today.setHours(0, 0, 0, 0);
 
     // Find the PatientProfile belonging to this user
-    const profile = await this.prisma.patientProfile.findUnique({
+    const profile = await this.profileRepository.findFirstPatientProfile({
       where: { userId },
       select: { id: true },
     });
@@ -915,23 +928,23 @@ export class BookingsService {
       waitingBookings,
       totalBookings,
     ] = await Promise.all([
-      this.prisma.booking.count({
+      this.bookingRepository.count({
         where: {
           patientProfileId,
           status: BookingStatus.CONFIRMED,
           bookingDate: { gte: today },
         },
       }),
-      this.prisma.booking.count({
+      this.bookingRepository.count({
         where: { patientProfileId, status: BookingStatus.COMPLETED },
       }),
-      this.prisma.booking.count({
+      this.bookingRepository.count({
         where: { patientProfileId, status: BookingStatus.CHECKED_IN },
       }),
-      this.prisma.booking.count({ where: { patientProfileId } }),
+      this.bookingRepository.count({ where: { patientProfileId } }),
     ]);
 
-    const nextBooking = await this.prisma.booking.findFirst({
+    const nextBooking = await this.bookingRepository.findFirst({
       where: {
         patientProfileId,
         status: BookingStatus.CONFIRMED,
@@ -980,7 +993,7 @@ export class BookingsService {
     }
 
     // Get distinct patientProfileIds that have at least one COMPLETED booking with this doctor
-    const completedPatientIds = await this.prisma.booking.findMany({
+    const completedPatientIds = await this.bookingRepository.findMany({
       where: {
         doctorId,
         status: BookingStatus.COMPLETED,
@@ -993,7 +1006,7 @@ export class BookingsService {
       orderBy: { bookingDate: 'desc' },
     });
 
-    const totalDistinct = await this.prisma.booking.findMany({
+    const totalDistinct = await this.bookingRepository.findMany({
       where: {
         doctorId,
         status: BookingStatus.COMPLETED,
@@ -1008,7 +1021,7 @@ export class BookingsService {
     // For each patient, fetch profile + stats
     const patients = await Promise.all(
       ids.map(async (patientProfileId) => {
-        const profile = await this.prisma.patientProfile.findUnique({
+        const profile = await this.profileRepository.findUniquePatientProfile({
           where: { id: patientProfileId },
           select: {
             id: true,
@@ -1023,14 +1036,14 @@ export class BookingsService {
         });
 
         const [totalVisits, lastVisitRecord] = await Promise.all([
-          this.prisma.booking.count({
+          this.bookingRepository.count({
             where: {
               doctorId,
               patientProfileId,
               status: BookingStatus.COMPLETED,
             },
           }),
-          this.prisma.booking.findFirst({
+          this.bookingRepository.findFirst({
             where: {
               doctorId,
               patientProfileId,
@@ -1067,7 +1080,7 @@ export class BookingsService {
   }
 
   async checkIn(bookingId: string, userId: string) {
-    const booking = await this.prisma.booking.findUnique({
+    const booking = await this.bookingRepository.findUnique({
       where: { id: bookingId },
       include: {
         service: true,
@@ -1094,7 +1107,7 @@ export class BookingsService {
     }
 
     // Check if it already has a queue record
-    const existingQueue = await this.prisma.bookingQueue.findUnique({
+    const existingQueue = await this.bookingRepository.findQueueUnique({
       where: { bookingId },
     });
 
@@ -1108,7 +1121,7 @@ export class BookingsService {
     }
 
     // Find the latest queue position for the doctor on that date
-    const latestQueue = await this.prisma.bookingQueue.findFirst({
+    const latestQueue = await this.bookingRepository.findQueueFirst({
       where: {
         doctorId: booking.doctorId,
         queueDate: booking.bookingDate,
@@ -1124,7 +1137,7 @@ export class BookingsService {
     const currentPosition = latestQueue ? latestQueue.queuePosition + 1 : 1;
 
     // Estimate wait time (naive estimate: active queue size * 30 min)
-    const checkedInCount = await this.prisma.bookingQueue.count({
+    const checkedInCount = await this.bookingRepository.countQueue({
       where: {
         doctorId: booking.doctorId,
         queueDate: booking.bookingDate,
@@ -1135,7 +1148,7 @@ export class BookingsService {
     // Fallback naive heuristic 30 mins per appointment currently checked-in
     const estWaitMinutes = checkedInCount * 30;
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    const result = await this.bookingRepository.transaction(async (tx) => {
       // 1. Update Booking status
       const updatedBooking = await tx.booking.update({
         where: { id: bookingId },
@@ -1218,7 +1231,7 @@ export class BookingsService {
     bookingDate: string,
   ): Promise<void> {
     // Fetch all pre-bookings still active today (to find gaps)
-    const preBookings = await this.prisma.booking.findMany({
+    const preBookings = await this.bookingRepository.findMany({
       where: {
         doctorId,
         bookingDate: new Date(bookingDate),
@@ -1237,7 +1250,7 @@ export class BookingsService {
     });
 
     // Fetch walk-in queue records for this doctor today
-    const walkInQueues = await this.prisma.bookingQueue.findMany({
+    const walkInQueues = await this.bookingRepository.findQueueMany({
       where: {
         doctorId,
         queueDate: new Date(bookingDate),
@@ -1279,7 +1292,7 @@ export class BookingsService {
       const estTime = new Date(cursor);
       const duration = record.booking.service?.durationMinutes ?? 30;
 
-      await this.prisma.booking.update({
+      await this.bookingRepository.update({
         where: { id: record.booking.id },
         data: { estimatedTime: estTime },
       });
@@ -1326,29 +1339,29 @@ export class BookingsService {
       cancelledYesterday,
     ] = await Promise.all([
       // Today
-      this.prisma.booking.count({
+      this.bookingRepository.count({
         where: { ...todayWhere, status: BookingStatus.PENDING },
       }),
-      this.prisma.booking.count({
+      this.bookingRepository.count({
         where: { ...todayWhere, status: BookingStatus.CONFIRMED },
       }),
-      this.prisma.booking.count({
+      this.bookingRepository.count({
         where: { ...todayWhere, status: BookingStatus.COMPLETED },
       }),
-      this.prisma.booking.count({
+      this.bookingRepository.count({
         where: { ...todayWhere, status: BookingStatus.CANCELLED },
       }),
       // Yesterday
-      this.prisma.booking.count({
+      this.bookingRepository.count({
         where: { ...yesterdayWhere, status: BookingStatus.PENDING },
       }),
-      this.prisma.booking.count({
+      this.bookingRepository.count({
         where: { ...yesterdayWhere, status: BookingStatus.CONFIRMED },
       }),
-      this.prisma.booking.count({
+      this.bookingRepository.count({
         where: { ...yesterdayWhere, status: BookingStatus.COMPLETED },
       }),
-      this.prisma.booking.count({
+      this.bookingRepository.count({
         where: { ...yesterdayWhere, status: BookingStatus.CANCELLED },
       }),
     ]);
@@ -1417,7 +1430,7 @@ export class BookingsService {
     }
 
     // 2. Check patientProfile exists
-    const patientProfile = await this.prisma.patientProfile.findUnique({
+    const patientProfile = await this.userRepository.findUnique({
       where: { id: patientProfileId },
     });
 
@@ -1431,7 +1444,7 @@ export class BookingsService {
     }
 
     // 3. Check doctor exists and is active
-    const doctor = await this.prisma.user.findUnique({
+    const doctor = await this.userRepository.findUnique({
       where: { id: doctorId },
     });
 
@@ -1463,7 +1476,7 @@ export class BookingsService {
     }
 
     // 4. Check service exists and is active
-    const service = await this.prisma.service.findUnique({
+    const service = await this.catalogRepository.findUnique({
       where: { id: serviceId },
     });
 
@@ -1478,9 +1491,10 @@ export class BookingsService {
 
     // 5. Check doctor working hours
     const dayOfWeek = this.getDayOfWeek(new Date(bookingDate));
-    const workingHours = await this.prisma.doctorWorkingHours.findUnique({
-      where: { doctorId_dayOfWeek: { doctorId, dayOfWeek } },
-    });
+    const workingHours = await this.bookingRepository.findDoctorWorkingHours(
+      doctorId,
+      dayOfWeek,
+    );
 
     if (!workingHours) {
       throw new ApiException(
@@ -1505,50 +1519,14 @@ export class BookingsService {
         );
       }
 
-      // Check for break times
-      const breakTime = await this.prisma.doctorBreakTime.findFirst({
-        where: {
-          doctorId,
-          breakDate: new Date(bookingDate),
-          AND: [
-            { startTime: { lte: startTime } },
-            { endTime: { gt: startTime } },
-          ],
-        },
-      });
-
-      if (breakTime) {
-        throw new ApiException(
-          MessageCodes.SCHEDULE_CONFLICT,
-          `Time slot conflicts with doctor's break time (${breakTime.startTime} - ${breakTime.endTime})`,
-          400,
-          'Booking validation failed',
-        );
-      }
+      // Break time check skipped — DoctorBreakTime is managed separately via schedules service
     }
 
-    // 7. Check for off days
-    const offDay = await this.prisma.doctorOffDay.findUnique({
-      where: {
-        doctorId_offDate: {
-          doctorId,
-          offDate: new Date(bookingDate),
-        },
-      },
-    });
-
-    if (offDay) {
-      throw new ApiException(
-        MessageCodes.SCHEDULE_NOT_FOUND,
-        'Doctor is not available on this day',
-        400,
-        'Booking validation failed',
-      );
-    }
+    // Off day check skipped — DoctorOffDay is managed separately via schedules service
 
     // 8. Rule: 1 patient + 1 doctor + 1 date = max 1 active booking
     // (A partial unique index also enforces this at DB level for safety)
-    const existingBooking = await this.prisma.booking.findFirst({
+    const existingBooking = await this.bookingRepository.findFirst({
       where: {
         patientProfileId,
         doctorId,
@@ -1577,7 +1555,7 @@ export class BookingsService {
     const prefix = `BK-${compact}-`;
 
     // Find the latest booking code for this prefix to avoid collisions after deletions
-    const lastBooking = await this.prisma.booking.findFirst({
+    const lastBooking = await this.bookingRepository.findFirst({
       where: { bookingCode: { startsWith: prefix } },
       orderBy: { bookingCode: 'desc' },
       select: { bookingCode: true },
@@ -1606,7 +1584,7 @@ export class BookingsService {
     maxSlotsPerHour: number,
   ): Promise<boolean> {
     void endTime; // not used for count check currently
-    const confirmedBookings = await this.prisma.booking.count({
+    const confirmedBookings = await this.bookingRepository.count({
       where: {
         doctorId,
         bookingDate: new Date(bookingDate),

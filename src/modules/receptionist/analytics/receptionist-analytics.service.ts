@@ -1,12 +1,30 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Injectable, Inject } from '@nestjs/common';
+import {
+  I_FINANCE_REPOSITORY,
+  IFinanceRepository,
+} from '../../database/interfaces/finance.repository.interface';
+import {
+  I_BOOKING_REPOSITORY,
+  IBookingRepository,
+} from '../../database/interfaces/booking.repository.interface';
+import {
+  I_PROFILE_REPOSITORY,
+  IProfileRepository,
+} from '../../database/interfaces/profile.repository.interface';
 import { BookingStatus, InvoiceStatus } from '@prisma/client';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { DateRangeQueryDto } from '../../admin/analytics/dto/date-range.query.dto';
 
 @Injectable()
 export class ReceptionistAnalyticsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_FINANCE_REPOSITORY)
+    private readonly financeRepository: IFinanceRepository,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
+  ) {}
 
   async getOverview(query: DateRangeQueryDto) {
     const { from, to } = query;
@@ -23,7 +41,7 @@ export class ReceptionistAnalyticsService {
     const [totalRevenueRaw, checkIns, newPatients, pendingInvoices] =
       await Promise.all([
         // Total Paid Revenue in period
-        this.prisma.invoice.aggregate({
+        this.financeRepository.aggregateInvoice({
           where: {
             status: InvoiceStatus.PAID,
             paidAt: { gte: filterGte, lte: filterLte },
@@ -31,7 +49,7 @@ export class ReceptionistAnalyticsService {
           _sum: { totalAmount: true },
         }),
         // Successful Check-ins
-        this.prisma.booking.count({
+        this.bookingRepository.countBooking({
           where: {
             status: {
               in: [
@@ -44,13 +62,13 @@ export class ReceptionistAnalyticsService {
           },
         }),
         // New Patients registered
-        this.prisma.patientProfile.count({
+        this.profileRepository.countPatientProfile({
           where: {
             createdAt: { gte: filterGte, lte: filterLte },
           },
         }),
         // Pending/Draft Invoices
-        this.prisma.invoice.count({
+        this.financeRepository.countInvoice({
           where: {
             status: {
               in: [
@@ -66,7 +84,7 @@ export class ReceptionistAnalyticsService {
 
     return ResponseHelper.success(
       {
-        totalRevenue: Number(totalRevenueRaw._sum.totalAmount || 0),
+        totalRevenue: Number(totalRevenueRaw._sum?.totalAmount ?? 0),
         checkIns,
         newPatients,
         pendingInvoices,
@@ -87,7 +105,7 @@ export class ReceptionistAnalyticsService {
     const filterGte = from ? new Date(from) : weekAgo;
     const filterLte = to ? new Date(to) : undefined;
 
-    const paidInvoices = await this.prisma.invoice.findMany({
+    const paidInvoices = await this.financeRepository.findManyInvoice({
       where: {
         status: InvoiceStatus.PAID,
         paidAt: { gte: filterGte, lte: filterLte },
@@ -160,26 +178,26 @@ export class ReceptionistAnalyticsService {
       topServicesRaw,
     ] = await Promise.all([
       // Booking Sources
-      this.prisma.booking.groupBy({
+      this.bookingRepository.groupByBooking({
         by: ['source'],
         where: { createdAt: { gte: filterGte, lte: filterLte } },
         _count: { _all: true },
       }),
       // Appointment Statuses
-      this.prisma.booking.groupBy({
+      this.bookingRepository.groupByBooking({
         by: ['status'],
         where: { createdAt: { gte: filterGte, lte: filterLte } },
         _count: { _all: true },
       }),
       // Payment Methods
-      this.prisma.payment.groupBy({
+      this.financeRepository.groupByPayment({
         by: ['paymentMethod'],
         where: { createdAt: { gte: filterGte, lte: filterLte } },
         _sum: { amountPaid: true },
         _count: { _all: true },
       }),
       // Top Services (Revenue Based)
-      this.prisma.invoice.findMany({
+      this.financeRepository.findManyInvoice({
         where: {
           status: InvoiceStatus.PAID,
           paidAt: { gte: filterGte, lte: filterLte },
@@ -194,6 +212,21 @@ export class ReceptionistAnalyticsService {
         },
       }),
     ]);
+
+    type BookingGroupByRow = {
+      source?: string;
+      status?: string;
+      _count?: { _all?: number };
+    };
+    type PaymentGroupByRow = {
+      paymentMethod?: string;
+      _sum?: { amountPaid?: number | null };
+      _count?: { _all?: number };
+    };
+
+    const bookingSourcesTyped = bookingSources as BookingGroupByRow[];
+    const appointmentStatusesTyped = appointmentStatuses as BookingGroupByRow[];
+    const paymentMethodsTyped = paymentMethods as PaymentGroupByRow[];
 
     const serviceRevenueMap = new Map<
       string,
@@ -231,18 +264,18 @@ export class ReceptionistAnalyticsService {
 
     return ResponseHelper.success(
       {
-        bookingSources: bookingSources.map((s) => ({
+        bookingSources: bookingSourcesTyped.map((s) => ({
           label: s.source,
-          value: s._count._all,
+          value: s._count?._all ?? 0,
         })),
-        appointmentStatuses: appointmentStatuses.map((s) => ({
+        appointmentStatuses: appointmentStatusesTyped.map((s) => ({
           label: s.status,
-          value: s._count._all,
+          value: s._count?._all ?? 0,
         })),
-        paymentMethods: paymentMethods.map((p) => ({
+        paymentMethods: paymentMethodsTyped.map((p) => ({
           label: p.paymentMethod,
-          value: Number(p._sum?.amountPaid || 0),
-          count: p._count?._all || 0,
+          value: Number(p._sum?.amountPaid ?? 0),
+          count: p._count?._all ?? 0,
         })),
         topServices,
       },

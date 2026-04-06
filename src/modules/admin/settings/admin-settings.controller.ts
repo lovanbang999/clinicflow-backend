@@ -30,7 +30,11 @@ export class AdminSettingsController {
     @Body() dto: UpdateClinicProfileDto,
     @CurrentUser('id') userId: string,
   ) {
-    return this.settingsService.updateSettings('CLINIC', dto, userId);
+    return this.settingsService.updateSettings(
+      'CLINIC',
+      dto as unknown as Record<string, unknown>,
+      userId,
+    );
   }
 
   @Patch('booking-rules')
@@ -39,7 +43,11 @@ export class AdminSettingsController {
     @Body() dto: UpdateBookingRulesDto,
     @CurrentUser('id') userId: string,
   ) {
-    return this.settingsService.updateSettings('BOOKING', dto, userId);
+    return this.settingsService.updateSettings(
+      'BOOKING',
+      dto as unknown as Record<string, unknown>,
+      userId,
+    );
   }
 
   @Patch('notifications')
@@ -50,6 +58,10 @@ export class AdminSettingsController {
     @Body() dto: UpdateNotificationConfigDto,
     @CurrentUser('id') userId: string,
   ) {
-    return this.settingsService.updateSettings('NOTIFICATION', dto, userId);
+    return this.settingsService.updateSettings(
+      'NOTIFICATION',
+      dto as unknown as Record<string, unknown>,
+      userId,
+    );
   }
 }

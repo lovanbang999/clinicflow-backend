@@ -1,13 +1,16 @@
 import {
+  IClinicalRepository,
+  I_CLINICAL_REPOSITORY,
+} from '../database/interfaces/clinical.repository.interface';
+import {
   BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
 import { LabOrderStatus, Prisma, VisitStep } from '@prisma/client';
-
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
-import { PrismaService } from '../prisma/prisma.service';
 import { CompleteServiceOrderDto } from './dto/complete-service-order.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '@prisma/client';
@@ -15,7 +18,8 @@ import { NotificationType } from '@prisma/client';
 @Injectable()
 export class VisitServiceOrdersService {
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(I_CLINICAL_REPOSITORY)
+    private readonly clinicalRepository: IClinicalRepository,
     private readonly notificationsService: NotificationsService,
   ) {}
 
@@ -27,7 +31,7 @@ export class VisitServiceOrdersService {
       },
     };
 
-    const orders = await this.prisma.visitServiceOrder.findMany({
+    const orders = await this.clinicalRepository.findManyVisitServiceOrder({
       where,
       orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
       include: {
@@ -66,14 +70,14 @@ export class VisitServiceOrdersService {
 
   // KTV starts a service order
   async startOrder(orderId: string, technicianId: string) {
-    const order = await this.prisma.visitServiceOrder.findUnique({
+    const order = await this.clinicalRepository.findUniqueVisitServiceOrder({
       where: { id: orderId },
     });
     if (!order) throw new NotFoundException('Service order not found');
     if (order.status !== LabOrderStatus.PENDING)
       throw new ConflictException(`Order is already ${order.status}`);
 
-    const updated = await this.prisma.visitServiceOrder.update({
+    const updated = await this.clinicalRepository.updateVisitServiceOrder({
       where: { id: orderId },
       data: {
         status: LabOrderStatus.IN_PROGRESS,
@@ -96,7 +100,7 @@ export class VisitServiceOrdersService {
     dto: CompleteServiceOrderDto,
     technicianId: string,
   ) {
-    const order = await this.prisma.visitServiceOrder.findUnique({
+    const order = await this.clinicalRepository.findUniqueVisitServiceOrder({
       where: { id: orderId },
     });
     if (!order) throw new NotFoundException('Service order not found');
@@ -105,74 +109,79 @@ export class VisitServiceOrdersService {
     if (order.status === LabOrderStatus.CANCELLED)
       throw new BadRequestException('Cannot complete a cancelled order');
 
-    const updatedOrder = await this.prisma.$transaction(async (tx) => {
-      // Mark order as COMPLETED
-      const completed = await tx.visitServiceOrder.update({
-        where: { id: orderId },
-        data: {
-          status: LabOrderStatus.COMPLETED,
-          performedBy: technicianId,
-          resultText: dto.resultText,
-          resultFileUrl: dto.resultFileUrl,
-          isAbnormal: dto.isAbnormal,
-          abnormalNote: dto.abnormalNote,
-          completedAt: new Date(),
-        },
-      });
-
-      // Auto-advance MedicalRecord to RESULTS_READY if all sibling orders are done
-      const allSiblings = await tx.visitServiceOrder.findMany({
-        where: { medicalRecordId: order.medicalRecordId },
-        select: { id: true, status: true },
-      });
-
-      const allDone = allSiblings.every(
-        (o) => o.id === orderId || o.status === LabOrderStatus.COMPLETED,
-      );
-
-      if (allDone) {
-        const record = await tx.medicalRecord.findUnique({
-          where: { id: order.medicalRecordId },
-          include: {
-            booking: {
-              include: { patientProfile: true },
-            },
+    const updatedOrder = await this.clinicalRepository.transaction(
+      async (tx) => {
+        // Mark order as COMPLETED
+        const completed = await tx.visitServiceOrder.update({
+          where: { id: orderId },
+          data: {
+            status: LabOrderStatus.COMPLETED,
+            performedBy: technicianId,
+            resultText: dto.resultText,
+            resultFileUrl: dto.resultFileUrl,
+            isAbnormal: dto.isAbnormal,
+            abnormalNote: dto.abnormalNote,
+            completedAt: new Date(),
           },
         });
 
-        // Only advance if currently AWAITING_RESULTS; never step backward
-        if (record && record.visitStep === VisitStep.AWAITING_RESULTS) {
-          await tx.medicalRecord.update({
+        // Auto-advance MedicalRecord to RESULTS_READY if all sibling orders are done
+        const allSiblings = await tx.visitServiceOrder.findMany({
+          where: { medicalRecordId: order.medicalRecordId },
+          select: { id: true, status: true },
+        });
+
+        const allDone = allSiblings.every(
+          (o) => o.id === orderId || o.status === LabOrderStatus.COMPLETED,
+        );
+
+        if (allDone) {
+          const record = await tx.medicalRecord.findUnique({
             where: { id: order.medicalRecordId },
-            data: {
-              visitStep: VisitStep.RESULTS_READY,
-              version: { increment: 1 },
+            include: {
+              booking: {
+                include: { patientProfile: true },
+              },
             },
           });
 
-          // Notify doctor
-          if (record.booking?.doctorId) {
-            // Do not await, fire and forget to not block transaction
-            this.notificationsService
-              .createInAppNotification({
-                userId: record.booking.doctorId,
-                title: 'Kết quả CLS đã có',
-                content: `Bệnh nhân ${record.booking.patientProfile?.fullName ?? '...'} đã hoàn tất các chỉ định cận lâm sàng. Bạn có thể chẩn đoán ngay.`,
-                type: NotificationType.LAB_RESULT_READY,
-                metadata: { bookingId: record.bookingId, recordId: record.id },
-              })
-              .catch((err) =>
-                console.error(
-                  'Failed to send notification for RESULTS_READY',
-                  err,
-                ),
-              );
+          // Only advance if currently AWAITING_RESULTS; never step backward
+          if (record && record.visitStep === VisitStep.AWAITING_RESULTS) {
+            await tx.medicalRecord.update({
+              where: { id: order.medicalRecordId },
+              data: {
+                visitStep: VisitStep.RESULTS_READY,
+                version: { increment: 1 },
+              },
+            });
+
+            // Notify doctor
+            if (record.booking?.doctorId) {
+              // Do not await, fire and forget to not block transaction
+              this.notificationsService
+                .createInAppNotification({
+                  userId: record.booking.doctorId,
+                  title: 'Kết quả CLS đã có',
+                  content: `Bệnh nhân ${record.booking.patientProfile?.fullName ?? '...'} đã hoàn tất các chỉ định cận lâm sàng. Bạn có thể chẩn đoán ngay.`,
+                  type: NotificationType.LAB_RESULT_READY,
+                  metadata: {
+                    bookingId: record.bookingId,
+                    recordId: record.id,
+                  },
+                })
+                .catch((err) =>
+                  console.error(
+                    'Failed to send notification for RESULTS_READY',
+                    err,
+                  ),
+                );
+            }
           }
         }
-      }
 
-      return completed;
-    });
+        return completed;
+      },
+    );
 
     return ResponseHelper.success(
       updatedOrder,
@@ -184,7 +193,7 @@ export class VisitServiceOrdersService {
 
   // Get detail of a single service order
   async getOrderDetail(orderId: string) {
-    const order = await this.prisma.visitServiceOrder.findUnique({
+    const order = await this.clinicalRepository.findUniqueVisitServiceOrder({
       where: { id: orderId },
       include: {
         service: true,

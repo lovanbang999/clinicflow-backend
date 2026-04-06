@@ -3,9 +3,10 @@ import { QueueService } from './queue.service';
 import { QueueController } from './queue.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { QueueGateway } from './queue.gateway';
+import { DatabaseModule } from '../database/database.module';
 
 @Module({
-  imports: [NotificationsModule],
+  imports: [DatabaseModule, NotificationsModule],
   controllers: [QueueController],
   providers: [QueueService, QueueGateway],
   exports: [QueueService, QueueGateway],
