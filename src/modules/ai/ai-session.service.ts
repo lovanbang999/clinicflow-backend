@@ -1,24 +1,37 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, Logger, Inject } from '@nestjs/common';
+import {
+  I_AI_REPOSITORY,
+  IAiRepository,
+} from '../database/interfaces/ai.repository.interface';
+import {
+  I_PROFILE_REPOSITORY,
+  IProfileRepository,
+} from '../database/interfaces/profile.repository.interface';
 import { AiSessionOutcome, AiMessageRole, Prisma } from '@prisma/client';
 
 @Injectable()
 export class AiSessionService {
   private readonly logger = new Logger(AiSessionService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_AI_REPOSITORY) private readonly aiRepository: IAiRepository,
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
+  ) {}
 
   /**
    * Create a new chat session for the user.
    * Resolves patientProfileId automatically from userId if not supplied.
    */
   async createSession(userId: string, modelName?: string): Promise<string> {
-    const patientProfile = await this.prisma.patientProfile.findFirst({
-      where: { userId },
-      select: { id: true },
-    });
+    const patientProfile = await this.profileRepository.findFirstPatientProfile(
+      {
+        where: { userId },
+        select: { id: true },
+      },
+    );
 
-    const session = await this.prisma.aiChatSession.create({
+    const session = await this.aiRepository.createAiChatSession({
       data: {
         userId,
         patientProfileId: patientProfile?.id ?? null,
@@ -46,7 +59,7 @@ export class AiSessionService {
       tokenCount?: number;
     },
   ): Promise<void> {
-    await this.prisma.aiChatMessage.create({
+    await this.aiRepository.createAiChatMessage({
       data: {
         sessionId,
         role,
@@ -68,7 +81,7 @@ export class AiSessionService {
    * Accumulate token count into the session total.
    */
   async addTokens(sessionId: string, tokens: number): Promise<void> {
-    await this.prisma.aiChatSession.update({
+    await this.aiRepository.updateAiChatSession({
       where: { id: sessionId },
       data: { totalTokens: { increment: tokens } },
     });
@@ -83,7 +96,7 @@ export class AiSessionService {
     outcome: AiSessionOutcome,
     bookingId?: string,
   ): Promise<void> {
-    await this.prisma.aiChatSession.update({
+    await this.aiRepository.updateAiChatSession({
       where: { id: sessionId },
       data: {
         outcome,
@@ -97,7 +110,7 @@ export class AiSessionService {
    * Record a user-submitted issue report for a session.
    */
   async reportSession(sessionId: string, note?: string): Promise<void> {
-    await this.prisma.aiChatSession.update({
+    await this.aiRepository.updateAiChatSession({
       where: { id: sessionId },
       data: {
         outcome: AiSessionOutcome.REPORTED,
@@ -112,7 +125,7 @@ export class AiSessionService {
    * Check if a session belongs to the given user (authorization guard).
    */
   async ownsSession(sessionId: string, userId: string): Promise<boolean> {
-    const session = await this.prisma.aiChatSession.findFirst({
+    const session = await this.aiRepository.findFirstAiChatSession({
       where: { id: sessionId, userId },
       select: { id: true },
     });

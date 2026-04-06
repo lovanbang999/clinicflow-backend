@@ -2,8 +2,11 @@ import {
   ApiResponse,
   ResponseHelper,
 } from '../../common/interfaces/api-response.interface';
-import { Injectable, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, Inject, BadRequestException } from '@nestjs/common';
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../database/interfaces/booking.repository.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PromoteQueueDto } from './dto/promote-queue.dto';
 import { QueueFilterDto } from './dto/queue-filter.dto';
@@ -61,7 +64,8 @@ export interface QueueRecordWithRelations {
 @Injectable()
 export class QueueService {
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
     private readonly notificationsService: NotificationsService,
     private readonly queueGateway: QueueGateway,
   ) {}
@@ -100,7 +104,7 @@ export class QueueService {
     };
 
     const [queueRecords, total] = await Promise.all([
-      this.prisma.bookingQueue.findMany({
+      this.bookingRepository.findQueueMany({
         where,
         select: {
           id: true,
@@ -178,7 +182,7 @@ export class QueueService {
         skip: (page - 1) * limit,
         take: limit,
       }),
-      this.prisma.bookingQueue.count({ where }),
+      this.bookingRepository.countQueue({ where }),
     ]);
 
     // Priority sort (application layer):
@@ -225,7 +229,7 @@ export class QueueService {
   async findByBookingId(
     bookingId: string,
   ): Promise<ApiResponse<QueueRecordWithRelations>> {
-    const queueRecord = await this.prisma.bookingQueue.findUnique({
+    const queueRecord = await this.bookingRepository.findQueueUnique({
       where: { bookingId },
       select: {
         id: true,
@@ -323,14 +327,14 @@ export class QueueService {
     };
 
     const [totalQueued, avgWaitTime, longestQueue] = await Promise.all([
-      this.prisma.bookingQueue.count({ where }),
-      this.prisma.bookingQueue.aggregate({
+      this.bookingRepository.countQueue({ where }),
+      this.bookingRepository.aggregateQueue({
         where,
         _avg: {
           estimatedWaitMinutes: true,
         },
       }),
-      this.prisma.bookingQueue.findFirst({
+      this.bookingRepository.findQueueFirst({
         where,
         orderBy: {
           queuePosition: 'desc',
@@ -345,7 +349,7 @@ export class QueueService {
       {
         totalQueued,
         averageWaitTimeMinutes: Math.round(
-          avgWaitTime._avg.estimatedWaitMinutes || 0,
+          avgWaitTime._avg?.estimatedWaitMinutes ?? 0,
         ),
         longestQueuePosition: longestQueue?.queuePosition || 0,
       },
@@ -427,7 +431,7 @@ export class QueueService {
     timeSlot: string,
   ): Promise<boolean> {
     // Find first booking in queue for this slot
-    const firstInQueue = await this.prisma.bookingQueue.findFirst({
+    const firstInQueue = await this.bookingRepository.findQueueFirst({
       where: {
         booking: {
           doctorId,
@@ -492,7 +496,7 @@ export class QueueService {
    * Remove from queue (when booking is cancelled)
    */
   async removeFromQueue(bookingId: string) {
-    const queueRecord = await this.prisma.bookingQueue.findUnique({
+    const queueRecord = await this.bookingRepository.findQueueUnique({
       where: { bookingId },
       include: {
         booking: true,
@@ -503,7 +507,7 @@ export class QueueService {
       return; // Not in queue, nothing to do
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.bookingRepository.transaction(async (tx) => {
       // Delete queue record
       await tx.bookingQueue.delete({
         where: { bookingId },
@@ -532,7 +536,7 @@ export class QueueService {
     promotedBy: string,
     reason: string,
   ): Promise<{ booking: BookingWithRelations }> {
-    const result = await this.prisma.$transaction(async (tx) => {
+    const result = await this.bookingRepository.transaction(async (tx) => {
       // Get queue record
       const queueRecord = await tx.bookingQueue.findUnique({
         where: { bookingId },
@@ -709,7 +713,7 @@ export class QueueService {
     timeSlot: string,
     maxSlotsPerHour: number,
   ): Promise<boolean> {
-    const confirmedBookings = await this.prisma.booking.count({
+    const confirmedBookings = await this.bookingRepository.count({
       where: {
         doctorId,
         bookingDate: new Date(bookingDate),

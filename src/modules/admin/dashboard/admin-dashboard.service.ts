@@ -1,15 +1,39 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
-import { BookingStatus, UserRole } from '@prisma/client';
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../../database/interfaces/booking.repository.interface';
+import {
+  IFinanceRepository,
+  I_FINANCE_REPOSITORY,
+} from '../../database/interfaces/finance.repository.interface';
+import {
+  IProfileRepository,
+  I_PROFILE_REPOSITORY,
+} from '../../database/interfaces/profile.repository.interface';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../../database/interfaces/user.repository.interface';
+import { Inject } from '@nestjs/common';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
+import { UserRole, BookingStatus } from '@prisma/client';
 import { DateRangeQueryDto } from '../analytics/dto/date-range.query.dto';
 
 @Injectable()
 export class AdminDashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+    @Inject(I_FINANCE_REPOSITORY)
+    private readonly financeRepository: IFinanceRepository,
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+  ) {}
 
   private async fetchPaidInvoices(filter: { gte?: Date; lte?: Date }) {
-    return this.prisma.invoice.findMany({
+    return this.financeRepository.findManyInvoice({
       where: {
         status: 'PAID',
         ...(filter.gte || filter.lte
@@ -47,13 +71,13 @@ export class AdminDashboardService {
       periodPatients,
       comparisonPatients,
     ] = await Promise.all([
-      this.prisma.patientProfile.count(),
-      this.prisma.user.count({
+      this.profileRepository.countPatientProfile({}),
+      this.userRepository.count({
         where: { role: UserRole.DOCTOR, isActive: true },
       }),
-      this.prisma.booking.count(),
+      this.bookingRepository.countBooking({}),
       // New patient profiles in selected period OR this month
-      this.prisma.patientProfile.count({
+      this.profileRepository.countPatientProfile({
         where: {
           createdAt: {
             gte: filterGte || startOfMonth,
@@ -63,7 +87,7 @@ export class AdminDashboardService {
       }),
       // Comparison: if no filter, use last month
       !from
-        ? this.prisma.patientProfile.count({
+        ? this.profileRepository.countPatientProfile({
             where: {
               createdAt: { gte: startOfLastMonth, lt: startOfMonth },
             },
@@ -86,7 +110,7 @@ export class AdminDashboardService {
     );
 
     // Period Bookings
-    const periodBookings = await this.prisma.booking.count({
+    const periodBookings = await this.bookingRepository.countBooking({
       where: {
         createdAt: {
           gte: filterGte || startOfMonth,
@@ -112,7 +136,7 @@ export class AdminDashboardService {
             )
             .reduce((sum, inv) => sum + Number(inv.totalAmount), 0),
         ),
-        this.prisma.booking.count({
+        this.bookingRepository.countBooking({
           where: { createdAt: { gte: startOfLastMonth, lt: startOfMonth } },
         }),
       ]);
@@ -168,16 +192,16 @@ export class AdminDashboardService {
     const end = new Date(year, monthIndex + 1, 0, 23, 59, 59);
 
     const [bookingCount, completedCount, newPatients] = await Promise.all([
-      this.prisma.booking.count({
+      this.bookingRepository.countBooking({
         where: { createdAt: { gte: start, lte: end } },
       }),
-      this.prisma.booking.count({
+      this.bookingRepository.countBooking({
         where: {
           status: BookingStatus.COMPLETED,
           createdAt: { gte: start, lte: end },
         },
       }),
-      this.prisma.user.count({
+      this.userRepository.count({
         where: {
           role: UserRole.PATIENT,
           createdAt: { gte: start, lte: end },

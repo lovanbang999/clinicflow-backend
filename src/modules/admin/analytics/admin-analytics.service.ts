@@ -1,16 +1,40 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
-import { BookingStatus, UserRole } from '@prisma/client';
+import { Inject } from '@nestjs/common';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
-import { GetRevenueChartQueryDto } from './dto/get-revenue-chart.query.dto';
+import { UserRole, BookingStatus } from '@prisma/client';
 import { DateRangeQueryDto } from './dto/date-range.query.dto';
+import { GetRevenueChartQueryDto } from './dto/get-revenue-chart.query.dto';
+import {
+  I_BOOKING_REPOSITORY,
+  IBookingRepository,
+} from 'src/modules/database/interfaces/booking.repository.interface';
+import {
+  I_FINANCE_REPOSITORY,
+  IFinanceRepository,
+} from 'src/modules/database/interfaces/finance.repository.interface';
+import {
+  I_PROFILE_REPOSITORY,
+  IProfileRepository,
+} from 'src/modules/database/interfaces/profile.repository.interface';
+import {
+  I_USER_REPOSITORY,
+  IUserRepository,
+} from 'src/modules/database/interfaces/user.repository.interface';
 
 @Injectable()
 export class AdminAnalyticsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+    @Inject(I_FINANCE_REPOSITORY)
+    private readonly financeRepository: IFinanceRepository,
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+  ) {}
 
   private async fetchPaidInvoices(filter: { gte?: Date; lte?: Date }) {
-    return this.prisma.invoice.findMany({
+    return this.financeRepository.findManyInvoice({
       where: {
         status: 'PAID',
         ...(filter.gte || filter.lte
@@ -48,12 +72,12 @@ export class AdminAnalyticsService {
       periodPatients,
       comparisonPatients,
     ] = await Promise.all([
-      this.prisma.patientProfile.count(),
-      this.prisma.user.count({
+      this.profileRepository.countPatientProfile({}),
+      this.userRepository.count({
         where: { role: UserRole.DOCTOR, isActive: true },
       }),
-      this.prisma.booking.count(),
-      this.prisma.patientProfile.count({
+      this.bookingRepository.countBooking({}),
+      this.profileRepository.countPatientProfile({
         where: {
           createdAt: {
             gte: filterGte || startOfMonth,
@@ -62,7 +86,7 @@ export class AdminAnalyticsService {
         },
       }),
       !from
-        ? this.prisma.patientProfile.count({
+        ? this.profileRepository.countPatientProfile({
             where: {
               createdAt: { gte: startOfLastMonth, lt: startOfMonth },
             },
@@ -81,7 +105,7 @@ export class AdminAnalyticsService {
       0,
     );
 
-    const periodBookings = await this.prisma.booking.count({
+    const periodBookings = await this.bookingRepository.countBooking({
       where: {
         createdAt: {
           gte: filterGte || startOfMonth,
@@ -106,7 +130,7 @@ export class AdminAnalyticsService {
             )
             .reduce((sum, inv) => sum + Number(inv.totalAmount), 0),
         ),
-        this.prisma.booking.count({
+        this.bookingRepository.countBooking({
           where: { createdAt: { gte: startOfLastMonth, lt: startOfMonth } },
         }),
       ]);
@@ -151,7 +175,11 @@ export class AdminAnalyticsService {
     const filterGte = dateRange?.from ? new Date(dateRange.from) : startOfMonth;
     const filterLte = dateRange?.to ? new Date(dateRange.to) : undefined;
 
-    const topRaw = await this.prisma.invoice.groupBy({
+    type InvoiceGroupByRow = {
+      bookingId?: string | null;
+      _sum?: { totalAmount?: number | null };
+    };
+    const topRaw = (await this.financeRepository.groupByInvoice({
       by: ['bookingId'],
       where: {
         status: 'PAID',
@@ -160,9 +188,11 @@ export class AdminAnalyticsService {
       _sum: { totalAmount: true },
       orderBy: { _sum: { totalAmount: 'desc' } },
       take: limit * 2,
-    });
+    })) as InvoiceGroupByRow[];
 
-    const bookingIds = topRaw.map((r) => r.bookingId);
+    const bookingIds = topRaw
+      .map((r) => r.bookingId)
+      .filter((id): id is string => Boolean(id));
     const doctorRevenueMap = new Map<string, number>();
     const doctorCountMap = new Map<string, number>();
     const doctorInfoMap = new Map<
@@ -170,7 +200,7 @@ export class AdminAnalyticsService {
       { fullName: string; avatar: string | null; specialties: string[] }
     >();
 
-    const bookingsWithProfiles = await this.prisma.booking.findMany({
+    const bookingsWithProfiles = await this.bookingRepository.findManyBooking({
       where: { id: { in: bookingIds } },
       select: {
         id: true,
@@ -191,7 +221,7 @@ export class AdminAnalyticsService {
         const dId = booking.doctorId;
         doctorRevenueMap.set(
           dId,
-          (doctorRevenueMap.get(dId) || 0) + Number(row._sum.totalAmount),
+          (doctorRevenueMap.get(dId) || 0) + Number(row._sum?.totalAmount ?? 0),
         );
         doctorCountMap.set(dId, (doctorCountMap.get(dId) || 0) + 1);
 
@@ -340,21 +370,21 @@ export class AdminAnalyticsService {
 
     const [total, completed, upcoming, cancelled, inProgress] =
       await Promise.all([
-        this.prisma.booking.count({ where }),
-        this.prisma.booking.count({
+        this.bookingRepository.countBooking({ where }),
+        this.bookingRepository.countBooking({
           where: { ...where, status: BookingStatus.COMPLETED },
         }),
-        this.prisma.booking.count({
+        this.bookingRepository.countBooking({
           where: {
             ...where,
             status: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
             bookingDate: { gte: now },
           },
         }),
-        this.prisma.booking.count({
+        this.bookingRepository.countBooking({
           where: { ...where, status: BookingStatus.CANCELLED },
         }),
-        this.prisma.booking.count({
+        this.bookingRepository.countBooking({
           where: {
             ...where,
             status: {
@@ -388,7 +418,7 @@ export class AdminAnalyticsService {
     const filterGte = query?.from ? new Date(query.from) : startOfThisMonth;
     const filterLte = query?.to ? new Date(query.to) : undefined;
 
-    const topInvoices = await this.prisma.invoice.findMany({
+    const topInvoices = await this.financeRepository.findManyInvoice({
       where: {
         status: 'PAID',
         paidAt: { gte: filterGte, lte: filterLte },

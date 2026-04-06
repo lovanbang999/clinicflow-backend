@@ -4,9 +4,17 @@ import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as Handlebars from 'handlebars';
-import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsGateway } from './notifications.gateway';
 import { NotificationType, NotificationChannel, Prisma } from '@prisma/client';
+import {
+  ISystemRepository,
+  I_SYSTEM_REPOSITORY,
+} from '../database/interfaces/system.repository.interface';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../database/interfaces/user.repository.interface';
+import { Inject } from '@nestjs/common';
 
 interface BookingEmailData {
   bookingId: string;
@@ -37,7 +45,9 @@ export class NotificationsService {
   constructor(
     private readonly mailService: MailService,
     private readonly configService: ConfigService,
-    private readonly prisma: PrismaService,
+    @Inject(I_SYSTEM_REPOSITORY)
+    private readonly systemRepository: ISystemRepository,
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
     private readonly gateway: NotificationsGateway,
   ) {
     this.loadTemplates();
@@ -54,7 +64,7 @@ export class NotificationsService {
     metadata?: Prisma.InputJsonValue;
   }) {
     try {
-      const notification = await this.prisma.notification.create({
+      const notification = await this.systemRepository.createNotification({
         data: {
           userId: data.userId,
           title: data.title,
@@ -79,7 +89,7 @@ export class NotificationsService {
    * Get user's in-app notifications
    */
   async getMyNotifications(userId: string) {
-    const list = await this.prisma.notification.findMany({
+    const list = await this.systemRepository.findManyNotification({
       where: {
         userId,
         channel: NotificationChannel.IN_APP,
@@ -88,7 +98,7 @@ export class NotificationsService {
       take: 50,
     });
 
-    const unreadCount = await this.prisma.notification.count({
+    const unreadCount = await this.systemRepository.countNotification({
       where: {
         userId,
         channel: NotificationChannel.IN_APP,
@@ -103,7 +113,7 @@ export class NotificationsService {
    * Mark notification as read
    */
   async markAsRead(userId: string, id: string) {
-    return this.prisma.notification.update({
+    return this.systemRepository.updateNotification({
       where: { id, userId },
       data: {
         isRead: true,
@@ -116,7 +126,7 @@ export class NotificationsService {
    * Mark all as read
    */
   async markAllAsRead(userId: string) {
-    return this.prisma.notification.updateMany({
+    return this.systemRepository.updateManyNotification({
       where: { userId, isRead: false, channel: NotificationChannel.IN_APP },
       data: {
         isRead: true,
@@ -412,7 +422,7 @@ export class NotificationsService {
     metadata?: Prisma.InputJsonValue;
   }) {
     try {
-      const admins = await this.prisma.user.findMany({
+      const admins = await this.userRepository.findMany({
         where: { role: 'ADMIN', isActive: true },
         select: { id: true },
       });
@@ -421,7 +431,7 @@ export class NotificationsService {
 
       const notifications = await Promise.all(
         admins.map((admin) =>
-          this.prisma.notification.create({
+          this.systemRepository.createNotification({
             data: {
               userId: admin.id,
               title: data.title,

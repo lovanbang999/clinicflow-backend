@@ -1,28 +1,37 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import {
+  ISystemRepository,
+  I_SYSTEM_REPOSITORY,
+} from '../../database/interfaces/system.repository.interface';
+import { Inject } from '@nestjs/common';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 
 @Injectable()
 export class AdminSettingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_SYSTEM_REPOSITORY)
+    private readonly systemRepository: ISystemRepository,
+  ) {}
 
   /**
    * Get settings by category (namespace)
    */
-  async getSettingsByCategory(category: string): Promise<Record<string, any>> {
-    const configs = await this.prisma.systemConfig.findMany({
+  async getSettingsByCategory(
+    category: string,
+  ): Promise<Record<string, unknown>> {
+    const configs = await this.systemRepository.findManySystemConfig({
       where: { category: category.toUpperCase() },
     });
 
-    const settings: Record<string, any> = {};
+    const settings: Record<string, unknown> = {};
     configs.forEach((c) => {
       // Convert value based on dataType
-      let val: any = c.value;
+      let val: unknown = c.value;
       if (c.dataType === 'number') val = Number(c.value);
       if (c.dataType === 'boolean') val = c.value === 'true';
       if (c.dataType === 'json') {
         try {
-          val = JSON.parse(c.value);
+          val = JSON.parse(c.value) as unknown;
         } catch {
           val = {};
         }
@@ -41,21 +50,23 @@ export class AdminSettingsService {
    */
   async updateSettings(
     category: string,
-    data: Record<string, any>,
+    data: Record<string, unknown>,
     userId: string,
   ) {
-    const operations: Promise<any>[] = [];
+    const operations: Promise<unknown>[] = [];
 
     for (const [shortKey, value] of Object.entries(data)) {
       if (value === undefined) continue;
 
       const fullKey = `${category.toLowerCase()}.${shortKey}`;
       const stringValue =
-        typeof value === 'object' ? JSON.stringify(value) : String(value);
+        typeof value === 'object'
+          ? JSON.stringify(value)
+          : String(value as string | number | boolean);
       const dataType = typeof value;
 
       operations.push(
-        this.prisma.systemConfig.upsert({
+        this.systemRepository.upsertSystemConfig({
           where: { key: fullKey },
           update: {
             value: stringValue,
@@ -89,7 +100,7 @@ export class AdminSettingsService {
    */
   async getAllSettings() {
     const categories = ['CLINIC', 'BOOKING', 'NOTIFICATION', 'SECURITY'];
-    const results: Record<string, any> = {};
+    const results: Record<string, unknown> = {};
 
     for (const cat of categories) {
       results[cat.toLowerCase()] = await this.getSettingsByCategory(cat);

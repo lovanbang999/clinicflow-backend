@@ -1,5 +1,16 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, BadRequestException, Inject } from '@nestjs/common';
+import {
+  I_USER_REPOSITORY,
+  IUserRepository,
+} from '../database/interfaces/user.repository.interface';
+import {
+  I_CATALOG_REPOSITORY,
+  ICatalogRepository,
+} from '../database/interfaces/catalog.repository.interface';
+import {
+  I_BOOKING_REPOSITORY,
+  IBookingRepository,
+} from '../database/interfaces/booking.repository.interface';
 import { SmartSuggestionsQueryDto } from './dto/smart-suggestions-query.dto';
 import {
   BookingStatus,
@@ -26,7 +37,13 @@ interface Service {
 
 @Injectable()
 export class SuggestionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+    @Inject(I_CATALOG_REPOSITORY)
+    private readonly catalogRepository: ICatalogRepository,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+  ) {}
 
   /**
    * Get smart time slot suggestions based on availability and preferences
@@ -60,10 +77,10 @@ export class SuggestionsService {
 
     // Get doctor, service info
     const [doctor, service] = await Promise.all([
-      this.prisma.user.findUnique({
+      this.userRepository.findUnique({
         where: { id: doctorId },
       }),
-      this.prisma.service.findUnique({
+      this.catalogRepository.findUniqueService({
         where: { id: serviceId },
         select: {
           id: true,
@@ -83,7 +100,7 @@ export class SuggestionsService {
     }
 
     // Get doctor's working hours
-    const workingHours = await this.prisma.doctorWorkingHours.findMany({
+    const workingHours = await this.userRepository.findManyDoctorWorkingHours({
       where: { doctorId },
     });
 
@@ -146,7 +163,7 @@ export class SuggestionsService {
 
     // Get break times and off days in range
     const [breakTimes, offDays] = await Promise.all([
-      this.prisma.doctorBreakTime.findMany({
+      this.userRepository.findManyDoctorBreakTime({
         where: {
           doctorId,
           breakDate: {
@@ -155,7 +172,7 @@ export class SuggestionsService {
           },
         },
       }),
-      this.prisma.doctorOffDay.findMany({
+      this.userRepository.findManyDoctorOffDay({
         where: {
           doctorId,
           offDate: {
@@ -296,7 +313,7 @@ export class SuggestionsService {
       const reasons: string[] = [];
 
       // Check current bookings for this slot
-      const bookingCount = await this.prisma.booking.count({
+      const bookingCount = await this.bookingRepository.countBooking({
         where: {
           doctorId,
           bookingDate: new Date(slot.date),

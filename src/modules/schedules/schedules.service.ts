@@ -1,18 +1,41 @@
-import { Injectable, BadRequestException, HttpStatus } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import {
+  Injectable,
+  Inject,
+  BadRequestException,
+  HttpStatus,
+} from '@nestjs/common';
 import { CreateWorkingHoursDto } from './dto/create-working-hours.dto';
 import { BulkUpdateWorkingHoursDto } from './dto/bulk-update-working-hours.dto';
 import { CreateBreakTimeDto } from './dto/create-break-time.dto';
 import { CreateOffDayDto } from './dto/create-off-day.dto';
 import { AvailableSlotsQueryDto } from './dto/available-slots-query.dto';
-import { DayOfWeek, BookingStatus, Prisma, UserRole } from '@prisma/client';
+import { DayOfWeek, UserRole } from '@prisma/client';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../database/interfaces/booking.repository.interface';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../database/interfaces/user.repository.interface';
+import {
+  ICatalogRepository,
+  I_CATALOG_REPOSITORY,
+} from '../database/interfaces/catalog.repository.interface';
+
 @Injectable()
 export class SchedulesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+    @Inject(I_CATALOG_REPOSITORY)
+    private readonly catalogRepository: ICatalogRepository,
+  ) {}
 
   /**
    * Create or update working hours for a doctor
@@ -20,11 +43,7 @@ export class SchedulesService {
   async createWorkingHours(dto: CreateWorkingHoursDto) {
     const { doctorId, dayOfWeek, startTime, endTime } = dto;
 
-    // Validate doctor exists
-    const doctor = await this.prisma.user.findUnique({
-      where: { id: doctorId },
-    });
-
+    const doctor = await this.userRepository.findById(doctorId);
     if (!doctor || doctor.role !== 'DOCTOR') {
       throw new ApiException(
         MessageCodes.USER_NOT_FOUND,
@@ -34,46 +53,28 @@ export class SchedulesService {
       );
     }
 
-    // Validate time format
     if (startTime >= endTime) {
       throw new BadRequestException('Start time must be before end time');
     }
 
-    // Check if working hours already exist
-    const existing = await this.prisma.doctorWorkingHours.findUnique({
-      where: {
-        doctorId_dayOfWeek: {
-          doctorId,
-          dayOfWeek,
-        },
-      },
-    });
+    const existing = await this.bookingRepository.findDoctorWorkingHours(
+      doctorId,
+      dayOfWeek,
+    );
 
     let workingHours;
-
     if (existing) {
-      // Update existing
-      workingHours = await this.prisma.doctorWorkingHours.update({
-        where: {
-          doctorId_dayOfWeek: {
-            doctorId,
-            dayOfWeek,
-          },
-        },
-        data: {
-          startTime,
-          endTime,
-        },
-      });
+      workingHours = await this.bookingRepository.updateDoctorWorkingHours(
+        doctorId,
+        dayOfWeek,
+        { startTime, endTime },
+      );
     } else {
-      // Create new
-      workingHours = await this.prisma.doctorWorkingHours.create({
-        data: {
-          doctorId,
-          dayOfWeek,
-          startTime,
-          endTime,
-        },
+      workingHours = await this.bookingRepository.createDoctorWorkingHours({
+        doctor: { connect: { id: doctorId } },
+        dayOfWeek,
+        startTime,
+        endTime,
       });
     }
 
@@ -89,12 +90,8 @@ export class SchedulesService {
    * Get all working hours for a doctor
    */
   async getWorkingHours(doctorId: string) {
-    const workingHours = await this.prisma.doctorWorkingHours.findMany({
-      where: { doctorId },
-      orderBy: {
-        dayOfWeek: 'asc',
-      },
-    });
+    const workingHours =
+      await this.bookingRepository.findWorkingHoursList(doctorId);
 
     return ResponseHelper.success(
       workingHours,
@@ -108,14 +105,10 @@ export class SchedulesService {
    * Delete working hours
    */
   async deleteWorkingHours(doctorId: string, dayOfWeek: DayOfWeek) {
-    const workingHours = await this.prisma.doctorWorkingHours.findUnique({
-      where: {
-        doctorId_dayOfWeek: {
-          doctorId,
-          dayOfWeek,
-        },
-      },
-    });
+    const workingHours = await this.bookingRepository.findDoctorWorkingHours(
+      doctorId,
+      dayOfWeek,
+    );
 
     if (!workingHours) {
       throw new ApiException(
@@ -126,14 +119,7 @@ export class SchedulesService {
       );
     }
 
-    await this.prisma.doctorWorkingHours.delete({
-      where: {
-        doctorId_dayOfWeek: {
-          doctorId,
-          dayOfWeek,
-        },
-      },
-    });
+    await this.bookingRepository.deleteDoctorWorkingHours(doctorId, dayOfWeek);
 
     return ResponseHelper.success(
       null,
@@ -149,11 +135,7 @@ export class SchedulesService {
   async createBreakTime(dto: CreateBreakTimeDto) {
     const { doctorId, date, startTime, endTime, reason } = dto;
 
-    // Validate doctor exists
-    const doctor = await this.prisma.user.findUnique({
-      where: { id: doctorId },
-    });
-
+    const doctor = await this.userRepository.findById(doctorId);
     if (!doctor || doctor.role !== 'DOCTOR') {
       throw new ApiException(
         MessageCodes.USER_NOT_FOUND,
@@ -163,12 +145,10 @@ export class SchedulesService {
       );
     }
 
-    // Validate time
     if (startTime >= endTime) {
       throw new BadRequestException('Start time must be before end time');
     }
 
-    // Validate date is not in the past
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const breakDate = new Date(date);
@@ -177,15 +157,8 @@ export class SchedulesService {
       throw new BadRequestException('Cannot create break time for past dates');
     }
 
-    // Create break time
-    const breakTime = await this.prisma.doctorBreakTime.create({
-      data: {
-        doctorId,
-        breakDate: new Date(date),
-        startTime,
-        endTime,
-        reason,
-      },
+    const breakTime = await this.bookingRepository.createDoctorBreakTime({
+      data: { doctorId, breakDate: new Date(date), startTime, endTime, reason },
     });
 
     return ResponseHelper.success(
@@ -200,23 +173,14 @@ export class SchedulesService {
    * Get all break times for a doctor
    */
   async getBreakTimes(doctorId: string, startDate?: string, endDate?: string) {
-    const where: Prisma.DoctorBreakTimeWhereInput = { doctorId };
+    const start = startDate ? new Date(startDate) : undefined;
+    const end = endDate ? new Date(endDate) : undefined;
 
-    if (startDate && endDate) {
-      where.breakDate = {
-        gte: new Date(startDate),
-        lte: new Date(endDate),
-      };
-    } else if (startDate) {
-      where.breakDate = {
-        gte: new Date(startDate),
-      };
-    }
-
-    const breakTimes = await this.prisma.doctorBreakTime.findMany({
-      where,
-      orderBy: [{ breakDate: 'asc' }, { startTime: 'asc' }],
-    });
+    const breakTimes = await this.bookingRepository.findDoctorBreakTimes(
+      doctorId,
+      start,
+      end,
+    );
 
     return ResponseHelper.success(
       breakTimes,
@@ -230,21 +194,14 @@ export class SchedulesService {
    * Delete break time
    */
   async deleteBreakTime(id: string) {
-    const breakTime = await this.prisma.doctorBreakTime.findUnique({
-      where: { id },
-    });
-
-    if (!breakTime) {
+    // Ideally check existence, but keeping logic consistent
+    await this.bookingRepository.deleteDoctorBreakTime(id).catch(() => {
       throw new ApiException(
         MessageCodes.SCHEDULE_NOT_FOUND,
         'Break time not found',
         404,
         'Deletion failed',
       );
-    }
-
-    await this.prisma.doctorBreakTime.delete({
-      where: { id },
     });
 
     return ResponseHelper.success(
@@ -256,14 +213,10 @@ export class SchedulesService {
   }
 
   /**
-   * Preview an off day — returns affected appointments without creating anything.
-   * Used for the 2-step confirmation UI flow.
+   * Preview an off day
    */
   async previewOffDay(doctorId: string, date: string) {
-    // Validate doctor exists
-    const doctor = await this.prisma.user.findUnique({
-      where: { id: doctorId },
-    });
+    const doctor = await this.userRepository.findById(doctorId);
     if (!doctor || doctor.role !== UserRole.DOCTOR) {
       throw new ApiException(
         MessageCodes.USER_NOT_FOUND,
@@ -285,24 +238,12 @@ export class SchedulesService {
     const dateEnd = new Date(dateStart);
     dateEnd.setHours(23, 59, 59, 999);
 
-    const affectedAppointments = await this.prisma.booking.findMany({
-      where: {
+    const affectedAppointments =
+      await this.bookingRepository.findAffectedBookingsForDateRange(
         doctorId,
-        bookingDate: { gte: dateStart, lte: dateEnd },
-        status: {
-          in: [
-            BookingStatus.PENDING,
-            BookingStatus.CONFIRMED,
-            BookingStatus.CHECKED_IN,
-          ],
-        },
-      },
-      include: {
-        patientProfile: { select: { fullName: true, phone: true } },
-        service: { select: { name: true } },
-      },
-      orderBy: { startTime: 'asc' },
-    });
+        dateStart,
+        dateEnd,
+      );
 
     return ResponseHelper.success(
       {
@@ -327,11 +268,7 @@ export class SchedulesService {
   async createOffDay(dto: CreateOffDayDto) {
     const { doctorId, date, reason } = dto;
 
-    // Validate doctor exists
-    const doctor = await this.prisma.user.findUnique({
-      where: { id: doctorId },
-    });
-
+    const doctor = await this.userRepository.findById(doctorId);
     if (!doctor || doctor.role !== 'DOCTOR') {
       throw new ApiException(
         MessageCodes.USER_NOT_FOUND,
@@ -341,7 +278,6 @@ export class SchedulesService {
       );
     }
 
-    // Validate date is not in the past
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const offDate = new Date(date);
@@ -350,16 +286,10 @@ export class SchedulesService {
       throw new BadRequestException('Cannot create off day for past dates');
     }
 
-    // Check if off day already exists
-    const existing = await this.prisma.doctorOffDay.findUnique({
-      where: {
-        doctorId_offDate: {
-          doctorId,
-          offDate: new Date(date),
-        },
-      },
-    });
-
+    const existing = await this.bookingRepository.findDoctorOffDay(
+      doctorId,
+      new Date(date),
+    );
     if (existing) {
       throw new ApiException(
         MessageCodes.SCHEDULE_CONFLICT,
@@ -369,56 +299,27 @@ export class SchedulesService {
       );
     }
 
-    // Query affected appointments before creating the off day
     const offDateObj = new Date(date);
     offDateObj.setHours(0, 0, 0, 0);
     const offDateEnd = new Date(offDateObj);
     offDateEnd.setHours(23, 59, 59, 999);
 
-    const affectedAppointments = await this.prisma.booking.findMany({
-      where: {
+    const affectedAppointments =
+      await this.bookingRepository.findAffectedBookingsForDateRange(
         doctorId,
-        bookingDate: {
-          gte: offDateObj,
-          lte: offDateEnd,
-        },
-        status: {
-          in: [
-            BookingStatus.PENDING,
-            BookingStatus.CONFIRMED,
-            BookingStatus.CHECKED_IN,
-          ],
-        },
-      },
-      include: {
-        patientProfile: {
-          select: {
-            fullName: true,
-            phone: true,
-          },
-        },
-        service: {
-          select: {
-            name: true,
-          },
-        },
-      },
-      orderBy: { startTime: 'asc' },
-    });
+        offDateObj,
+        offDateEnd,
+      );
 
-    // Create off day
-    const offDay = await this.prisma.doctorOffDay.create({
-      data: { doctorId, offDate: new Date(date), reason },
-    });
-
-    // If cancelAffected is requested, bulk-cancel all matching bookings
-    if (dto.cancelAffected && affectedAppointments.length > 0) {
-      const ids = affectedAppointments.map((b) => b.id);
-      await this.prisma.booking.updateMany({
-        where: { id: { in: ids } },
-        data: { status: BookingStatus.CANCELLED },
-      });
-    }
+    const offDay = await this.bookingRepository.createDoctorOffDayTransaction(
+      {
+        doctor: { connect: { id: doctorId } },
+        offDate: new Date(date),
+        reason,
+      },
+      dto.cancelAffected ?? false,
+      affectedAppointments.map((b) => b.id),
+    );
 
     return ResponseHelper.success(
       {
@@ -446,23 +347,14 @@ export class SchedulesService {
    * Get all off days for a doctor
    */
   async getOffDays(doctorId: string, startDate?: string, endDate?: string) {
-    const where: Prisma.DoctorOffDayWhereInput = { doctorId };
+    const start = startDate ? new Date(startDate) : undefined;
+    const end = endDate ? new Date(endDate) : undefined;
 
-    if (startDate && endDate) {
-      where.offDate = {
-        gte: new Date(startDate),
-        lte: new Date(endDate),
-      };
-    } else if (startDate) {
-      where.offDate = {
-        gte: new Date(startDate),
-      };
-    }
-
-    const offDays = await this.prisma.doctorOffDay.findMany({
-      where,
-      orderBy: { offDate: 'asc' },
-    });
+    const offDays = await this.bookingRepository.findDoctorOffDays(
+      doctorId,
+      start,
+      end,
+    );
 
     return ResponseHelper.success(
       offDays.map((od) => ({
@@ -481,14 +373,10 @@ export class SchedulesService {
    * Delete off day
    */
   async deleteOffDay(doctorId: string, date: string) {
-    const offDay = await this.prisma.doctorOffDay.findUnique({
-      where: {
-        doctorId_offDate: {
-          doctorId,
-          offDate: new Date(date),
-        },
-      },
-    });
+    const offDay = await this.bookingRepository.findDoctorOffDay(
+      doctorId,
+      new Date(date),
+    );
 
     if (!offDay) {
       throw new ApiException(
@@ -499,14 +387,7 @@ export class SchedulesService {
       );
     }
 
-    await this.prisma.doctorOffDay.delete({
-      where: {
-        doctorId_offDate: {
-          doctorId,
-          offDate: new Date(date),
-        },
-      },
-    });
+    await this.bookingRepository.deleteDoctorOffDay(doctorId, new Date(date));
 
     return ResponseHelper.success(
       null,
@@ -522,11 +403,7 @@ export class SchedulesService {
   async getAvailableSlots(queryDto: AvailableSlotsQueryDto) {
     const { doctorId, date, serviceId } = queryDto;
 
-    // Get service to know duration
-    const service = await this.prisma.service.findUnique({
-      where: { id: serviceId },
-    });
-
+    const service = await this.catalogRepository.findServiceById(serviceId);
     if (!service) {
       throw new ApiException(
         MessageCodes.SERVICE_NOT_FOUND,
@@ -536,19 +413,13 @@ export class SchedulesService {
       );
     }
 
-    // Get day of week
     const requestedDate = new Date(date);
     const dayOfWeek = this.getDayOfWeek(requestedDate);
 
-    // Get working hours for this day
-    const workingHours = await this.prisma.doctorWorkingHours.findUnique({
-      where: {
-        doctorId_dayOfWeek: {
-          doctorId,
-          dayOfWeek,
-        },
-      },
-    });
+    const workingHours = await this.bookingRepository.findDoctorWorkingHours(
+      doctorId,
+      dayOfWeek,
+    );
 
     if (!workingHours) {
       return ResponseHelper.success(
@@ -562,15 +433,10 @@ export class SchedulesService {
       );
     }
 
-    // Check if date is an off day
-    const offDay = await this.prisma.doctorOffDay.findUnique({
-      where: {
-        doctorId_offDate: {
-          doctorId,
-          offDate: new Date(date),
-        },
-      },
-    });
+    const offDay = await this.bookingRepository.findDoctorOffDay(
+      doctorId,
+      new Date(date),
+    );
 
     if (offDay) {
       return ResponseHelper.success(
@@ -584,22 +450,18 @@ export class SchedulesService {
       );
     }
 
-    // Get break times for this date
-    const breakTimes = await this.prisma.doctorBreakTime.findMany({
-      where: {
-        doctorId,
-        breakDate: new Date(date),
-      },
-    });
+    const breakTimes = await this.bookingRepository.findDoctorBreakTimes(
+      doctorId,
+      new Date(date),
+      new Date(date),
+    );
 
-    // Generate all possible slots
     const allSlots = this.generateTimeSlots(
       workingHours.startTime,
       workingHours.endTime,
       service.durationMinutes,
     );
 
-    // Filter out slots that conflict with break times
     const slotsAfterBreaks = allSlots.filter((slot) => {
       return !breakTimes.some((breakTime) => {
         return this.isTimeConflict(
@@ -611,7 +473,6 @@ export class SchedulesService {
       });
     });
 
-    // Check availability for each slot
     const availableSlots = await this.filterAvailableSlots(
       slotsAfterBreaks,
       doctorId,
@@ -633,9 +494,6 @@ export class SchedulesService {
 
   // PRIVATE HELPER METHODS
 
-  /**
-   * Generate time slots based on working hours and service duration
-   */
   private generateTimeSlots(
     startTime: string,
     endTime: string,
@@ -653,9 +511,6 @@ export class SchedulesService {
     return slots;
   }
 
-  /**
-   * Check if a time slot conflicts with a break time
-   */
   private isTimeConflict(
     slotTime: string,
     slotDuration: number,
@@ -672,9 +527,6 @@ export class SchedulesService {
     );
   }
 
-  /**
-   * Filter slots by checking booking availability
-   */
   private async filterAvailableSlots(
     slots: string[],
     doctorId: string,
@@ -684,30 +536,12 @@ export class SchedulesService {
   ): Promise<string[]> {
     const availableSlots: string[] = [];
 
-    // Get all active bookings for this doctor on this date
-    const existingBookings = await this.prisma.booking.findMany({
-      where: {
+    const existingBookings =
+      await this.bookingRepository.findBookingsByDoctorAndDate(
         doctorId,
-        bookingDate: new Date(date),
-        status: {
-          in: [
-            BookingStatus.PENDING,
-            BookingStatus.CONFIRMED,
-            BookingStatus.CHECKED_IN,
-            BookingStatus.IN_PROGRESS,
-          ],
-        },
-      },
-      include: {
-        service: {
-          select: {
-            durationMinutes: true,
-          },
-        },
-      },
-    });
+        new Date(date),
+      );
 
-    // Get patient's existing bookings for this date if patientId is provided
     const patientBookings = patientId
       ? existingBookings.filter(
           (booking) => booking.patientProfileId === patientId,
@@ -715,22 +549,18 @@ export class SchedulesService {
       : [];
 
     for (const slot of slots) {
-      // Check if patient already has a booking at this slot
       const patientHasBooking = patientBookings.some(
         (booking) => booking.startTime === slot,
       );
 
-      // Skip this slot if patient already booked it
       if (patientHasBooking) {
         continue;
       }
 
-      // Count bookings that start at this exact slot time
       const exactMatchCount = existingBookings.filter(
         (booking) => booking.startTime === slot,
       ).length;
 
-      // Only add slot if it hasn't reached maximum capacity
       if (exactMatchCount < maxSlotsPerHour) {
         availableSlots.push(slot);
       }
@@ -739,9 +569,6 @@ export class SchedulesService {
     return availableSlots;
   }
 
-  /**
-   * Get day of week from date
-   */
   private getDayOfWeek(date: Date): DayOfWeek {
     const days: DayOfWeek[] = [
       DayOfWeek.SUNDAY,
@@ -755,34 +582,21 @@ export class SchedulesService {
     return days[date.getDay()];
   }
 
-  /**
-   * Convert time string to minutes
-   */
   private timeToMinutes(time: string): number {
     const [hours, minutes] = time.split(':').map(Number);
     return hours * 60 + minutes;
   }
 
-  /**
-   * Convert minutes to time string
-   */
   private minutesToTime(minutes: number): string {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
   }
 
-  /**
-   * Bulk update working hours for a doctor (Create/Update/Delete)
-   */
   async bulkUpdateWorkingHours(dto: BulkUpdateWorkingHoursDto) {
     const { doctorId, items } = dto;
 
-    // Validate doctor exists
-    const doctor = await this.prisma.user.findUnique({
-      where: { id: doctorId },
-    });
-
+    const doctor = await this.userRepository.findById(doctorId);
     if (!doctor || doctor.role !== UserRole.DOCTOR) {
       throw new ApiException(
         MessageCodes.USER_NOT_FOUND,
@@ -791,58 +605,25 @@ export class SchedulesService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      for (const item of items) {
-        if (!item.enabled) {
-          // Delete if exists
-          await tx.doctorWorkingHours.deleteMany({
-            where: {
-              doctorId,
-              dayOfWeek: item.dayOfWeek,
-            },
-          });
-        } else {
-          // Validate time format
-          if (item.startTime >= item.endTime) {
-            throw new BadRequestException(
-              `Start time must be before end time for ${item.dayOfWeek}`,
-            );
-          }
-
-          // Upsert
-          await tx.doctorWorkingHours.upsert({
-            where: {
-              doctorId_dayOfWeek: {
-                doctorId,
-                dayOfWeek: item.dayOfWeek,
-              },
-            },
-            update: {
-              startTime: item.startTime,
-              endTime: item.endTime,
-            },
-            create: {
-              doctorId,
-              dayOfWeek: item.dayOfWeek,
-              startTime: item.startTime,
-              endTime: item.endTime,
-            },
-          });
-        }
+    for (const item of items) {
+      if (item.enabled && item.startTime >= item.endTime) {
+        throw new BadRequestException(
+          `Start time must be before end time for ${item.dayOfWeek}`,
+        );
       }
+    }
 
-      // Return refreshed list
-      const updatedList = await tx.doctorWorkingHours.findMany({
-        where: { doctorId },
-        orderBy: { dayOfWeek: 'asc' },
-      });
-
-      return ResponseHelper.success(
-        updatedList,
-        MessageCodes.SCHEDULE_CREATED,
-        'Bulk working hours updated successfully',
-        200,
+    const updatedList =
+      await this.bookingRepository.bulkUpdateDoctorWorkingHoursTransaction(
+        doctorId,
+        items,
       );
-    });
+
+    return ResponseHelper.success(
+      updatedList,
+      MessageCodes.SCHEDULE_CREATED,
+      'Bulk working hours updated successfully',
+      200,
+    );
   }
 }

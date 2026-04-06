@@ -1,16 +1,27 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../database/interfaces/user.repository.interface';
+import {
+  IProfileRepository,
+  I_PROFILE_REPOSITORY,
+} from '../database/interfaces/profile.repository.interface';
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../database/interfaces/booking.repository.interface';
+import {
+  RegisterPatientDto,
+  CreateGuestPatientDto,
+} from './dto/quick-create-patient.dto';
+import { Injectable, Inject } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { FilterUserDto } from './dto/filter-user.dto';
 import { FilterPatientDto } from './dto/filter-patient.dto';
-import {
-  RegisterPatientDto,
-  CreateGuestPatientDto,
-} from './dto/quick-create-patient.dto';
 import { UpdatePatientProfileDto } from './dto/update-patient-profile.dto';
-import { Prisma, UserRole, Gender, BookingStatus } from '@prisma/client';
+import { Prisma, UserRole, Gender } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
@@ -18,7 +29,13 @@ import { ApiException } from '../../common/exceptions/api.exception';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+  ) {}
 
   /**
    * Create a new user (ADMIN only)
@@ -38,9 +55,7 @@ export class UsersService {
     } = createUserDto;
 
     // Check if email exists
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email },
-    });
+    const existingUser = await this.userRepository.findByEmail(email);
 
     if (existingUser) {
       throw new ApiException(
@@ -53,9 +68,7 @@ export class UsersService {
 
     // Check if phone exists (if provided)
     if (phone) {
-      const existingPhone = await this.prisma.user.findFirst({
-        where: { phone },
-      });
+      const existingPhone = await this.userRepository.findByPhone(phone);
 
       if (existingPhone) {
         throw new ApiException(
@@ -81,51 +94,23 @@ export class UsersService {
     };
 
     // Auto-create DoctorProfile if role is DOCTOR
+    let doctorProfileData:
+      | Prisma.DoctorProfileCreateWithoutUserInput
+      | undefined = undefined;
     if (role === UserRole.DOCTOR) {
-      userData.doctorProfile = {
-        create: {
-          specialties: specialties || [],
-          qualifications: qualifications || [],
-          bio: bio || null,
-          yearsOfExperience: yearsOfExperience || 0,
-          consultationFee: consultationFee || null,
-        },
+      doctorProfileData = {
+        specialties: specialties || [],
+        qualifications: qualifications || [],
+        bio: bio || null,
+        yearsOfExperience: yearsOfExperience || 0,
+        consultationFee: consultationFee || null,
       };
     }
 
-    const user = await this.prisma.user.create({
-      data: userData,
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        avatar: true,
-        dateOfBirth: true,
-        gender: true,
-        address: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-        doctorProfile: {
-          select: {
-            specialties: true,
-            qualifications: true,
-            yearsOfExperience: true,
-            bio: true,
-            rating: true,
-            reviewCount: true,
-          },
-        },
-        patientProfile: {
-          select: {
-            id: true,
-            patientCode: true,
-          },
-        },
-      },
-    });
+    const user = await this.userRepository.createAdminUser(
+      userData,
+      doctorProfileData,
+    );
 
     return ResponseHelper.success(
       user,
@@ -139,7 +124,7 @@ export class UsersService {
    * Internal helper to generate a unique patient code (BN-YYYY-NNNN)
    */
   private async generatePatientCode(): Promise<string> {
-    const count = await this.prisma.patientProfile.count();
+    const count = await this.profileRepository.countTotalPatients();
     return `BN-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
   }
 
@@ -159,30 +144,10 @@ export class UsersService {
     } = dto;
 
     // 1. Check if User with this phone or email exists
-    const existingUser = await this.prisma.user.findFirst({
-      where: {
-        OR: [{ phone }, ...(email ? [{ email }] : [])],
-        role: UserRole.PATIENT,
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        avatar: true,
-        dateOfBirth: true,
-        gender: true,
-        address: true,
-        role: true,
-        patientProfile: {
-          select: {
-            id: true,
-            patientCode: true,
-          },
-        },
-      },
-    });
+    const existingUser = await this.userRepository.findByPhoneOrEmail(
+      phone,
+      email,
+    );
 
     if (existingUser) {
       return ResponseHelper.success(
@@ -194,64 +159,14 @@ export class UsersService {
     }
 
     // 2. Check if Guest PatientProfile with this phone exists
-    const existingGuest = await this.prisma.patientProfile.findFirst({
-      where: { phone, isGuest: true, userId: null },
-    });
+    const existingGuest =
+      await this.profileRepository.findGuestPatientByPhone(phone);
 
     if (existingGuest) {
       // Upgrade Guest to User
       const hashedPassword = await bcrypt.hash(phone, 10);
 
-      const user = await this.prisma.user.create({
-        data: {
-          email,
-          password: hashedPassword,
-          fullName,
-          phone,
-          role: UserRole.PATIENT,
-          isActive: true,
-          isVerified: true,
-          ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
-          ...(gender && { gender }),
-          ...(address && { address }),
-        },
-      });
-
-      const updatedProfile = await this.prisma.patientProfile.update({
-        where: { id: existingGuest.id },
-        data: {
-          userId: user.id,
-          isGuest: false,
-          // Update profile fields if they were missing or changed
-          fullName,
-          ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
-          ...(gender && { gender }),
-          ...(address && { address }),
-          ...(nationalId && { nationalId }),
-          ...(bloodType && { bloodType }),
-        },
-      });
-
-      return ResponseHelper.success(
-        {
-          ...user,
-          patientProfile: {
-            id: updatedProfile.id,
-            patientCode: updatedProfile.patientCode,
-          },
-        },
-        MessageCodes.USER_UPDATED,
-        'Guest patient upgraded to account successfully',
-        200,
-      );
-    }
-
-    // 3. Create fresh User and PatientProfile
-    const hashedPassword = await bcrypt.hash(phone, 10);
-    const patientCode = await this.generatePatientCode();
-
-    const result = await this.prisma.user.create({
-      data: {
+      const userData = {
         email,
         password: hashedPassword,
         fullName,
@@ -262,39 +177,66 @@ export class UsersService {
         ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
         ...(gender && { gender }),
         ...(address && { address }),
-        patientProfile: {
-          create: {
-            patientCode,
-            fullName,
-            phone,
-            email,
-            ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
-            ...(gender && { gender }),
-            ...(address && { address }),
-            ...(nationalId && { nationalId }),
-            ...(bloodType && { bloodType }),
-            isGuest: false,
-          },
-        },
-      },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        avatar: true,
-        dateOfBirth: true,
-        gender: true,
-        address: true,
-        role: true,
-        patientProfile: {
-          select: {
-            id: true,
-            patientCode: true,
-          },
-        },
-      },
-    });
+      };
+
+      const profileData = {
+        fullName,
+        ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
+        ...(gender && { gender }),
+        ...(address && { address }),
+        ...(nationalId && { nationalId }),
+        ...(bloodType && { bloodType }),
+      };
+
+      const upgradedUserWithProfile =
+        await this.userRepository.createGuestAsUserTransaction(
+          existingGuest.id,
+          userData,
+          profileData,
+        );
+
+      return ResponseHelper.success(
+        upgradedUserWithProfile,
+        MessageCodes.USER_UPDATED,
+        'Guest patient upgraded to account successfully',
+        200,
+      );
+    }
+
+    // 3. Create fresh User and PatientProfile
+    const hashedPassword = await bcrypt.hash(phone, 10);
+    const patientCode = await this.generatePatientCode();
+
+    const userData = {
+      email,
+      password: hashedPassword,
+      fullName,
+      phone,
+      role: UserRole.PATIENT,
+      isActive: true,
+      isVerified: true,
+      ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
+      ...(gender && { gender }),
+      ...(address && { address }),
+    };
+
+    const profileData = {
+      patientCode,
+      fullName,
+      phone,
+      email,
+      ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
+      ...(gender && { gender }),
+      ...(address && { address }),
+      ...(nationalId && { nationalId }),
+      ...(bloodType && { bloodType }),
+      isGuest: false,
+    };
+
+    const result = await this.userRepository.createRegisteredPatient(
+      userData,
+      profileData,
+    );
 
     return ResponseHelper.success(
       result,
@@ -319,17 +261,7 @@ export class UsersService {
     } = dto;
 
     // 1. Check if User with this phone exists (registered patients)
-    const existingUser = await this.prisma.user.findFirst({
-      where: { phone, role: UserRole.PATIENT, deletedAt: null },
-      include: {
-        patientProfile: {
-          select: {
-            id: true,
-            patientCode: true,
-          },
-        },
-      },
-    });
+    const existingUser = await this.userRepository.findByPhone(phone);
 
     if (existingUser) {
       return ResponseHelper.success(
@@ -350,9 +282,8 @@ export class UsersService {
     }
 
     // 2. Check if Guest PatientProfile with this phone exists
-    const existingGuest = await this.prisma.patientProfile.findFirst({
-      where: { phone, isGuest: true, userId: null },
-    });
+    const existingGuest =
+      await this.profileRepository.findGuestPatientByPhone(phone);
 
     if (existingGuest) {
       return ResponseHelper.success(
@@ -377,19 +308,21 @@ export class UsersService {
 
     // 3. Create new Guest Profile
     const patientCode = await this.generatePatientCode();
-    const guestProfile = await this.prisma.patientProfile.create({
-      data: {
-        patientCode,
-        fullName,
-        phone,
-        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-        gender,
-        address,
-        nationalId,
-        bloodType,
-        isGuest: true,
-      },
-    });
+    const guestData = {
+      patientCode,
+      fullName,
+      phone,
+      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+      gender,
+      address,
+      nationalId,
+      bloodType,
+      isGuest: true,
+    };
+
+    const guestProfile = await this.profileRepository.createGuestPatientProfile(
+      { data: guestData },
+    );
 
     return ResponseHelper.success(
       {
@@ -459,28 +392,13 @@ export class UsersService {
       }
     }
 
-    const [profiles, total] = await Promise.all([
-      this.prisma.patientProfile.findMany({
+    const skip = (pPage - 1) * pLimit;
+    const [profiles, total] =
+      await this.profileRepository.findPatientProfilesWithPagination(
         where,
-        include: {
-          user: {
-            select: {
-              id: true,
-              email: true,
-              fullName: true,
-              phone: true,
-              avatar: true,
-              isActive: true,
-              role: true,
-            },
-          },
-        },
-        skip: (pPage - 1) * pLimit,
-        take: pLimit,
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.patientProfile.count({ where }),
-    ]);
+        skip,
+        pLimit,
+      );
 
     // Map profiles to a format the frontend expects (User-like objects)
     const users = profiles.map((profile) => {
@@ -533,22 +451,9 @@ export class UsersService {
     startOfToday.setUTCHours(0, 0, 0, 0);
 
     const [totalPatients, newToday, activeAppointments] = await Promise.all([
-      this.prisma.patientProfile.count(),
-      this.prisma.patientProfile.count({
-        where: { createdAt: { gte: startOfToday } },
-      }),
-      this.prisma.booking.count({
-        where: {
-          bookingDate: { gte: startOfToday },
-          status: {
-            in: [
-              BookingStatus.PENDING,
-              BookingStatus.CONFIRMED,
-              BookingStatus.CHECKED_IN,
-            ],
-          },
-        },
-      }),
+      this.profileRepository.countTotalPatients(),
+      this.profileRepository.countPatientsCreatedAfter(startOfToday),
+      this.bookingRepository.countActiveAppointmentsGroup(startOfToday),
     ]);
 
     return ResponseHelper.success(
@@ -578,69 +483,54 @@ export class UsersService {
       ...profileData
     } = dto;
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      // Find the profile
-      const profile = await tx.patientProfile.findUnique({
-        where: { id },
-        include: { user: true },
-      });
-      if (!profile) {
-        throw new ApiException(
-          MessageCodes.PATIENT_NOT_FOUND,
-          'Patient profile not found',
-          404,
-        );
-      }
-
-      // Update PatientProfile
-      const profileUpdateData: Prisma.PatientProfileUpdateInput = {
-        fullName:
-          fullName !== undefined ? fullName?.trim() || undefined : undefined,
-        phone: phone !== undefined ? phone?.trim() || null : undefined,
-        email: email !== undefined ? email?.trim() || null : undefined,
-        gender,
-        dateOfBirth:
-          dateOfBirth !== undefined
-            ? dateOfBirth?.trim()
-              ? new Date(dateOfBirth)
-              : null
-            : undefined,
-        address: address !== undefined ? address?.trim() || null : undefined,
-        bloodType:
-          bloodType !== undefined ? bloodType?.trim() || null : undefined,
-        nationalId: profileData.nationalId?.trim() || undefined,
-        insuranceNumber: profileData.insuranceNumber?.trim() || undefined,
-        insuranceProvider: profileData.insuranceProvider?.trim() || undefined,
-        insuranceExpiry: profileData.insuranceExpiry?.trim()
-          ? new Date(profileData.insuranceExpiry)
+    const profileUpdateData = {
+      fullName:
+        fullName !== undefined ? fullName?.trim() || undefined : undefined,
+      phone: phone !== undefined ? phone?.trim() || null : undefined,
+      email: email !== undefined ? email?.trim() || null : undefined,
+      gender,
+      dateOfBirth:
+        dateOfBirth !== undefined
+          ? dateOfBirth?.trim()
+            ? new Date(dateOfBirth)
+            : null
           : undefined,
-        allergies: profileData.allergies?.trim() || undefined,
-        chronicConditions: profileData.chronicConditions?.trim() || undefined,
-        familyHistory: profileData.familyHistory?.trim() || undefined,
-      };
+      address: address !== undefined ? address?.trim() || null : undefined,
+      bloodType:
+        bloodType !== undefined ? bloodType?.trim() || null : undefined,
+      nationalId: profileData.nationalId?.trim() || undefined,
+      insuranceNumber: profileData.insuranceNumber?.trim() || undefined,
+      insuranceProvider: profileData.insuranceProvider?.trim() || undefined,
+      insuranceExpiry: profileData.insuranceExpiry?.trim()
+        ? new Date(profileData.insuranceExpiry)
+        : undefined,
+      allergies: profileData.allergies?.trim() || undefined,
+      chronicConditions: profileData.chronicConditions?.trim() || undefined,
+      familyHistory: profileData.familyHistory?.trim() || undefined,
+    };
 
-      const updatedProfile = await tx.patientProfile.update({
-        where: { id },
-        data: profileUpdateData,
-      });
+    const userUpdateData = {
+      email,
+      fullName,
+      phone,
+      gender,
+      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+      address,
+    };
 
-      // Update User record if exists
-      if (profile.userId) {
-        await tx.user.update({
-          where: { id: profile.userId },
-          data: {
-            email,
-            fullName,
-            phone,
-            gender,
-            dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
-            address,
-          },
-        });
-      }
+    const result = await this.profileRepository.updatePatientProfileTransaction(
+      id,
+      profileUpdateData,
+      userUpdateData,
+    );
 
-      return updatedProfile;
-    });
+    if (!result) {
+      throw new ApiException(
+        MessageCodes.PATIENT_NOT_FOUND,
+        'Patient profile not found',
+        404,
+      );
+    }
 
     return ResponseHelper.success(
       result,
@@ -687,45 +577,13 @@ export class UsersService {
       ];
     }
 
-    const [users, total] = await Promise.all([
-      this.prisma.user.findMany({
-        where,
-        select: {
-          id: true,
-          email: true,
-          fullName: true,
-          phone: true,
-          avatar: true,
-          dateOfBirth: true,
-          gender: true,
-          address: true,
-          role: true,
-          isActive: true,
-          createdAt: true,
-          updatedAt: true,
-          doctorProfile: {
-            select: {
-              specialties: true,
-              qualifications: true,
-              yearsOfExperience: true,
-              bio: true,
-              rating: true,
-              reviewCount: true,
-            },
-          },
-          patientProfile: {
-            select: {
-              id: true,
-              patientCode: true,
-            },
-          },
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { [sortBy]: sortOrder },
-      }),
-      this.prisma.user.count({ where }),
-    ]);
+    const [users, total] = await this.userRepository.findUsersWithPagination(
+      where,
+      (page - 1) * limit,
+      limit,
+      sortBy,
+      sortOrder,
+    );
 
     return ResponseHelper.success(
       {
@@ -753,72 +611,15 @@ export class UsersService {
     page?: number;
     limit?: number;
   }) {
-    const { serviceId, page = 1, limit = 100 } = filters;
+    const { page = 1, limit = 100 } = filters;
 
-    // Build where clause
-    const where: Prisma.UserWhereInput = {
-      role: UserRole.DOCTOR,
-      isActive: true, // Only active doctors
-    };
+    const skip = (page - 1) * limit;
 
-    // Filter by serviceId using the DoctorService join table (optional)
-    if (serviceId) {
-      where.doctorProfile = {
-        services: {
-          some: {
-            serviceId,
-          },
-        },
-      };
-    }
-
-    const [users, total] = await Promise.all([
-      this.prisma.user.findMany({
-        where,
-        select: {
-          id: true,
-          email: true,
-          fullName: true,
-          phone: true,
-          avatar: true,
-          dateOfBirth: true,
-          gender: true,
-          address: true,
-          role: true,
-          isActive: true,
-          createdAt: true,
-          updatedAt: true,
-          doctorProfile: {
-            select: {
-              specialties: true,
-              qualifications: true,
-              yearsOfExperience: true,
-              bio: true,
-              rating: true,
-              reviewCount: true,
-              services: {
-                select: {
-                  service: {
-                    select: {
-                      id: true,
-                      name: true,
-                      category: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: [
-          { doctorProfile: { rating: 'desc' } }, // Sort by rating first
-          { fullName: 'asc' },
-        ],
-      }),
-      this.prisma.user.count({ where }),
-    ]);
+    const [users, total] = await this.userRepository.findPublicDoctors(
+      {},
+      skip,
+      limit,
+    );
 
     return ResponseHelper.success(
       {
@@ -840,35 +641,7 @@ export class UsersService {
    * Find public doctor by ID
    */
   async findPublicDoctor(id: string) {
-    const user = await this.prisma.user.findFirst({
-      where: {
-        id,
-        role: UserRole.DOCTOR,
-        isActive: true,
-      },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        avatar: true,
-        gender: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-        doctorProfile: {
-          select: {
-            specialties: true,
-            qualifications: true,
-            yearsOfExperience: true,
-            bio: true,
-            rating: true,
-            reviewCount: true,
-          },
-        },
-      },
-    });
+    const user = await this.userRepository.findPublicDoctorById(id);
 
     if (!user) {
       throw new ApiException(
@@ -891,39 +664,7 @@ export class UsersService {
    * Find one user by ID
    */
   async findOne(id: string) {
-    const user = await this.prisma.user.findFirst({
-      where: { id, deletedAt: null },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        avatar: true,
-        dateOfBirth: true,
-        gender: true,
-        address: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-        doctorProfile: {
-          select: {
-            specialties: true,
-            qualifications: true,
-            yearsOfExperience: true,
-            bio: true,
-            rating: true,
-            reviewCount: true,
-          },
-        },
-        patientProfile: {
-          select: {
-            id: true,
-            patientCode: true,
-          },
-        },
-      },
-    });
+    const user = await this.userRepository.findById(id);
 
     if (!user) {
       throw new ApiException(
@@ -946,18 +687,7 @@ export class UsersService {
    * Find user by email (for internal use)
    */
   async findByEmail(email: string) {
-    return this.prisma.user.findUnique({
-      where: { email },
-      include: {
-        doctorProfile: true,
-        patientProfile: {
-          select: {
-            id: true,
-            patientCode: true,
-          },
-        },
-      },
-    });
+    return this.userRepository.findByEmail(email);
   }
 
   /**
@@ -965,9 +695,7 @@ export class UsersService {
    */
   async update(id: string, updateUserDto: UpdateUserDto) {
     // Check if user exists
-    const existingUser = await this.prisma.user.findUnique({
-      where: { id },
-    });
+    const existingUser = await this.userRepository.findById(id);
 
     if (!existingUser) {
       throw new ApiException(
@@ -980,9 +708,9 @@ export class UsersService {
 
     // Check email uniqueness if updating email
     if (updateUserDto.email && updateUserDto.email !== existingUser.email) {
-      const emailExists = await this.prisma.user.findUnique({
-        where: { email: updateUserDto.email },
-      });
+      const emailExists = await this.userRepository.findByEmail(
+        updateUserDto.email,
+      );
 
       if (emailExists) {
         throw new ApiException(
@@ -996,12 +724,9 @@ export class UsersService {
 
     // Check phone uniqueness if updating phone
     if (updateUserDto.phone && updateUserDto.phone !== existingUser.phone) {
-      const phoneExists = await this.prisma.user.findFirst({
-        where: {
-          phone: updateUserDto.phone,
-          NOT: { id },
-        },
-      });
+      const phoneExists = await this.userRepository.findByPhone(
+        updateUserDto.phone,
+      );
 
       if (phoneExists) {
         throw new ApiException(
@@ -1067,40 +792,12 @@ export class UsersService {
     }
 
     // Update user
-    const updatedUser = await this.prisma.user.update({
-      where: { id },
-      data: updateData,
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        avatar: true,
-        dateOfBirth: true,
-        gender: true,
-        address: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-        doctorProfile: {
-          select: {
-            specialties: true,
-            qualifications: true,
-            yearsOfExperience: true,
-            bio: true,
-            rating: true,
-            reviewCount: true,
-          },
-        },
-        patientProfile: {
-          select: {
-            id: true,
-            patientCode: true,
-          },
-        },
-      },
-    });
+    // Auto-update DoctorProfile if role is DOCTOR and data is passed
+    // NOTE: This complex nested update is handled gracefully by Prisma directly.
+    // Given the repository pattern, we pass the raw data and let the repository figure it out.
+    // However, PrismaUserRepository currently passes 'updateData' directly to 'this.prisma.user.update'.
+
+    const updatedUser = await this.userRepository.update(id, updateData);
 
     return ResponseHelper.success(
       updatedUser,
@@ -1114,7 +811,7 @@ export class UsersService {
    * Update user avatar
    */
   async updateAvatar(id: string, avatarUrl: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+    const user = await this.userRepository.findById(id);
 
     if (!user) {
       throw new ApiException(
@@ -1125,21 +822,8 @@ export class UsersService {
       );
     }
 
-    const updatedUser = await this.prisma.user.update({
-      where: { id },
-      data: { avatar: avatarUrl },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        avatar: true,
-        dateOfBirth: true,
-        gender: true,
-        address: true,
-        role: true,
-        isActive: true,
-      },
+    const updatedUser = await this.userRepository.update(id, {
+      avatar: avatarUrl,
     });
 
     return updatedUser;
@@ -1152,10 +836,7 @@ export class UsersService {
     const { currentPassword, newPassword } = changePasswordDto;
 
     // Get user with password
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, password: true },
-    });
+    const user = await this.userRepository.findById(userId);
 
     if (!user) {
       throw new ApiException(
@@ -1194,10 +875,7 @@ export class UsersService {
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     // Update password
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { password: hashedPassword },
-    });
+    await this.userRepository.update(userId, { password: hashedPassword });
 
     return ResponseHelper.success(
       null,
@@ -1211,9 +889,7 @@ export class UsersService {
    * Delete user (soft delete: sets deletedAt timestamp + deactivates account)
    */
   async remove(id: string) {
-    const user = await this.prisma.user.findFirst({
-      where: { id, deletedAt: null },
-    });
+    const user = await this.userRepository.findById(id);
 
     if (!user) {
       throw new ApiException(
@@ -1225,21 +901,7 @@ export class UsersService {
     }
 
     // Soft delete: stamp deletedAt and deactivate
-    const deletedUser = await this.prisma.user.update({
-      where: { id },
-      data: {
-        deletedAt: new Date(),
-        isActive: false,
-      },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        role: true,
-        isActive: true,
-        deletedAt: true,
-      },
-    });
+    const deletedUser = await this.userRepository.softDelete(id);
 
     return ResponseHelper.success(
       deletedUser,
@@ -1253,44 +915,10 @@ export class UsersService {
    * Get user statistics
    */
   async getStatistics() {
-    const staffRoles = [
-      UserRole.ADMIN,
-      UserRole.RECEPTIONIST,
-      UserRole.TECHNICIAN,
-    ];
-
-    const [totalUsers, activeUsers, usersByRole, doctorProfileCount] =
-      await Promise.all([
-        this.prisma.user.count({
-          where: { deletedAt: null, role: { in: staffRoles } },
-        }),
-        this.prisma.user.count({
-          where: { isActive: true, deletedAt: null, role: { in: staffRoles } },
-        }),
-        this.prisma.user.groupBy({
-          by: ['role'],
-          where: { deletedAt: null, role: { in: staffRoles } },
-          _count: true,
-        }),
-        this.prisma.doctorProfile.count(),
-      ]);
-
-    const roleStats = usersByRole.reduce(
-      (acc, item) => {
-        acc[item.role] = item._count;
-        return acc;
-      },
-      {} as Record<string, number>,
-    );
+    const stats = await this.userRepository.getUserStatistics();
 
     return ResponseHelper.success(
-      {
-        totalUsers,
-        activeUsers,
-        inactiveUsers: totalUsers - activeUsers,
-        usersByRole: roleStats,
-        doctorProfileCount,
-      },
+      stats,
       MessageCodes.USER_LIST_RETRIEVED,
       'User statistics retrieved successfully',
       200,

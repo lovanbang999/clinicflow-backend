@@ -1,13 +1,19 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Injectable, Inject } from '@nestjs/common';
+import {
+  I_CATALOG_REPOSITORY,
+  ICatalogRepository,
+} from '../../database/interfaces/catalog.repository.interface';
 
 @Injectable()
 export class SpecialtyTool {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_CATALOG_REPOSITORY)
+    private readonly catalogRepository: ICatalogRepository,
+  ) {}
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async execute(args: { symptoms: string }) {
-    const categories = await this.prisma.category.findMany({
+    const categories = await this.catalogRepository.findManyCategory({
       where: {
         type: 'EXAMINATION',
         isActive: true,

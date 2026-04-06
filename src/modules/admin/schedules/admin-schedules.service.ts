@@ -1,5 +1,12 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Injectable, Inject } from '@nestjs/common';
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../../database/interfaces/booking.repository.interface';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../../database/interfaces/user.repository.interface';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { FilterScheduleDto } from './dto/filter-schedule.dto';
@@ -10,7 +17,11 @@ import { ApiException } from '../../../common/exceptions/api.exception';
 
 @Injectable()
 export class AdminSchedulesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+  ) {}
 
   async getStatistics() {
     const today = new Date();
@@ -21,8 +32,8 @@ export class AdminSchedulesService {
 
     const [totalAppointments, todaysSlots, canceledBookings] =
       await Promise.all([
-        this.prisma.booking.count(),
-        this.prisma.doctorScheduleSlot.count({
+        this.bookingRepository.count({}),
+        this.bookingRepository.countDoctorScheduleSlot({
           where: {
             date: {
               gte: today,
@@ -30,7 +41,7 @@ export class AdminSchedulesService {
             },
           },
         }),
-        this.prisma.booking.count({
+        this.bookingRepository.countBooking({
           where: {
             status: 'CANCELLED',
             bookingDate: {
@@ -42,7 +53,7 @@ export class AdminSchedulesService {
       ]);
 
     // Calculate a mock avg waiting time based on booking queue
-    const queuedBookings = await this.prisma.bookingQueue.aggregate({
+    const queuedBookings = await this.bookingRepository.aggregateQueue({
       _avg: {
         estimatedWaitMinutes: true,
       },
@@ -53,7 +64,7 @@ export class AdminSchedulesService {
         totalAppointments,
         todaysSlots,
         canceledToday: canceledBookings,
-        avgWaitTime: Math.round(queuedBookings._avg.estimatedWaitMinutes || 0),
+        avgWaitTime: Math.round(queuedBookings._avg?.estimatedWaitMinutes ?? 0),
       },
       MessageCodes.SCHEDULE_STATISTICS_RETRIEVED,
       'Schedule statistics retrieved successfully',
@@ -78,7 +89,7 @@ export class AdminSchedulesService {
       if (filters.endDate) where.date.lte = new Date(filters.endDate);
     }
 
-    const slots = await this.prisma.doctorScheduleSlot.findMany({
+    const slots = await this.bookingRepository.findManyDoctorScheduleSlot({
       where,
       include: {
         doctor: {
@@ -108,7 +119,7 @@ export class AdminSchedulesService {
   }
 
   private async findById(id: string) {
-    const slot = await this.prisma.doctorScheduleSlot.findUnique({
+    const slot = await this.bookingRepository.findUniqueDoctorScheduleSlot({
       where: { id },
       include: {
         doctor: {
@@ -141,7 +152,7 @@ export class AdminSchedulesService {
   }
 
   async create(createDto: CreateScheduleDto) {
-    const doctor = await this.prisma.user.findFirst({
+    const doctor = await this.userRepository.findFirst({
       where: { id: createDto.doctorId, role: 'DOCTOR' },
     });
     if (!doctor) {
@@ -153,7 +164,7 @@ export class AdminSchedulesService {
       );
     }
 
-    const newSlot = await this.prisma.doctorScheduleSlot.create({
+    const newSlot = await this.bookingRepository.createDoctorScheduleSlot({
       data: {
         ...createDto,
         date: new Date(createDto.date),
@@ -177,7 +188,7 @@ export class AdminSchedulesService {
       updateData.date = new Date(updateDto.date);
     }
 
-    const updatedSlot = await this.prisma.doctorScheduleSlot.update({
+    const updatedSlot = await this.bookingRepository.updateDoctorScheduleSlot({
       where: { id },
       data: updateData,
     });
@@ -193,7 +204,7 @@ export class AdminSchedulesService {
   async remove(id: string) {
     await this.findById(id);
 
-    const deletedSlot = await this.prisma.doctorScheduleSlot.update({
+    const deletedSlot = await this.bookingRepository.updateDoctorScheduleSlot({
       where: { id },
       data: { isActive: false },
     });
@@ -208,7 +219,7 @@ export class AdminSchedulesService {
 
   async restore(id: string) {
     await this.findById(id);
-    const restoredSlot = await this.prisma.doctorScheduleSlot.update({
+    const restoredSlot = await this.bookingRepository.updateDoctorScheduleSlot({
       where: { id },
       data: { isActive: true },
     });

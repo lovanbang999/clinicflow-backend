@@ -6,7 +6,23 @@ import {
   AddInvoiceItemDto,
   ConfirmPaymentDto,
 } from './dto/billing.dto';
-import { PrismaService } from '../prisma/prisma.service';
+import {
+  IFinanceRepository,
+  I_FINANCE_REPOSITORY,
+} from '../database/interfaces/finance.repository.interface';
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../database/interfaces/booking.repository.interface';
+import {
+  IProfileRepository,
+  I_PROFILE_REPOSITORY,
+} from '../database/interfaces/profile.repository.interface';
+import {
+  IClinicalRepository,
+  I_CLINICAL_REPOSITORY,
+} from '../database/interfaces/clinical.repository.interface';
+import { Inject } from '@nestjs/common';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import {
   InvoiceStatus,
@@ -14,7 +30,6 @@ import {
   LabOrderStatus,
   Prisma,
 } from '@prisma/client';
-
 import { NotificationsService } from '../notifications/notifications.service';
 import { LabOrdersGateway } from '../lab-orders/lab-orders.gateway';
 import { format } from 'date-fns';
@@ -22,7 +37,14 @@ import { format } from 'date-fns';
 @Injectable()
 export class BillingService {
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(I_FINANCE_REPOSITORY)
+    private readonly financeRepository: IFinanceRepository,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
+    @Inject(I_CLINICAL_REPOSITORY)
+    private readonly clinicalRepository: IClinicalRepository,
     private readonly notificationsService: NotificationsService,
     private readonly labOrdersGateway: LabOrdersGateway,
   ) {}
@@ -42,7 +64,7 @@ export class BillingService {
    * Auto-seeds a first line item from the booking's service (for CONSULTATION type).
    */
   async createInvoice(dto: CreateInvoiceDto) {
-    const booking = await this.prisma.booking.findUnique({
+    const booking = await this.bookingRepository.findUniqueBooking({
       where: { id: dto.bookingId },
       include: {
         service: true,
@@ -62,10 +84,10 @@ export class BillingService {
     const servicePrice = booking.service.price;
 
     // Generate invoice number: INV-YYYYMMDD-XXXX
-    const count = await this.prisma.invoice.count();
+    const count = await this.financeRepository.countInvoice({});
     const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
 
-    const invoice = await this.prisma.$transaction(async (tx) => {
+    const invoice = await this.financeRepository.transaction(async (tx) => {
       const seedSubtotal =
         invoiceType === InvoiceType.CONSULTATION ? Number(servicePrice) : 0;
 
@@ -193,7 +215,9 @@ export class BillingService {
    * and they will reappear in the pending lab orders list.
    */
   async deleteInvoice(id: string) {
-    const invoice = await this.prisma.invoice.findUnique({ where: { id } });
+    const invoice = await this.financeRepository.findUniqueInvoice({
+      where: { id },
+    });
     if (!invoice) {
       throw new ApiException(
         MessageCodes.INVOICE_NOT_FOUND,
@@ -209,7 +233,7 @@ export class BillingService {
       );
     }
 
-    await this.prisma.invoice.delete({ where: { id } });
+    await this.financeRepository.deleteInvoice({ where: { id } });
     return ResponseHelper.success(
       null,
       'BILLING.INVOICE_DELETED',
@@ -222,7 +246,7 @@ export class BillingService {
    * List all invoices for a booking (multiple invoices per booking).
    */
   async listInvoicesByBooking(bookingId: string) {
-    const booking = await this.prisma.booking.findUnique({
+    const booking = await this.bookingRepository.findUniqueBooking({
       where: { id: bookingId },
       select: { id: true },
     });
@@ -234,7 +258,7 @@ export class BillingService {
       );
     }
 
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await this.financeRepository.findManyInvoice({
       where: { bookingId },
       include: {
         items: { orderBy: { sortOrder: 'asc' } },
@@ -273,7 +297,7 @@ export class BillingService {
    * Get invoice by invoice ID.
    */
   async getInvoiceById(id: string) {
-    const invoice = await this.prisma.invoice.findUnique({
+    const invoice = await this.financeRepository.findUniqueInvoice({
       where: { id },
       include: {
         items: { orderBy: { sortOrder: 'asc' } },
@@ -347,7 +371,7 @@ export class BillingService {
     }
 
     const [invoices, total] = await Promise.all([
-      this.prisma.invoice.findMany({
+      this.financeRepository.findManyInvoice({
         where,
         include: {
           items: { take: 1, orderBy: { sortOrder: 'asc' } },
@@ -362,7 +386,7 @@ export class BillingService {
         skip,
         take: limit,
       }),
-      this.prisma.invoice.count({ where }),
+      this.financeRepository.countInvoice({ where }),
     ]);
 
     return ResponseHelper.success(
@@ -386,7 +410,7 @@ export class BillingService {
    * Used by receptionist to know if they need to create a LAB invoice.
    */
   async getPendingLabOrdersForBilling(bookingId: string) {
-    const orders = await this.prisma.labOrder.findMany({
+    const orders = await this.clinicalRepository.findManyLabOrder({
       where: {
         bookingId,
         status: LabOrderStatus.PENDING,
@@ -409,7 +433,7 @@ export class BillingService {
    * Add an extra line item to a DRAFT invoice (e.g. additional services).
    */
   async addInvoiceItem(invoiceId: string, dto: AddInvoiceItemDto) {
-    const invoice = await this.prisma.invoice.findUnique({
+    const invoice = await this.financeRepository.findUniqueInvoice({
       where: { id: invoiceId },
     });
     if (!invoice) {
@@ -433,7 +457,7 @@ export class BillingService {
     const quantity = dto.quantity ?? 1;
     const totalPrice = dto.unitPrice * quantity;
 
-    const item = await this.prisma.$transaction(async (tx) => {
+    const item = await this.financeRepository.transaction(async (tx) => {
       const newItem = await tx.invoiceItem.create({
         data: {
           invoiceId,
@@ -465,7 +489,7 @@ export class BillingService {
    * Remove a line item from a DRAFT invoice.
    */
   async removeInvoiceItem(invoiceId: string, itemId: string) {
-    const invoice = await this.prisma.invoice.findUnique({
+    const invoice = await this.financeRepository.findUniqueInvoice({
       where: { id: invoiceId },
     });
     if (!invoice) {
@@ -486,7 +510,7 @@ export class BillingService {
       );
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.financeRepository.transaction(async (tx) => {
       await tx.invoiceItem.delete({ where: { id: itemId } });
       await this.recalculateTotals(tx, invoiceId);
     });
@@ -512,7 +536,7 @@ export class BillingService {
     dto: ConfirmPaymentDto,
     confirmedByUserId: string,
   ) {
-    const invoice = await this.prisma.invoice.findUnique({
+    const invoice = await this.financeRepository.findUniqueInvoice({
       where: { id: invoiceId },
       include: {
         payments: true,
@@ -563,7 +587,7 @@ export class BillingService {
     const invoiceTotal = Number(invoice.totalAmount);
     const shouldAutoFinalize = newTotalPaid >= invoiceTotal;
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.financeRepository.transaction(async (tx) => {
       await tx.payment.create({
         data: {
           invoiceId,
@@ -661,7 +685,7 @@ export class BillingService {
       }
     });
 
-    const updated = await this.prisma.invoice.findUnique({
+    const updated = await this.financeRepository.findUniqueInvoice({
       where: { id: invoiceId },
       include: {
         items: true,
@@ -712,7 +736,7 @@ export class BillingService {
    * Normally called automatically by addPayment when total is met.
    */
   async finalizeInvoice(invoiceId: string) {
-    const invoice = await this.prisma.invoice.findUnique({
+    const invoice = await this.financeRepository.findUniqueInvoice({
       where: { id: invoiceId },
       include: { payments: true },
     });
@@ -743,7 +767,7 @@ export class BillingService {
       0,
     );
 
-    const updatedInvoice = await this.prisma.invoice.update({
+    const updatedInvoice = await this.financeRepository.updateInvoice({
       where: { id: invoiceId },
       data: {
         status: InvoiceStatus.PAID,
@@ -821,10 +845,11 @@ export class BillingService {
       limit?: number;
     },
   ) {
-    const patientProfile = await this.prisma.patientProfile.findUnique({
-      where: { userId },
-      select: { id: true },
-    });
+    const patientProfile =
+      await this.profileRepository.findUniquePatientProfile({
+        where: { userId },
+        select: { id: true },
+      });
 
     if (!patientProfile) {
       // If user has no patient profile, return empty list

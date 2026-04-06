@@ -1,10 +1,27 @@
 import {
+  IClinicalRepository,
+  I_CLINICAL_REPOSITORY,
+} from '../database/interfaces/clinical.repository.interface';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../database/interfaces/user.repository.interface';
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../database/interfaces/booking.repository.interface';
+import {
+  IProfileRepository,
+  I_PROFILE_REPOSITORY,
+} from '../database/interfaces/profile.repository.interface';
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
 import { LabOrderStatus, Prisma, VisitStep } from '@prisma/client';
 import { format } from 'date-fns';
@@ -13,7 +30,7 @@ import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { NotificationsService } from '../notifications/notifications.service';
-import { PrismaService } from '../prisma/prisma.service';
+
 import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { OrderServicesDto } from './dto/order-services.dto';
@@ -45,13 +62,19 @@ export class MedicalRecordsService {
   } as const;
 
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(I_CLINICAL_REPOSITORY)
+    private readonly clinicalRepository: IClinicalRepository,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
     private readonly notificationsService: NotificationsService,
   ) {}
 
   // PRIVATE HELPERS
   private async getVerifiedBooking(bookingId: string, doctorId: string) {
-    const booking = await this.prisma.booking.findUnique({
+    const booking = await this.bookingRepository.findUnique({
       where: { id: bookingId },
     });
     if (!booking) throw new NotFoundException('Booking not found');
@@ -64,15 +87,17 @@ export class MedicalRecordsService {
     bookingId: string,
     booking: { patientProfileId: string; doctorId: string },
   ) {
-    return this.prisma.medicalRecord.upsert({
-      where: { bookingId },
-      create: {
-        bookingId,
-        patientProfileId: booking.patientProfileId,
-        doctorId: booking.doctorId,
-        visitStep: VisitStep.SYMPTOMS_TAKEN,
-      },
-      update: {},
+    return this.clinicalRepository.transaction(async (tx) => {
+      return tx.medicalRecord.upsert({
+        where: { bookingId },
+        create: {
+          bookingId,
+          patientProfileId: booking.patientProfileId,
+          doctorId: booking.doctorId,
+          visitStep: VisitStep.SYMPTOMS_TAKEN,
+        },
+        update: {},
+      });
     });
   }
 
@@ -110,52 +135,55 @@ export class MedicalRecordsService {
   ) {
     await this.getVerifiedBooking(bookingId, doctorId);
 
-    const record = await this.prisma.medicalRecord.upsert({
-      where: { bookingId },
-      create: {
-        bookingId,
-        patientProfileId: (
-          await this.prisma.booking.findUniqueOrThrow({
-            where: { id: bookingId },
-          })
-        ).patientProfileId,
-        doctorId,
-        visitStep: VisitStep.SYMPTOMS_TAKEN,
-        chiefComplaint: dto.chiefComplaint,
-        clinicalFindings: dto.clinicalFindings,
-        doctorNotes: dto.doctorNotes,
-        bloodPressure: dto.bloodPressure,
-        heartRate: dto.heartRate,
-        temperature: dto.temperature,
-        spO2: dto.spO2,
-        weightKg: dto.weightKg,
-        heightCm: dto.heightCm,
-        bmi: dto.bmi,
-        medicalHistory: dto.medicalHistory,
-        allergies: dto.allergies,
-        additionalSymptoms: dto.additionalSymptoms,
-        symptomsAt: new Date(),
-        version: 1,
-      },
-      update: {
-        chiefComplaint: dto.chiefComplaint,
-        clinicalFindings: dto.clinicalFindings,
-        doctorNotes: dto.doctorNotes,
-        bloodPressure: dto.bloodPressure,
-        heartRate: dto.heartRate,
-        temperature: dto.temperature,
-        spO2: dto.spO2,
-        weightKg: dto.weightKg,
-        heightCm: dto.heightCm,
-        bmi: dto.bmi,
-        medicalHistory: dto.medicalHistory,
-        allergies: dto.allergies,
-        additionalSymptoms: dto.additionalSymptoms,
-        symptomsAt: new Date(),
-        visitStep: VisitStep.SYMPTOMS_TAKEN,
-        version: { increment: 1 },
-      },
-      include: this.visitIncludes,
+    const record = await this.clinicalRepository.transaction(async (tx) => {
+      const b = await this.bookingRepository.findUnique({
+        where: { id: bookingId },
+      });
+      if (!b) throw new NotFoundException('Booking not found');
+
+      return tx.medicalRecord.upsert({
+        where: { bookingId },
+        create: {
+          bookingId,
+          patientProfileId: b.patientProfileId,
+          doctorId,
+          visitStep: VisitStep.SYMPTOMS_TAKEN,
+          chiefComplaint: dto.chiefComplaint,
+          clinicalFindings: dto.clinicalFindings,
+          doctorNotes: dto.doctorNotes,
+          bloodPressure: dto.bloodPressure,
+          heartRate: dto.heartRate,
+          temperature: dto.temperature,
+          spO2: dto.spO2,
+          weightKg: dto.weightKg,
+          heightCm: dto.heightCm,
+          bmi: dto.bmi,
+          medicalHistory: dto.medicalHistory,
+          allergies: dto.allergies,
+          additionalSymptoms: dto.additionalSymptoms,
+          symptomsAt: new Date(),
+          version: 1,
+        },
+        update: {
+          chiefComplaint: dto.chiefComplaint,
+          clinicalFindings: dto.clinicalFindings,
+          doctorNotes: dto.doctorNotes,
+          bloodPressure: dto.bloodPressure,
+          heartRate: dto.heartRate,
+          temperature: dto.temperature,
+          spO2: dto.spO2,
+          weightKg: dto.weightKg,
+          heightCm: dto.heightCm,
+          bmi: dto.bmi,
+          medicalHistory: dto.medicalHistory,
+          allergies: dto.allergies,
+          additionalSymptoms: dto.additionalSymptoms,
+          symptomsAt: new Date(),
+          visitStep: VisitStep.SYMPTOMS_TAKEN,
+          version: { increment: 1 },
+        },
+        include: this.visitIncludes,
+      });
     });
 
     return ResponseHelper.success(
@@ -175,8 +203,10 @@ export class MedicalRecordsService {
     const booking = await this.getVerifiedBooking(bookingId, doctorId);
 
     // Validate services exist
-    const services = await this.prisma.service.findMany({
-      where: { id: { in: dto.serviceIds }, isActive: true },
+    const services = await this.clinicalRepository.transaction(async (tx) => {
+      return tx.service.findMany({
+        where: { id: { in: dto.serviceIds }, isActive: true },
+      });
     });
     if (services.length !== dto.serviceIds.length) {
       throw new BadRequestException(
@@ -184,9 +214,11 @@ export class MedicalRecordsService {
       );
     }
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    const result = await this.clinicalRepository.transaction(async (tx) => {
       // Get or create MedicalRecord
-      let record = await tx.medicalRecord.findUnique({ where: { bookingId } });
+      let record = await tx.medicalRecord.findUnique({
+        where: { bookingId },
+      });
       if (!record) {
         record = await tx.medicalRecord.create({
           data: {
@@ -272,7 +304,7 @@ export class MedicalRecordsService {
   ) {
     await this.getVerifiedBooking(bookingId, doctorId);
 
-    const order = await this.prisma.visitServiceOrder.findUnique({
+    const order = await this.clinicalRepository.findUniqueVisitServiceOrder({
       where: { id: orderId },
     });
     if (!order || order.bookingId !== bookingId)
@@ -282,7 +314,9 @@ export class MedicalRecordsService {
         'Cannot remove a service order that is already in progress',
       );
 
-    await this.prisma.visitServiceOrder.delete({ where: { id: orderId } });
+    await this.clinicalRepository.deleteVisitServiceOrder({
+      where: { id: orderId },
+    });
     return ResponseHelper.success(
       null,
       'EMR.ORDER_REMOVED',
@@ -293,7 +327,7 @@ export class MedicalRecordsService {
 
   // GET Results — composite response for B4
   async getVisitResults(bookingId: string) {
-    const record = await this.prisma.medicalRecord.findUnique({
+    const record = await this.clinicalRepository.findUniqueMedicalRecord({
       where: { bookingId },
       include: this.visitIncludes,
     });
@@ -314,7 +348,7 @@ export class MedicalRecordsService {
   ) {
     await this.getVerifiedBooking(bookingId, doctorId);
 
-    const record = await this.prisma.medicalRecord.findUnique({
+    const record = await this.clinicalRepository.findUniqueMedicalRecord({
       where: { bookingId },
     });
     if (!record)
@@ -323,7 +357,7 @@ export class MedicalRecordsService {
       );
 
     // Guard: can only diagnose when results are ready OR there are no service orders
-    const orderCount = await this.prisma.visitServiceOrder.count({
+    const orderCount = await this.clinicalRepository.countVisitServiceOrder({
       where: { medicalRecordId: record.id },
     });
     const allowedSteps: VisitStep[] = [
@@ -336,7 +370,7 @@ export class MedicalRecordsService {
       );
     }
 
-    const updated = await this.prisma.medicalRecord.update({
+    const updated = await this.clinicalRepository.updateMedicalRecord({
       where: { id: record.id },
       data: {
         diagnosisCode: dto.diagnosisCode,
@@ -368,7 +402,7 @@ export class MedicalRecordsService {
   ) {
     const booking = await this.getVerifiedBooking(bookingId, doctorId);
 
-    const record = await this.prisma.medicalRecord.findUnique({
+    const record = await this.clinicalRepository.findUniqueMedicalRecord({
       where: { bookingId },
     });
     if (!record)
@@ -385,107 +419,109 @@ export class MedicalRecordsService {
       );
     }
 
-    const updatedRecord = await this.prisma.$transaction(async (tx) => {
-      // Upsert Prescription header
-      const prescription = await tx.prescription.upsert({
-        where: { medicalRecordId: record.id },
-        create: {
-          medicalRecordId: record.id,
-          patientProfileId: booking.patientProfileId,
-          doctorId,
-          notes: dto.notes,
-        },
-        update: { notes: dto.notes },
-      });
-
-      // Replace all items
-      await tx.prescriptionItem.deleteMany({
-        where: { prescriptionId: prescription.id },
-      });
-      if (dto.items.length > 0) {
-        await tx.prescriptionItem.createMany({
-          data: dto.items.map((item, idx) => ({
-            prescriptionId: prescription.id,
-            visitServiceOrderId: item.visitServiceOrderId,
-            labOrderId: item.labOrderId,
-            medicineName: item.medicineName,
-            dosage: item.dosage,
-            frequency: item.frequency,
-            durationDays: item.durationDays,
-            quantity: item.quantity,
-            unit: item.unit ?? 'viên',
-            instructions: item.instructions,
-            sortOrder: item.sortOrder ?? idx,
-          })),
-        });
-      }
-
-      // Advance visitStep → PRESCRIBED / COMPLETED
-      await tx.medicalRecord.update({
-        where: { id: record.id },
-        data: {
-          visitStep: VisitStep.COMPLETED,
-          isFinalized: true,
-          prescribedAt: new Date(),
-          version: { increment: 1 },
-        },
-      });
-
-      // Mark booking COMPLETED & update queue
-      await tx.booking.update({
-        where: { id: bookingId },
-        data: { status: 'COMPLETED', doctorNotes: dto.notes },
-      });
-      await tx.bookingStatusHistory.create({
-        data: {
-          bookingId,
-          oldStatus: booking.status,
-          newStatus: 'COMPLETED',
-          changedById: doctorId,
-          reason: 'Prescription issued — visit finalized',
-        },
-      });
-
-      // Auto-create PHARMACY invoice if not exists
-      const existingInvoice = await tx.invoice.findFirst({
-        where: { bookingId, invoiceType: 'PHARMACY' },
-      });
-      if (!existingInvoice && dto.items.length > 0) {
-        const count = await tx.invoice.count();
-        const num = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
-        const inv = await tx.invoice.create({
-          data: {
-            bookingId,
+    const updatedRecord = await this.clinicalRepository.transaction(
+      async (tx) => {
+        // Upsert Prescription header
+        const prescription = await tx.prescription.upsert({
+          where: { medicalRecordId: record.id },
+          create: {
+            medicalRecordId: record.id,
             patientProfileId: booking.patientProfileId,
-            invoiceType: 'PHARMACY',
-            invoiceNumber: num,
-            subtotal: 0,
-            discountAmount: 0,
-            vatRate: 0,
-            vatAmount: 0,
-            taxAmount: 0,
-            totalAmount: 0,
-            status: 'DRAFT',
-            notes: 'Auto-created on prescription',
+            doctorId,
+            notes: dto.notes,
+          },
+          update: { notes: dto.notes },
+        });
+
+        // Replace all items
+        await tx.prescriptionItem.deleteMany({
+          where: { prescriptionId: prescription.id },
+        });
+        if (dto.items.length > 0) {
+          await tx.prescriptionItem.createMany({
+            data: dto.items.map((item, idx) => ({
+              prescriptionId: prescription.id,
+              visitServiceOrderId: item.visitServiceOrderId,
+              labOrderId: item.labOrderId,
+              medicineName: item.medicineName,
+              dosage: item.dosage,
+              frequency: item.frequency,
+              durationDays: item.durationDays,
+              quantity: item.quantity,
+              unit: item.unit ?? 'viên',
+              instructions: item.instructions,
+              sortOrder: item.sortOrder ?? idx,
+            })),
+          });
+        }
+
+        // Advance visitStep → PRESCRIBED / COMPLETED
+        await tx.medicalRecord.update({
+          where: { id: record.id },
+          data: {
+            visitStep: VisitStep.COMPLETED,
+            isFinalized: true,
+            prescribedAt: new Date(),
+            version: { increment: 1 },
           },
         });
-        await tx.invoiceItem.createMany({
-          data: dto.items.map((item, idx) => ({
-            invoiceId: inv.id,
-            itemName: `${item.medicineName} (${item.dosage}, ${item.quantity} ${item.unit ?? 'viên'})`,
-            unitPrice: 0,
-            quantity: item.quantity,
-            totalPrice: 0,
-            sortOrder: idx,
-          })),
-        });
-      }
 
-      return tx.medicalRecord.findUnique({
-        where: { id: record.id },
-        include: this.visitIncludes,
-      });
-    });
+        // Mark booking COMPLETED & update queue
+        await tx.booking.update({
+          where: { id: bookingId },
+          data: { status: 'COMPLETED', doctorNotes: dto.notes },
+        });
+        await tx.bookingStatusHistory.create({
+          data: {
+            bookingId,
+            oldStatus: booking.status,
+            newStatus: 'COMPLETED',
+            changedById: doctorId,
+            reason: 'Prescription issued — visit finalized',
+          },
+        });
+
+        // Auto-create PHARMACY invoice if not exists
+        const existingInvoice = await tx.invoice.findFirst({
+          where: { bookingId, invoiceType: 'PHARMACY' },
+        });
+        if (!existingInvoice && dto.items.length > 0) {
+          const count = await tx.invoice.count();
+          const num = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
+          const inv = await tx.invoice.create({
+            data: {
+              bookingId,
+              patientProfileId: booking.patientProfileId,
+              invoiceType: 'PHARMACY',
+              invoiceNumber: num,
+              subtotal: 0,
+              discountAmount: 0,
+              vatRate: 0,
+              vatAmount: 0,
+              taxAmount: 0,
+              totalAmount: 0,
+              status: 'DRAFT',
+              notes: 'Auto-created on prescription',
+            },
+          });
+          await tx.invoiceItem.createMany({
+            data: dto.items.map((item, idx) => ({
+              invoiceId: inv.id,
+              itemName: `${item.medicineName} (${item.dosage}, ${item.quantity} ${item.unit ?? 'viên'})`,
+              unitPrice: 0,
+              quantity: item.quantity,
+              totalPrice: 0,
+              sortOrder: idx,
+            })),
+          });
+        }
+
+        return tx.medicalRecord.findUnique({
+          where: { id: record.id },
+          include: this.visitIncludes,
+        });
+      },
+    );
 
     // Send post-visit email (non-blocking)
     if (updatedRecord) {
@@ -506,7 +542,7 @@ export class MedicalRecordsService {
     record: { bookingId: string; diagnosisName?: string | null },
     dto: CreatePrescriptionDto,
   ) {
-    const booking = await this.prisma.booking.findUnique({
+    const booking = await this.bookingRepository.findUnique({
       where: { id: record.bookingId },
       include: {
         patientProfile: { include: { user: { select: { email: true } } } },
@@ -537,7 +573,7 @@ export class MedicalRecordsService {
 
   // LEGACY: Kept for compatibility — delegates to step engine
   async upsertMedicalRecord(dto: CreateMedicalRecordDto, doctorId: string) {
-    const booking = await this.prisma.booking.findUnique({
+    const booking = await this.bookingRepository.findUnique({
       where: { id: dto.bookingId },
     });
     if (!booking)
@@ -608,13 +644,13 @@ export class MedicalRecordsService {
   // ICD-10 Search
   async searchICD10(query: string) {
     if (!query) {
-      const results = await this.prisma.icd10Code.findMany({
+      const results = await this.clinicalRepository.findManyIcd10Code({
         take: 10,
         orderBy: { code: 'asc' },
       });
       return ResponseHelper.success(results, 'ICD.SEARCH_SUCCESS', '', 200);
     }
-    const results = await this.prisma.icd10Code.findMany({
+    const results = await this.clinicalRepository.findManyIcd10Code({
       where: {
         OR: [
           { code: { contains: query, mode: 'insensitive' } },
@@ -629,9 +665,10 @@ export class MedicalRecordsService {
 
   // Patient History
   async getPatientHistory(patientProfileId: string, page = 1, limit = 10) {
-    const patientProfile = await this.prisma.patientProfile.findUnique({
-      where: { id: patientProfileId },
-    });
+    const patientProfile =
+      await this.profileRepository.findUniquePatientProfile({
+        where: { id: patientProfileId },
+      });
     if (!patientProfile)
       throw new ApiException(
         MessageCodes.PATIENT_NOT_FOUND,
@@ -641,7 +678,7 @@ export class MedicalRecordsService {
 
     const skip = (page - 1) * limit;
     const [visits, total] = await Promise.all([
-      this.prisma.medicalRecord.findMany({
+      this.clinicalRepository.findManyMedicalRecord({
         where: { patientProfileId },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -659,7 +696,9 @@ export class MedicalRecordsService {
           },
         },
       }),
-      this.prisma.medicalRecord.count({ where: { patientProfileId } }),
+      this.clinicalRepository.countMedicalRecord({
+        where: { patientProfileId },
+      }),
     ]);
 
     return ResponseHelper.success(
@@ -691,16 +730,18 @@ export class MedicalRecordsService {
 
   // Auto-advance MedicalRecord step (called by VisitServiceOrdersService)
   async checkAndAdvanceToResultsReady(medicalRecordId: string) {
-    await this.prisma.$transaction((tx) =>
+    await this.clinicalRepository.transaction((tx) =>
       this.maybeAdvanceToResultsReady(tx, medicalRecordId),
     );
   }
 
   // Patient my-visits (self-service)
   async getMyVisits(userId: string, page = 1, limit = 10) {
-    const patientProfile = await this.prisma.patientProfile.findFirst({
-      where: { userId },
-    });
+    const patientProfile = await this.profileRepository.findFirstPatientProfile(
+      {
+        where: { userId },
+      },
+    );
     if (!patientProfile)
       throw new NotFoundException('Patient profile not found');
 
@@ -709,9 +750,11 @@ export class MedicalRecordsService {
 
   // Patient visit stats
   async getPatientStats(userId: string) {
-    const patientProfile = await this.prisma.patientProfile.findFirst({
-      where: { userId },
-    });
+    const patientProfile = await this.profileRepository.findFirstPatientProfile(
+      {
+        where: { userId },
+      },
+    );
     if (!patientProfile)
       throw new NotFoundException('Patient profile not found');
 
@@ -720,16 +763,16 @@ export class MedicalRecordsService {
 
     const [totalVisits, visitsThisYear, activeBookings, abnormalResults] =
       await Promise.all([
-        this.prisma.medicalRecord.count({
+        this.clinicalRepository.countMedicalRecord({
           where: { patientProfileId: patientProfile.id },
         }),
-        this.prisma.medicalRecord.count({
+        this.clinicalRepository.countMedicalRecord({
           where: {
             patientProfileId: patientProfile.id,
             createdAt: { gte: startOfYear },
           },
         }),
-        this.prisma.booking.count({
+        this.bookingRepository.count({
           where: {
             patientProfileId: patientProfile.id,
             status: {
@@ -737,7 +780,7 @@ export class MedicalRecordsService {
             },
           },
         }),
-        this.prisma.visitServiceOrder.count({
+        this.clinicalRepository.countVisitServiceOrder({
           where: {
             patientProfileId: patientProfile.id,
             isAbnormal: true,
@@ -770,7 +813,7 @@ export class MedicalRecordsService {
 
     const [todayPatients, monthPatients, totalRecords, pendingVisits] =
       await Promise.all([
-        this.prisma.booking.count({
+        this.bookingRepository.count({
           where: {
             doctorId,
             bookingDate: {
@@ -786,7 +829,7 @@ export class MedicalRecordsService {
             },
           },
         }),
-        this.prisma.booking.count({
+        this.bookingRepository.count({
           where: {
             doctorId,
             bookingDate: { gte: startOfMonth },
@@ -795,8 +838,8 @@ export class MedicalRecordsService {
             },
           },
         }),
-        this.prisma.medicalRecord.count({ where: { doctorId } }),
-        this.prisma.booking.count({
+        this.clinicalRepository.countMedicalRecord({ where: { doctorId } }),
+        this.bookingRepository.count({
           where: {
             doctorId,
             status: { in: ['CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS'] },

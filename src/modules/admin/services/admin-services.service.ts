@@ -1,51 +1,65 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Injectable, BadRequestException, Inject } from '@nestjs/common';
+import {
+  I_CATALOG_REPOSITORY,
+  ICatalogRepository,
+} from '../../database/interfaces/catalog.repository.interface';
+import {
+  I_BOOKING_REPOSITORY,
+  IBookingRepository,
+} from '../../database/interfaces/booking.repository.interface';
 import { BookingStatus, Prisma } from '@prisma/client';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { ApiException } from '../../../common/exceptions/api.exception';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
-
 import { AdminCreateServiceDto } from './dto/admin-create-service.dto';
 import { AdminUpdateServiceDto } from './dto/admin-update-service.dto';
 import { FilterServiceDto } from './dto/filter-service.dto';
 
 @Injectable()
 export class AdminServicesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_CATALOG_REPOSITORY)
+    private readonly catalogRepository: ICatalogRepository,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+  ) {}
 
   async getServiceStatistics() {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const [totalServices, activeServices, newThisMonth] = await Promise.all([
-      this.prisma.service.count(),
-      this.prisma.service.count({ where: { isActive: true } }),
-      this.prisma.service.count({
+      this.catalogRepository.countServices(),
+      this.catalogRepository.countServices({ where: { isActive: true } }),
+      this.catalogRepository.countServices({
         where: { createdAt: { gte: startOfMonth } },
       }),
     ]);
 
-    // Most booked service (by completed bookings)
-    const topBooking = await this.prisma.booking.groupBy({
+    type BookingGroupByRow = {
+      serviceId?: string | null;
+      _count?: { id?: number };
+    };
+    const topBooking = (await this.bookingRepository.groupByBooking({
       by: ['serviceId'],
       where: { status: BookingStatus.COMPLETED },
       _count: { id: true },
       orderBy: { _count: { id: 'desc' } },
       take: 1,
-    });
+    })) as BookingGroupByRow[];
 
     let mostBooked: { id: string; name: string; bookingCount: number } | null =
       null;
     if (topBooking.length > 0) {
-      const svc = await this.prisma.service.findUnique({
-        where: { id: topBooking[0].serviceId },
+      const svc = await this.catalogRepository.findUnique({
+        where: { id: topBooking[0].serviceId! },
         select: { id: true, name: true },
       });
       if (svc) {
         mostBooked = {
           id: svc.id,
           name: svc.name,
-          bookingCount: topBooking[0]._count.id,
+          bookingCount: topBooking[0]._count?.id ?? 0,
         };
       }
     }
@@ -89,14 +103,14 @@ export class AdminServicesService {
     }
 
     const [services, total] = await Promise.all([
-      this.prisma.service.findMany({
+      this.catalogRepository.findManyServices({
         where,
         include: { category: true },
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.service.count({ where }),
+      this.catalogRepository.countServices({ where }),
     ]);
 
     return ResponseHelper.success(
@@ -120,7 +134,7 @@ export class AdminServicesService {
    * Detail of a single service with booking stats.
    */
   async findOneService(id: string) {
-    const service = await this.prisma.service.findUnique({
+    const service = await this.catalogRepository.findUnique({
       where: { id },
       include: { category: true },
     });
@@ -135,11 +149,11 @@ export class AdminServicesService {
 
     const [totalBookings, completedBookings, cancelledBookings] =
       await Promise.all([
-        this.prisma.booking.count({ where: { serviceId: id } }),
-        this.prisma.booking.count({
+        this.bookingRepository.countBooking({ where: { serviceId: id } }),
+        this.bookingRepository.countBooking({
           where: { serviceId: id, status: BookingStatus.COMPLETED },
         }),
-        this.prisma.booking.count({
+        this.bookingRepository.countBooking({
           where: { serviceId: id, status: BookingStatus.CANCELLED },
         }),
       ]);
@@ -169,10 +183,11 @@ export class AdminServicesService {
    */
   async createService(dto: AdminCreateServiceDto) {
     // Duplicate name check
-    const existing = await this.prisma.service.findFirst({
+    const existing = await this.catalogRepository.findManyServices({
       where: { name: { equals: dto.name, mode: 'insensitive' } },
+      take: 1,
     });
-    if (existing) {
+    if (existing.length > 0) {
       throw new ApiException(
         MessageCodes.SERVICE_NAME_EXISTS,
         'Service with this name already exists',
@@ -181,19 +196,17 @@ export class AdminServicesService {
       );
     }
 
-    const service = await this.prisma.service.create({
-      data: {
-        name: dto.name,
-        description: dto.description,
-        iconUrl: dto.iconUrl,
-        price: dto.price,
-        durationMinutes: dto.durationMinutes,
-        maxSlotsPerHour: dto.maxSlotsPerHour,
-        categoryId: dto.categoryId,
-        preparationNotes: dto.preparationNotes,
-        tags: dto.tags || [],
-        isActive: dto.isActive ?? true,
-      },
+    const service = await this.catalogRepository.createService({
+      name: dto.name,
+      description: dto.description,
+      iconUrl: dto.iconUrl,
+      price: dto.price,
+      durationMinutes: dto.durationMinutes,
+      maxSlotsPerHour: dto.maxSlotsPerHour,
+      isActive: true,
+      categoryId: dto.categoryId,
+      preparationNotes: dto.preparationNotes,
+      tags: dto.tags,
     });
 
     return ResponseHelper.success(
@@ -209,7 +222,7 @@ export class AdminServicesService {
    * Update service fields.
    */
   async updateService(id: string, dto: AdminUpdateServiceDto) {
-    const existing = await this.prisma.service.findUnique({ where: { id } });
+    const existing = await this.catalogRepository.findUnique({ where: { id } });
     if (!existing) {
       throw new ApiException(
         MessageCodes.SERVICE_NOT_FOUND,
@@ -221,13 +234,14 @@ export class AdminServicesService {
 
     // Duplicate name check (exclude self)
     if (dto.name) {
-      const duplicate = await this.prisma.service.findFirst({
+      const duplicate = await this.catalogRepository.findManyServices({
         where: {
           name: { equals: dto.name, mode: 'insensitive' },
           id: { not: id },
         },
+        take: 1,
       });
-      if (duplicate) {
+      if (duplicate.length > 0) {
         throw new ApiException(
           MessageCodes.SERVICE_NAME_EXISTS,
           'Service with this name already exists',
@@ -237,26 +251,23 @@ export class AdminServicesService {
       }
     }
 
-    const updated = await this.prisma.service.update({
-      where: { id },
-      data: {
-        ...(dto.name !== undefined && { name: dto.name }),
-        ...(dto.description !== undefined && { description: dto.description }),
-        ...(dto.iconUrl !== undefined && { iconUrl: dto.iconUrl }),
-        ...(dto.price !== undefined && { price: dto.price }),
-        ...(dto.durationMinutes !== undefined && {
-          durationMinutes: dto.durationMinutes,
-        }),
-        ...(dto.maxSlotsPerHour !== undefined && {
-          maxSlotsPerHour: dto.maxSlotsPerHour,
-        }),
-        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
-        ...(dto.categoryId !== undefined && { categoryId: dto.categoryId }),
-        ...(dto.preparationNotes !== undefined && {
-          preparationNotes: dto.preparationNotes,
-        }),
-        ...(dto.tags !== undefined && { tags: dto.tags }),
-      },
+    const updated = await this.catalogRepository.updateService(id, {
+      ...(dto.name !== undefined && { name: dto.name }),
+      ...(dto.description !== undefined && { description: dto.description }),
+      ...(dto.iconUrl !== undefined && { iconUrl: dto.iconUrl }),
+      ...(dto.price !== undefined && { price: dto.price }),
+      ...(dto.durationMinutes !== undefined && {
+        durationMinutes: dto.durationMinutes,
+      }),
+      ...(dto.maxSlotsPerHour !== undefined && {
+        maxSlotsPerHour: dto.maxSlotsPerHour,
+      }),
+      ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+      ...(dto.categoryId !== undefined && { categoryId: dto.categoryId }),
+      ...(dto.preparationNotes !== undefined && {
+        preparationNotes: dto.preparationNotes,
+      }),
+      ...(dto.tags !== undefined && { tags: dto.tags }),
     });
 
     return ResponseHelper.success(
@@ -273,7 +284,7 @@ export class AdminServicesService {
    * Blocked if service has active bookings.
    */
   async removeService(id: string) {
-    const service = await this.prisma.service.findUnique({ where: { id } });
+    const service = await this.catalogRepository.findUnique({ where: { id } });
     if (!service) {
       throw new ApiException(
         MessageCodes.SERVICE_NOT_FOUND,
@@ -283,7 +294,7 @@ export class AdminServicesService {
       );
     }
 
-    const activeBookings = await this.prisma.booking.count({
+    const activeBookings = await this.bookingRepository.countBooking({
       where: {
         serviceId: id,
         status: { in: ['PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS'] },
@@ -295,9 +306,8 @@ export class AdminServicesService {
       );
     }
 
-    const deleted = await this.prisma.service.update({
-      where: { id },
-      data: { isActive: false },
+    const deleted = await this.catalogRepository.updateService(id, {
+      isActive: false,
     });
 
     return ResponseHelper.success(
@@ -313,7 +323,7 @@ export class AdminServicesService {
    * Restore a soft-deleted service.
    */
   async restoreService(id: string) {
-    const service = await this.prisma.service.findUnique({ where: { id } });
+    const service = await this.catalogRepository.findUnique({ where: { id } });
     if (!service) {
       throw new ApiException(
         MessageCodes.SERVICE_NOT_FOUND,
@@ -327,9 +337,8 @@ export class AdminServicesService {
       throw new BadRequestException('Service is already active');
     }
 
-    const restored = await this.prisma.service.update({
-      where: { id },
-      data: { isActive: true },
+    const restored = await this.catalogRepository.updateService(id, {
+      isActive: true,
     });
 
     return ResponseHelper.success(
