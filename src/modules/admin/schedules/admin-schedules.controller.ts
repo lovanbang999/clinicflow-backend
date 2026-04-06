@@ -54,6 +54,20 @@ export class AdminSchedulesController {
   }
 
   /**
+   * GET /admin/schedules/rooms
+   * List all active rooms for scheduling slots
+   */
+  @Get('rooms')
+  @ApiOperation({
+    summary: 'List all active rooms (ADMIN only)',
+    description: 'Returns a list of active rooms to assign schedules.',
+  })
+  @ApiResponse({ status: 200, description: 'Rooms retrieved successfully' })
+  getRooms() {
+    return this.schedulesService.getRooms();
+  }
+
+  /**
    * POST /admin/schedules
    * Create a new schedule slot for a doctor.
    */
