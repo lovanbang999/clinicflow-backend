@@ -14,6 +14,7 @@ import { Prisma, ScheduleSlotStatus } from '@prisma/client';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
 import { ApiException } from '../../../common/exceptions/api.exception';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class AdminSchedulesService {
@@ -21,7 +22,23 @@ export class AdminSchedulesService {
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
     @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+    private readonly prisma: PrismaService,
   ) {}
+
+  async getRooms() {
+    const rooms = await this.prisma.room.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, type: true },
+      orderBy: { name: 'asc' },
+    });
+
+    return ResponseHelper.success(
+      { data: rooms },
+      'ROOMS_RETRIEVED',
+      'Rooms retrieved successfully',
+      200,
+    );
+  }
 
   async getStatistics() {
     const today = new Date();
@@ -101,6 +118,9 @@ export class AdminSchedulesService {
             },
           },
         },
+        room: {
+          select: { id: true, name: true },
+        },
       },
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
     });
@@ -124,6 +144,9 @@ export class AdminSchedulesService {
       include: {
         doctor: {
           select: { fullName: true },
+        },
+        room: {
+          select: { id: true, name: true },
         },
       },
     });
