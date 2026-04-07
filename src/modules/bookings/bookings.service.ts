@@ -1430,9 +1430,11 @@ export class BookingsService {
     }
 
     // 2. Check patientProfile exists
-    const patientProfile = await this.userRepository.findUnique({
-      where: { id: patientProfileId },
-    });
+    const patientProfile = await this.profileRepository.findFirstPatientProfile(
+      {
+        where: { id: patientProfileId },
+      },
+    );
 
     if (!patientProfile) {
       throw new ApiException(

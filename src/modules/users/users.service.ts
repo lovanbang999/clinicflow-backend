@@ -611,12 +611,28 @@ export class UsersService {
     page?: number;
     limit?: number;
   }) {
-    const { page = 1, limit = 100 } = filters;
+    const { serviceId, page = 1, limit = 100 } = filters;
 
     const skip = (page - 1) * limit;
 
+    // Build Prisma where — always restrict to active doctors only
+    const where: Prisma.UserWhereInput = {
+      role: UserRole.DOCTOR,
+      isActive: true,
+      deletedAt: null,
+      ...(serviceId
+        ? {
+            doctorProfile: {
+              services: {
+                some: { serviceId },
+              },
+            },
+          }
+        : {}),
+    };
+
     const [users, total] = await this.userRepository.findPublicDoctors(
-      {},
+      where,
       skip,
       limit,
     );
