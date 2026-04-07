@@ -7,6 +7,7 @@ import { AdminDoctorsModule } from './doctors/admin-doctors.module';
 import { AdminServicesModule } from './services/admin-services.module';
 import { AdminSchedulesModule } from './schedules/admin-schedules.module';
 import { AdminUsersModule } from './users/admin-users.module';
+import { AdminRoomsModule } from './rooms/admin-rooms.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { AdminUsersModule } from './users/admin-users.module';
     AdminServicesModule,
     AdminSchedulesModule,
     AdminPatientsModule,
+    AdminRoomsModule,
     AdminAnalyticsModule,
     AdminSettingsModule,
   ],
@@ -26,6 +28,7 @@ import { AdminUsersModule } from './users/admin-users.module';
     AdminServicesModule,
     AdminSchedulesModule,
     AdminPatientsModule,
+    AdminRoomsModule,
     AdminAnalyticsModule,
     AdminSettingsModule,
   ],
