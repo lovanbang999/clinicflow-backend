@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
@@ -184,8 +184,11 @@ export class AdminRoomsService {
     });
 
     if (activeSlots > 0) {
-      throw new BadRequestException(
+      throw new ApiException(
+        'ROOM_HAS_ACTIVE_SLOTS',
         `Không thể ngừng hoạt động phòng này vì còn ${activeSlots} lịch khám đang dùng phòng này.`,
+        HttpStatus.BAD_REQUEST,
+        'Cannot deactivate room',
       );
     }
 
@@ -214,7 +217,12 @@ export class AdminRoomsService {
     }
 
     if (room.isActive) {
-      throw new BadRequestException('Room is already active');
+      throw new ApiException(
+        'ROOM_ALREADY_ACTIVE',
+        'Room is already active',
+        HttpStatus.BAD_REQUEST,
+        'Room restore failed',
+      );
     }
 
     const updated = await this.prisma.room.update({

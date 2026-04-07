@@ -1,4 +1,4 @@
-import { Controller, Get, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -63,5 +63,47 @@ export class AnalyticsController {
   })
   getDoctorPatientsPerMonth(@Req() req: { user: { id: string } }) {
     return this.analyticsService.getDoctorPatientsPerMonth(req.user.id);
+  }
+
+  @Get('doctor/me/summary')
+  @Roles(UserRole.DOCTOR)
+  @ApiOperation({ summary: 'Summary stats with period filter for this doctor' })
+  getDoctorSummary(
+    @Req() req: { user: { id: string } },
+    @Query('period') period?: string,
+  ) {
+    return this.analyticsService.getDoctorSummary(req.user.id, period);
+  }
+
+  @Get('doctor/me/recent-patients')
+  @Roles(UserRole.DOCTOR)
+  @ApiOperation({ summary: 'Ten most recent patients seen by this doctor' })
+  getDoctorRecentPatients(@Req() req: { user: { id: string } }) {
+    return this.analyticsService.getDoctorRecentPatients(req.user.id);
+  }
+
+  @Get('doctor/me/today-schedule')
+  @Roles(UserRole.DOCTOR)
+  @ApiOperation({ summary: "Today's appointment timeline for this doctor" })
+  getDoctorTodaySchedule(@Req() req: { user: { id: string } }) {
+    return this.analyticsService.getDoctorTodaySchedule(req.user.id);
+  }
+
+  @Get('doctor/me/heatmap')
+  @Roles(UserRole.DOCTOR)
+  @ApiOperation({
+    summary: 'Booking count heatmap (hour × day-of-week) for last 12 weeks',
+  })
+  getDoctorHeatmap(@Req() req: { user: { id: string } }) {
+    return this.analyticsService.getDoctorHeatmap(req.user.id);
+  }
+
+  @Get('doctor/me/clinical-kpis')
+  @Roles(UserRole.DOCTOR)
+  @ApiOperation({
+    summary: 'Real clinical KPIs for this doctor (last 6 months)',
+  })
+  getDoctorClinicalKPIs(@Req() req: { user: { id: string } }) {
+    return this.analyticsService.getDoctorClinicalKPIs(req.user.id);
   }
 }
