@@ -597,6 +597,12 @@ model Booking {
   @@index([doctorId, bookingDate, isPreBooked])
   @@index([doctorId, bookingDate, startTime])
   @@index([doctorId, bookingDate, status])
+  // Partial unique index enforced via raw SQL (Prisma does not support partial indexes in schema):
+  // CREATE UNIQUE INDEX "uq_patient_doctor_date_active"
+  //   ON "bookings" ("patientProfileId", "doctorId", "bookingDate")
+  //   WHERE status NOT IN ('CANCELLED', 'NO_SHOW', 'COMPLETED');
+  // Rule: 1 patient + 1 doctor + 1 date = max 1 active booking.
+  // A patient CAN re-book the same doctor on the same day if the previous booking was COMPLETED, CANCELLED, or NO_SHOW.
   @@map("bookings")
 }
 

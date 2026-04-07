@@ -1534,7 +1534,11 @@ export class BookingsService {
         doctorId,
         bookingDate: new Date(bookingDate),
         status: {
-          notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW],
+          notIn: [
+            BookingStatus.CANCELLED,
+            BookingStatus.NO_SHOW,
+            BookingStatus.COMPLETED,
+          ],
         },
       },
     });
