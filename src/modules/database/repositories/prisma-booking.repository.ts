@@ -421,19 +421,19 @@ export class PrismaBookingRepository implements IBookingRepository {
     const where: Prisma.BookingWhereInput = { ...filters };
     if (search) {
       where.OR = [
-        { bookingCode: { contains: search, mode: 'insensitive' } },
+        { bookingCode: { contains: search } },
         {
           patientProfile: {
-            fullName: { contains: search, mode: 'insensitive' },
+            fullName: { contains: search },
           },
         },
         {
           patientProfile: {
-            patientCode: { contains: search, mode: 'insensitive' },
+            patientCode: { contains: search },
           },
         },
         {
-          patientProfile: { phone: { contains: search, mode: 'insensitive' } },
+          patientProfile: { phone: { contains: search } },
         },
       ];
     }

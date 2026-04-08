@@ -3,12 +3,13 @@
 //          bookingCode, source tracking, notification retry, slot cache, and more.
 
 generator client {
-  provider = "prisma-client-js"
-  output   = "../node_modules/.prisma/client"
+  provider   = "prisma-client-js"
+  engineType = "library"
+  output     = "../node_modules/.prisma/client"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
 }
 
 // ============================================
@@ -229,7 +230,7 @@ model User {
 model RefreshToken {
   id         String   @id @default(uuid())
   userId     String
-  token      String   @unique // SHA256 hash of the actual token
+  token      String   @unique @db.VarChar(512) // Hashed token — extended for long refresh tokens
   expiresAt  DateTime
   isRevoked  Boolean  @default(false)
   deviceInfo String?
@@ -270,8 +271,8 @@ model DoctorProfile {
   id     String @id @default(uuid())
   userId String @unique
 
-  specialties       String[] @default([])
-  qualifications    String[] @default([])
+  specialties       Json @default("[]")
+  qualifications    Json @default("[]")
   yearsOfExperience Int      @default(0)
   bio               String?
   consultationFee   Decimal? @db.Decimal(12, 2) // Override service price if needed
@@ -493,7 +494,7 @@ model Service {
   categoryId       String?
   category         Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   preparationNotes String? // Instructions for patient preparation
-  tags             String[]  @default([]) // List of tags/labels
+  tags             Json  @default("[]") // List of tags/labels
   isActive         Boolean   @default(true)
   deletedAt        DateTime?
 

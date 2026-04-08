@@ -96,9 +96,9 @@ export class AdminServicesService {
 
     if (search) {
       where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { tags: { has: search } },
+        { name: { contains: search } },
+        { description: { contains: search } },
+        { tags: { string_contains: search } },
       ];
     }
 
@@ -184,7 +184,7 @@ export class AdminServicesService {
   async createService(dto: AdminCreateServiceDto) {
     // Duplicate name check
     const existing = await this.catalogRepository.findManyServices({
-      where: { name: { equals: dto.name, mode: 'insensitive' } },
+      where: { name: { equals: dto.name } },
       take: 1,
     });
     if (existing.length > 0) {
@@ -236,7 +236,7 @@ export class AdminServicesService {
     if (dto.name) {
       const duplicate = await this.catalogRepository.findManyServices({
         where: {
-          name: { equals: dto.name, mode: 'insensitive' },
+          name: { equals: dto.name },
           id: { not: id },
         },
         take: 1,

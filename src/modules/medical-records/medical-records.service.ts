@@ -653,8 +653,8 @@ export class MedicalRecordsService {
     const results = await this.clinicalRepository.findManyIcd10Code({
       where: {
         OR: [
-          { code: { contains: query, mode: 'insensitive' } },
-          { name: { contains: query, mode: 'insensitive' } },
+          { code: { contains: query } },
+          { name: { contains: query } },
         ],
       },
       take: 20,
