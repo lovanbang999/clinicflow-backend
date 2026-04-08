@@ -9,6 +9,10 @@ import {
   Prisma,
   InvoiceStatus,
 } from '@prisma/client';
+import {
+  BookingInclude,
+  BookingWithRelations,
+} from '../database/types/prisma-payload.types';
 import { Injectable, Inject } from '@nestjs/common';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
@@ -36,37 +40,6 @@ import {
   IProfileRepository,
   I_PROFILE_REPOSITORY,
 } from '../database/interfaces/profile.repository.interface';
-
-interface BookingWithRelations {
-  id: string;
-  bookingCode?: string | null;
-  bookingDate: Date;
-  startTime: string | null; // null for walk-in bookings
-  endTime: string | null; // null for walk-in bookings
-  isPreBooked: boolean;
-  status: BookingStatus;
-  patientNotes: string | null;
-  patientProfile: {
-    id: string;
-    userId: string | null;
-    fullName: string;
-    phone: string | null;
-    email: string | null;
-    isGuest: boolean;
-    patientCode: string;
-  };
-  doctor: {
-    id: string;
-    email: string;
-    fullName: string;
-  };
-  service: {
-    id: string;
-    name: string;
-    durationMinutes: number;
-    price: Prisma.Decimal;
-  };
-}
 
 // Reusable select for patientProfile in booking includes
 const patientProfileSelect = {
@@ -120,6 +93,16 @@ export class BookingsService {
       );
     }
 
+    // Online booking requires serviceId
+    if (!serviceId) {
+      throw new ApiException(
+        MessageCodes.SERVICE_NOT_FOUND,
+        'serviceId is required for online bookings',
+        400,
+        'Booking creation failed',
+      );
+    }
+
     await this.validateBooking({ ...createBookingDto, isPreBooked: true });
 
     const service = await this.catalogRepository.findServiceById(serviceId);
@@ -150,7 +133,7 @@ export class BookingsService {
         data: {
           patientProfileId,
           doctorId,
-          serviceId,
+          serviceId: serviceId,
           bookingCode,
           bookingDate: new Date(bookingDate),
           startTime,
@@ -162,18 +145,7 @@ export class BookingsService {
           patientNotes,
           bookedBy: null,
         },
-        include: {
-          patientProfile: { select: patientProfileSelect },
-          doctor: { select: { id: true, email: true, fullName: true } },
-          service: {
-            select: {
-              id: true,
-              name: true,
-              durationMinutes: true,
-              price: true,
-            },
-          },
-        },
+        include: BookingInclude,
       });
 
       await tx.bookingStatusHistory.create({
@@ -203,7 +175,7 @@ export class BookingsService {
     // Notify admins of new booking
     await this.notificationsService.notifyAdmins({
       title: 'Lịch hẹn mới',
-      content: `${booking.patientProfile.fullName} vừa đặt khám ${booking.service.name}.`,
+      content: `${booking.patientProfile.fullName} vừa đặt khám ${booking.service?.name ?? 'Dịch vụ chưa xác định'}.`,
       metadata: { bookingId: booking.id },
     });
 
@@ -239,21 +211,33 @@ export class BookingsService {
 
     await this.validateBooking(createBookingDto);
 
-    const service = await this.catalogRepository.findServiceById(serviceId);
-
-    if (!service) {
-      throw new ApiException(
-        MessageCodes.SERVICE_NOT_FOUND,
-        'Service not found',
-        404,
-        'Booking creation failed',
-      );
+    // Service is optional for walk-in consultations — Dotor consulation will be determined after meeting the patient
+    let service: Prisma.ServiceGetPayload<{
+      include: { category: true };
+    }> | null = null;
+    if (serviceId) {
+      service = await this.catalogRepository.findServiceById(serviceId);
+      if (!service) {
+        throw new ApiException(
+          MessageCodes.SERVICE_NOT_FOUND,
+          'Service not found',
+          404,
+          'Booking creation failed',
+        );
+      }
     }
 
     let endTime: string | undefined;
 
+    // Fetch doctor's schedule slot for the day to get room assignment and capacity
+    const slot = await this.bookingRepository.findDoctorScheduleSlot(
+      doctorId,
+      new Date(bookingDate),
+    );
+
     if (isPreBooked) {
-      // Pre-booking: requires startTime, locks the slot
+      // Mô hình A: Pre-booking requires startTime, but serviceId is optional
+      // (Bác sĩ tư vấn sẽ xác định dịch vụ chuyên khoa sau khi gặp bệnh nhân)
       if (!startTime) {
         throw new ApiException(
           MessageCodes.BOOKING_INVALID_TIME,
@@ -262,7 +246,10 @@ export class BookingsService {
           'Booking creation failed',
         );
       }
-      endTime = this.calculateEndTime(startTime, service.durationMinutes);
+      // Calculate endTime only if service is already known
+      if (service) {
+        endTime = this.calculateEndTime(startTime, service.durationMinutes);
+      }
     } else {
       // Walk-in: verify queue capacity for this doctor+date
       const walkInCount = await this.bookingRepository.countBookingsByFilters({
@@ -273,12 +260,6 @@ export class BookingsService {
           notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW],
         },
       });
-
-      // Check against daily queue capacity from DoctorScheduleSlot
-      const slot = await this.bookingRepository.findDoctorScheduleSlot(
-        doctorId,
-        new Date(bookingDate),
-      );
 
       const maxQueue = slot?.maxQueueSize ?? 10;
       if (walkInCount >= maxQueue) {
@@ -293,16 +274,16 @@ export class BookingsService {
 
     const bookingCode = await this.generateBookingCode(bookingDate);
 
-    const booking = await this.bookingRepository.transaction(async (tx) => {
+    const booking = (await this.bookingRepository.transaction(async (tx) => {
       const newBooking = await tx.booking.create({
         data: {
           patientProfileId,
           doctorId,
-          serviceId,
+          serviceId: serviceId || undefined,
           bookingCode,
           bookingDate: new Date(bookingDate),
-          startTime: isPreBooked ? startTime : null,
-          endTime: isPreBooked ? endTime : null,
+          startTime: isPreBooked ? startTime : undefined,
+          endTime: isPreBooked ? endTime : undefined,
           isPreBooked,
           status: BookingStatus.CONFIRMED,
           source,
@@ -310,19 +291,9 @@ export class BookingsService {
           patientNotes,
           bookedBy: createdById,
           confirmedAt: new Date(),
+          roomId: slot?.roomId || undefined,
         },
-        include: {
-          patientProfile: { select: patientProfileSelect },
-          doctor: { select: { id: true, email: true, fullName: true } },
-          service: {
-            select: {
-              id: true,
-              name: true,
-              durationMinutes: true,
-              price: true,
-            },
-          },
-        },
+        include: BookingInclude,
       });
 
       await tx.bookingStatusHistory.create({
@@ -338,28 +309,31 @@ export class BookingsService {
       });
 
       return newBooking;
-    });
+    })) as unknown as BookingWithRelations;
 
     this.sendBookingNotification(booking).catch((error) => {
       console.error('Failed to send booking notification:', error);
     });
 
-    // Auto-create invoice
-    try {
-      await this.billingService.createInvoice({
-        bookingId: booking.id,
-        notes: isPreBooked
-          ? 'Receptionist pre-booking invoice'
-          : 'Walk-in generated invoice',
-      });
-    } catch (e) {
-      console.error('Failed to auto-create invoice:', e);
+    // Auto-create invoice — chỉ khi serviceId đã xác định
+    if (serviceId) {
+      try {
+        await this.billingService.createInvoice({
+          bookingId: booking.id,
+          notes: isPreBooked
+            ? 'Receptionist pre-booking invoice'
+            : 'Walk-in generated invoice',
+        });
+      } catch (e) {
+        console.error('Failed to auto-create invoice:', e);
+      }
     }
 
     // Notify admins of new booking (by staff)
+    const serviceName = service?.name ?? 'Chưa xác định dịch vụ';
     await this.notificationsService.notifyAdmins({
       title: 'Lịch hẹn mới (từ nhân viên)',
-      content: `${booking.patientProfile.fullName} được đặt khám ${booking.service.name}.`,
+      content: `${booking.patientProfile.fullName} được đặt khám ${serviceName}.`,
       metadata: { bookingId: booking.id },
     });
 
@@ -374,8 +348,71 @@ export class BookingsService {
   }
 
   /**
-   * Find all bookings with filters
+   * B2 — Mô hình A: BS tư vấn xác định dịch vụ chuyên khoa sau khi hỏi thăm bệnh nhân.
+   * Triggers auto-create of CONSULTATION invoice.
    */
+  async updateService(bookingId: string, serviceId: string, doctorId: string) {
+    const booking = await this.bookingRepository.findBookingById(bookingId);
+    if (!booking) {
+      throw new ApiException(
+        MessageCodes.BOOKING_NOT_FOUND,
+        'Booking not found',
+        404,
+        'Update service failed',
+      );
+    }
+
+    // Only the assigned doctor or admin can set the service
+    if (booking.doctorId !== doctorId) {
+      throw new ApiException(
+        MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+        'Only the assigned doctor can update the service',
+        403,
+        'Update service failed',
+      );
+    }
+
+    if (booking.serviceId) {
+      throw new ApiException(
+        'BOOKING.SERVICE_ALREADY_SET',
+        'Service has already been set for this booking',
+        409,
+        'Update service failed',
+      );
+    }
+
+    const service = await this.catalogRepository.findServiceById(serviceId);
+    if (!service || !service.isActive) {
+      throw new ApiException(
+        MessageCodes.SERVICE_NOT_FOUND,
+        'Service not found or inactive',
+        404,
+        'Update service failed',
+      );
+    }
+
+    const updated = await this.bookingRepository.update({
+      where: { id: bookingId },
+      data: { serviceId },
+    });
+
+    // Auto-create CONSULTATION invoice now that service is known
+    try {
+      await this.billingService.createInvoice({
+        bookingId,
+        notes: 'Consultation invoice — service set by doctor',
+      });
+    } catch (e) {
+      console.error('Failed to auto-create consultation invoice:', e);
+    }
+
+    return ResponseHelper.success(
+      updated,
+      'BOOKING.SERVICE_UPDATED',
+      'Booking service updated successfully',
+    );
+  }
+
   async findAll(filterDto: FilterBookingDto) {
     const {
       patientProfileId,
@@ -419,16 +456,7 @@ export class BookingsService {
       this.bookingRepository.findMany({
         where,
         include: {
-          patientProfile: { select: patientProfileSelect },
-          doctor: { select: { id: true, fullName: true, email: true } },
-          service: {
-            select: {
-              id: true,
-              name: true,
-              durationMinutes: true,
-              price: true,
-            },
-          },
+          ...BookingInclude,
           queueRecord: true,
           medicalRecord: {
             include: {
@@ -559,18 +587,7 @@ export class BookingsService {
             doctorNotes: doctorNotes || booking.doctorNotes,
             ...extraData,
           },
-          include: {
-            patientProfile: { select: patientProfileSelect },
-            doctor: { select: { id: true, email: true, fullName: true } },
-            service: {
-              select: {
-                id: true,
-                name: true,
-                durationMinutes: true,
-                price: true,
-              },
-            },
-          },
+          include: BookingInclude,
         });
 
         await tx.bookingStatusHistory.create({
@@ -645,7 +662,8 @@ export class BookingsService {
             patientName: updatedBooking.patientProfile.fullName,
             patientEmail: email,
             doctorName: updatedBooking.doctor.fullName,
-            serviceName: updatedBooking.service.name,
+            serviceName:
+              updatedBooking.service?.name ?? 'Tư vấn (Chưa xác định)',
             bookingDate: format(
               new Date(updatedBooking.bookingDate),
               'EEEE, dd/MM/yyyy',
@@ -653,7 +671,7 @@ export class BookingsService {
             ),
             startTime: updatedBooking.startTime ?? '',
             endTime: updatedBooking.endTime ?? '',
-            duration: updatedBooking.service.durationMinutes,
+            duration: updatedBooking.service?.durationMinutes ?? 0,
             status: updatedBooking.status,
           })
           .catch((error) => {
@@ -1477,18 +1495,20 @@ export class BookingsService {
       );
     }
 
-    // 4. Check service exists and is active
-    const service = await this.catalogRepository.findUnique({
-      where: { id: serviceId },
-    });
+    // 4. Check service exists and is active (only if provided - Model A support)
+    if (serviceId) {
+      const service = await this.catalogRepository.findUnique({
+        where: { id: serviceId },
+      });
 
-    if (!service || !service.isActive) {
-      throw new ApiException(
-        MessageCodes.SERVICE_NOT_FOUND,
-        'Service not found or inactive',
-        404,
-        'Booking validation failed',
-      );
+      if (!service || !service.isActive) {
+        throw new ApiException(
+          MessageCodes.SERVICE_NOT_FOUND,
+          'Service not found or inactive',
+          404,
+          'Booking validation failed',
+        );
+      }
     }
 
     // 5. Check doctor working hours
@@ -1715,13 +1735,13 @@ export class BookingsService {
         patientName: booking.patientProfile.fullName,
         patientEmail: email,
         doctorName: booking.doctor.fullName,
-        serviceName: booking.service.name,
+        serviceName: booking.service?.name ?? 'Tư vấn (Chưa xác định)',
         bookingDate: this.formatDate(booking.bookingDate),
         startTime: booking.startTime ?? '',
         endTime: booking.endTime ?? '',
-        duration: booking.service.durationMinutes,
+        duration: booking.service?.durationMinutes ?? 0,
         status: booking.status,
-        price: booking.service.price
+        price: booking.service?.price
           ? Number(booking.service.price)
           : undefined,
         patientNotes: booking.patientNotes ?? undefined,
@@ -1747,13 +1767,13 @@ export class BookingsService {
         patientName: booking.patientProfile.fullName,
         patientEmail: email,
         doctorName: booking.doctor.fullName,
-        serviceName: booking.service.name,
+        serviceName: booking.service?.name ?? 'Tư vấn (Chưa xác định)',
         bookingDate: this.formatDate(booking.bookingDate),
         startTime: booking.startTime ?? '',
         endTime: booking.endTime ?? '',
-        duration: booking.service.durationMinutes,
+        duration: booking.service?.durationMinutes ?? 0,
         status: booking.status,
-        price: booking.service.price
+        price: booking.service?.price
           ? Number(booking.service.price)
           : undefined,
       });

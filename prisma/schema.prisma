@@ -391,6 +391,7 @@ model Room {
   updatedAt DateTime @updatedAt
 
   scheduleSlots DoctorScheduleSlot[]
+  bookings      Booking[]
 
   @@index([isActive])
   @@map("rooms")
@@ -541,7 +542,7 @@ model Booking {
   // Patient is always referenced via PatientProfile (works for both guests and registered users)
   patientProfileId String
   doctorId         String
-  serviceId        String
+  serviceId        String?
 
   bookingCode String   @unique // "BK-20260317-0041" — human-readable reference
   bookingDate DateTime @db.Date
@@ -577,9 +578,11 @@ model Booking {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  roomId           String?
   patientProfile  PatientProfile         @relation(fields: [patientProfileId], references: [id])
   doctor          User                   @relation("DoctorBookings", fields: [doctorId], references: [id])
-  service         Service                @relation(fields: [serviceId], references: [id])
+  service         Service?               @relation(fields: [serviceId], references: [id])
+  room            Room?                  @relation(fields: [roomId], references: [id])
   bookedByUser    User?                  @relation("BookedByUser", fields: [bookedBy], references: [id])
   cancelledByUser User?                  @relation("CancelledByUser", fields: [cancelledBy], references: [id])
   statusHistory   BookingStatusHistory[]

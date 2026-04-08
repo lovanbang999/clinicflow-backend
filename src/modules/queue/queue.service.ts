@@ -12,54 +12,13 @@ import { PromoteQueueDto } from './dto/promote-queue.dto';
 import { QueueFilterDto } from './dto/queue-filter.dto';
 import { QueueGateway } from './queue.gateway';
 import { BookingStatus, Prisma } from '@prisma/client';
+import {
+  BookingInclude,
+  BookingWithRelations,
+  QueueRecordWithRelations,
+} from '../database/types/prisma-payload.types';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
-
-export interface BookingWithRelations {
-  id: string;
-  bookingCode?: string | null;
-  bookingDate: Date;
-  startTime: string | null; // null for walk-in bookings
-  endTime: string | null; // null for walk-in bookings
-  isPreBooked: boolean;
-  status: BookingStatus;
-  doctorId: string;
-  patientProfile: {
-    id: string;
-    userId: string | null;
-    fullName: string;
-    phone: string | null;
-    email: string | null;
-    isGuest: boolean;
-    patientCode: string;
-  };
-  doctor: {
-    id: string;
-    email: string;
-    fullName: string;
-  };
-  service: {
-    id: string;
-    name: string;
-    durationMinutes: number;
-    price: Prisma.Decimal;
-    maxSlotsPerHour: number;
-  };
-}
-
-export interface QueueRecordWithRelations {
-  id: string;
-  bookingId: string;
-  doctorId: string;
-  queueDate: Date;
-  queuePosition: number;
-  estimatedWaitMinutes: number;
-  isPreBooked: boolean;
-  scheduledTime: string | null;
-  calledAt: Date | null;
-  completedAt: Date | null;
-  booking: BookingWithRelations;
-}
 
 @Injectable()
 export class QueueService {
@@ -106,58 +65,10 @@ export class QueueService {
     const [queueRecords, total] = await Promise.all([
       this.bookingRepository.findQueueMany({
         where,
-        select: {
-          id: true,
-          bookingId: true,
-          doctorId: true,
-          queueDate: true,
-          queuePosition: true,
-          estimatedWaitMinutes: true,
-          isPreBooked: true,
-          scheduledTime: true,
-          calledAt: true,
-          completedAt: true,
+        include: {
           booking: {
-            select: {
-              id: true,
-              bookingCode: true,
-              bookingDate: true,
-              startTime: true,
-              endTime: true,
-              isPreBooked: true,
-              status: true,
-              doctorId: true,
-              patientProfile: {
-                select: {
-                  id: true,
-                  userId: true,
-                  fullName: true,
-                  email: true,
-                  phone: true,
-                  isGuest: true,
-                  patientCode: true,
-                  dateOfBirth: true,
-                  gender: true,
-                  weightKg: true,
-                  heightCm: true,
-                },
-              },
-              doctor: {
-                select: {
-                  id: true,
-                  fullName: true,
-                  email: true,
-                },
-              },
-              service: {
-                select: {
-                  id: true,
-                  name: true,
-                  durationMinutes: true,
-                  price: true,
-                  maxSlotsPerHour: true,
-                },
-              },
+            include: {
+              ...BookingInclude,
               medicalRecord: {
                 select: {
                   id: true,
@@ -231,59 +142,9 @@ export class QueueService {
   ): Promise<ApiResponse<QueueRecordWithRelations>> {
     const queueRecord = await this.bookingRepository.findQueueUnique({
       where: { bookingId },
-      select: {
-        id: true,
-        bookingId: true,
-        doctorId: true,
-        queueDate: true,
-        queuePosition: true,
-        estimatedWaitMinutes: true,
-        isPreBooked: true,
-        scheduledTime: true,
-        calledAt: true,
-        completedAt: true,
+      include: {
         booking: {
-          select: {
-            id: true,
-            bookingCode: true,
-            bookingDate: true,
-            startTime: true,
-            endTime: true,
-            isPreBooked: true,
-            status: true,
-            doctorId: true,
-            patientProfile: {
-              select: {
-                id: true,
-                userId: true,
-                fullName: true,
-                email: true,
-                phone: true,
-                isGuest: true,
-                patientCode: true,
-                dateOfBirth: true,
-                gender: true,
-                weightKg: true,
-                heightCm: true,
-              },
-            },
-            doctor: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true,
-              },
-            },
-            service: {
-              select: {
-                id: true,
-                name: true,
-                durationMinutes: true,
-                price: true,
-                maxSlotsPerHour: true,
-              },
-            },
-          },
+          include: BookingInclude,
         },
       },
     });
@@ -388,7 +249,7 @@ export class QueueService {
       queueRecord.booking.doctorId,
       queueRecord.booking.bookingDate.toISOString().split('T')[0],
       queueRecord.booking.startTime ?? '',
-      queueRecord.booking.service.maxSlotsPerHour,
+      queueRecord.booking.service?.maxSlotsPerHour ?? 1,
     );
 
     if (!isSlotAvailable) {
@@ -469,7 +330,7 @@ export class QueueService {
       doctorId,
       bookingDate,
       timeSlot,
-      firstInQueue.booking.service.maxSlotsPerHour,
+      firstInQueue.booking.service?.maxSlotsPerHour ?? 1,
     );
 
     if (!isAvailable) {
@@ -542,35 +403,7 @@ export class QueueService {
         where: { bookingId },
         include: {
           booking: {
-            include: {
-              patientProfile: {
-                select: {
-                  id: true,
-                  userId: true,
-                  fullName: true,
-                  email: true,
-                  phone: true,
-                  isGuest: true,
-                  patientCode: true,
-                },
-              },
-              doctor: {
-                select: {
-                  id: true,
-                  email: true,
-                  fullName: true,
-                },
-              },
-              service: {
-                select: {
-                  id: true,
-                  name: true,
-                  durationMinutes: true,
-                  price: true,
-                  maxSlotsPerHour: true,
-                },
-              },
-            },
+            include: BookingInclude,
           },
         },
       });
@@ -590,43 +423,7 @@ export class QueueService {
         data: {
           status: BookingStatus.CONFIRMED,
         },
-        select: {
-          id: true,
-          bookingCode: true,
-          bookingDate: true,
-          startTime: true,
-          endTime: true,
-          isPreBooked: true,
-          status: true,
-          doctorId: true,
-          patientProfile: {
-            select: {
-              id: true,
-              userId: true,
-              fullName: true,
-              email: true,
-              phone: true,
-              isGuest: true,
-              patientCode: true,
-            },
-          },
-          doctor: {
-            select: {
-              id: true,
-              email: true,
-              fullName: true,
-            },
-          },
-          service: {
-            select: {
-              id: true,
-              name: true,
-              durationMinutes: true,
-              price: true,
-              maxSlotsPerHour: true,
-            },
-          },
-        },
+        include: BookingInclude,
       });
 
       // Create status history
@@ -747,13 +544,13 @@ export class QueueService {
         patientName: booking.patientProfile.fullName,
         patientEmail: email,
         doctorName: booking.doctor.fullName,
-        serviceName: booking.service.name,
+        serviceName: booking.service?.name ?? 'Tư vấn (Chưa xác định)',
         bookingDate: this.formatDate(booking.bookingDate),
         startTime: booking.startTime ?? '',
         endTime: booking.endTime ?? '',
-        duration: booking.service.durationMinutes,
+        duration: booking.service?.durationMinutes ?? 0,
         status: booking.status,
-        price: booking.service.price
+        price: booking.service?.price
           ? Number(booking.service.price)
           : undefined,
       });

@@ -558,13 +558,13 @@ export class MedicalRecordsService {
       patientName: booking.patientProfile.fullName,
       patientEmail: booking.patientProfile.user.email,
       doctorName: booking.doctor.fullName,
-      serviceName: booking.service.name,
+      serviceName: booking.service?.name ?? 'Tư vấn (Chưa xác định)',
       bookingDate: format(booking.bookingDate, 'EEEE, dd/MM/yyyy', {
         locale: vi,
       }),
       startTime: booking.startTime ?? '',
       endTime: booking.endTime ?? '',
-      duration: booking.service.durationMinutes,
+      duration: booking.service?.durationMinutes ?? 0,
       status: booking.status as string,
       diagnosisName: record.diagnosisName ?? undefined,
       hasPrescription: dto.items.length > 0,
@@ -652,10 +652,7 @@ export class MedicalRecordsService {
     }
     const results = await this.clinicalRepository.findManyIcd10Code({
       where: {
-        OR: [
-          { code: { contains: query } },
-          { name: { contains: query } },
-        ],
+        OR: [{ code: { contains: query } }, { name: { contains: query } }],
       },
       take: 20,
       orderBy: { code: 'asc' },

@@ -27,11 +27,14 @@ export class CreateBookingDto {
   doctorId: string;
 
   @ApiProperty({
-    description: 'Service ID',
+    description:
+      'Service ID — optional cho walk-in (BS tư vấn sẽ xác định sau)',
     example: 'uuid-service-id',
+    required: false,
   })
+  @IsOptional()
   @IsUUID('4', { message: 'Invalid service ID format' })
-  serviceId: string;
+  serviceId?: string;
 
   @ApiProperty({
     description: 'Booking date (YYYY-MM-DD)',

@@ -17,34 +17,12 @@ import {
   BookingWithDuration,
   BookingWithRelations,
   QueueRecordWithRelations,
+  BookingInclude,
 } from '../types/prisma-payload.types';
 import { IBookingRepository } from '../interfaces/booking.repository.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 
-const bookingInclude = {
-  patientProfile: {
-    select: {
-      id: true,
-      userId: true,
-      fullName: true,
-      phone: true,
-      email: true,
-      isGuest: true,
-      patientCode: true,
-    },
-  },
-  doctor: {
-    select: { id: true, email: true, fullName: true },
-  },
-  service: {
-    select: {
-      id: true,
-      name: true,
-      durationMinutes: true,
-      price: true,
-    },
-  },
-};
+const bookingInclude = BookingInclude;
 
 @Injectable()
 export class PrismaBookingRepository implements IBookingRepository {
@@ -442,7 +420,7 @@ export class PrismaBookingRepository implements IBookingRepository {
       this.prisma.booking.findMany({
         where,
         include: {
-          ...bookingInclude,
+          ...BookingInclude,
           queueRecord: true,
           medicalRecord: {
             include: {
@@ -450,7 +428,7 @@ export class PrismaBookingRepository implements IBookingRepository {
               labOrders: true,
             },
           },
-        } as never,
+        },
         skip,
         take,
         orderBy: [{ bookingDate: 'desc' }, { startTime: 'desc' }],
@@ -463,7 +441,7 @@ export class PrismaBookingRepository implements IBookingRepository {
     return this.prisma.booking.findUnique({
       where: { id },
       include: {
-        ...bookingInclude,
+        ...BookingInclude,
         queueRecord: true,
         statusHistory: {
           include: {
@@ -496,7 +474,9 @@ export class PrismaBookingRepository implements IBookingRepository {
   ): Promise<BookingWithDuration[]> {
     return this.prisma.booking.findMany({
       where: { patientProfileId: patientId },
-      include: { service: { select: { durationMinutes: true } } },
+      include: {
+        service: { select: { durationMinutes: true, maxSlotsPerHour: true } },
+      },
     });
   }
 
@@ -517,7 +497,9 @@ export class PrismaBookingRepository implements IBookingRepository {
           ],
         },
       },
-      include: { service: { select: { durationMinutes: true } } },
+      include: {
+        service: { select: { durationMinutes: true, maxSlotsPerHour: true } },
+      },
     });
   }
 
@@ -538,7 +520,7 @@ export class PrismaBookingRepository implements IBookingRepository {
           ],
         },
       },
-      include: bookingInclude,
+      include: BookingInclude,
       orderBy: { startTime: 'asc' },
     });
   }
@@ -560,7 +542,7 @@ export class PrismaBookingRepository implements IBookingRepository {
           doctorNotes: doctorNotes || undefined,
           ...extraData,
         },
-        include: bookingInclude,
+        include: BookingInclude,
       });
 
       await tx.bookingStatusHistory.create({
@@ -773,7 +755,7 @@ export class PrismaBookingRepository implements IBookingRepository {
     return this.prisma.$transaction(async (tx) => {
       const queueRecord = await tx.bookingQueue.findUnique({
         where: { bookingId },
-        include: { booking: { include: bookingInclude } },
+        include: { booking: { include: BookingInclude } },
       });
 
       if (!queueRecord) return null;
@@ -782,7 +764,7 @@ export class PrismaBookingRepository implements IBookingRepository {
         where: { id: bookingId },
         data: { status: BookingStatus.CONFIRMED },
         select: {
-          ...bookingInclude,
+          ...BookingInclude,
           id: true,
           bookingCode: true,
           bookingDate: true,
