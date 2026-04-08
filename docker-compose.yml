@@ -1,21 +1,24 @@
 services:
   # ──────────────────────────────────────────────
-  # PostgreSQL Database
+  # MySQL Database
   # ──────────────────────────────────────────────
-  postgres:
-    image: postgres:16-alpine
-    container_name: smartclinic_db
+  mysql:
+    image: mysql:8.0
+    container_name: mysql-container
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-smartclinic}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartclinic_password}
-      POSTGRES_DB: ${POSTGRES_DB:-smart_clinic_db}
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: smartclinic
+      MYSQL_USER: bang
+      MYSQL_PASSWORD: bang123
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
     networks:
       - smartclinic_backend_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartclinic} -d ${POSTGRES_DB:-smart_clinic_db}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,12 +34,12 @@ services:
       - .env
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-smartclinic}:${POSTGRES_PASSWORD:-smartclinic_password}@postgres:5432/${POSTGRES_DB:-smart_clinic_db}
+      DATABASE_URL: mysql://bang:bang123@mysql:3306/smartclinic
       PORT: 8080
     ports:
       - "8080:8080"
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
     networks:
       - smartclinic_backend_net
