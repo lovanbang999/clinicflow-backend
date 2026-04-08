@@ -23,6 +23,7 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { FilterBookingDto } from './dto/filter-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
+import { UpdateBookingServiceDto } from './dto/update-booking-service.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -118,6 +119,32 @@ export class BookingsController {
     @CurrentUser('id') userId: string,
   ) {
     return this.bookingsService.createByReceptionist(createBookingDto, userId);
+  }
+
+  @Patch(':id/service')
+  @Roles(UserRole.DOCTOR, UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'B2 — Bác sĩ tư vấn xác định dịch vụ chuyên khoa',
+    description:
+      'Mô hình A: BS tư vấn gọi bệnh nhân, hỏi thăm triệu chứng và xác định dịch vụ chuyên khoa cần khám. ' +
+      'Lễ tân không có quyền chọn dịch vụ — chỉ bác sĩ mới có quyền này. ' +
+      'Sau khi xác nhận, hệ thống tự tạo Invoice CONSULTATION (DRAFT).',
+  })
+  @ApiResponse({ status: 200, description: 'Service updated successfully' })
+  @ApiResponse({ status: 403, description: 'Not the assigned doctor' })
+  @ApiResponse({ status: 404, description: 'Booking or Service not found' })
+  @ApiResponse({ status: 409, description: 'Service already set' })
+  updateService(
+    @Param('id') bookingId: string,
+    @Body() dto: UpdateBookingServiceDto,
+    @CurrentUser('id') doctorId: string,
+  ) {
+    return this.bookingsService.updateService(
+      bookingId,
+      dto.serviceId,
+      doctorId,
+    );
   }
 
   @Get('doctor/my-patients')

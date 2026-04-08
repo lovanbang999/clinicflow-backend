@@ -4,30 +4,50 @@
  */
 import { Prisma } from '@prisma/client';
 
+/** Standard select for PatientProfile in booking relations */
+export const PatientProfileSelect = {
+  select: {
+    id: true,
+    userId: true,
+    fullName: true,
+    phone: true,
+    email: true,
+    isGuest: true,
+    patientCode: true,
+  },
+} as const;
+
+/** Standard select for Doctor in booking relations */
+export const DoctorSelect = {
+  select: {
+    id: true,
+    email: true,
+    fullName: true,
+  },
+} as const;
+
+/** Standard select for Service in booking relations */
+export const ServiceSelect = {
+  select: {
+    id: true,
+    name: true,
+    durationMinutes: true,
+    price: true,
+    maxSlotsPerHour: true,
+  },
+} as const;
+
+/** Standard include for Bookings with relations */
+export const BookingInclude = {
+  patientProfile: PatientProfileSelect,
+  doctor: DoctorSelect,
+  service: ServiceSelect,
+  room: true,
+} as const;
+
 /** Booking with the standard include (patientProfile, doctor, service) */
 export type BookingWithRelations = Prisma.BookingGetPayload<{
-  include: {
-    patientProfile: {
-      select: {
-        id: true;
-        userId: true;
-        fullName: true;
-        phone: true;
-        email: true;
-        isGuest: true;
-        patientCode: true;
-      };
-    };
-    doctor: { select: { id: true; email: true; fullName: true } };
-    service: {
-      select: {
-        id: true;
-        name: true;
-        durationMinutes: true;
-        price: true;
-      };
-    };
-  };
+  include: typeof BookingInclude;
 }>;
 
 /** Booking with duration only (used in scheduling checks) */
@@ -58,6 +78,7 @@ export type BookingDetail = Prisma.BookingGetPayload<{
         price: true;
       };
     };
+    room: true;
     queueRecord: true;
     statusHistory: {
       include: {
@@ -95,11 +116,7 @@ export type InvoiceWithBooking = Prisma.InvoiceGetPayload<{
 export type QueueRecordWithRelations = Prisma.BookingQueueGetPayload<{
   include: {
     booking: {
-      include: {
-        patientProfile: { select: { fullName: true; phone: true } };
-        doctor: { select: { id: true; fullName: true } };
-        service: { select: { name: true } };
-      };
+      include: typeof BookingInclude;
     };
   };
 }>;
@@ -118,13 +135,7 @@ export type LabOrderWithRelations = Prisma.LabOrderGetPayload<{
 export type MedicalRecordWithBooking = Prisma.MedicalRecordGetPayload<{
   include: {
     booking: {
-      include: {
-        patientProfile: {
-          select: { id: true; fullName: true; phone: true; email: true };
-        };
-        doctor: { select: { fullName: true } };
-        service: { select: { name: true } };
-      };
+      include: typeof BookingInclude;
     };
   };
 }>;

@@ -41,7 +41,7 @@ CREATE TABLE `users` (
 CREATE TABLE `refresh_tokens` (
     `id` VARCHAR(191) NOT NULL,
     `userId` VARCHAR(191) NOT NULL,
-    `token` VARCHAR(191) NOT NULL,
+    `token` VARCHAR(512) NOT NULL,
     `expiresAt` DATETIME(3) NOT NULL,
     `isRevoked` BOOLEAN NOT NULL DEFAULT false,
     `deviceInfo` VARCHAR(191) NULL,
@@ -279,7 +279,7 @@ CREATE TABLE `bookings` (
     `id` VARCHAR(191) NOT NULL,
     `patientProfileId` VARCHAR(191) NOT NULL,
     `doctorId` VARCHAR(191) NOT NULL,
-    `serviceId` VARCHAR(191) NOT NULL,
+    `serviceId` VARCHAR(191) NULL,
     `bookingCode` VARCHAR(191) NOT NULL,
     `bookingDate` DATE NOT NULL,
     `startTime` VARCHAR(191) NULL,
@@ -299,6 +299,7 @@ CREATE TABLE `bookings` (
     `reminderSentAt` DATETIME(3) NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
+    `roomId` VARCHAR(191) NULL,
 
     UNIQUE INDEX `bookings_bookingCode_key`(`bookingCode`),
     INDEX `bookings_patientProfileId_idx`(`patientProfileId`),
@@ -726,7 +727,10 @@ ALTER TABLE `bookings` ADD CONSTRAINT `bookings_patientProfileId_fkey` FOREIGN K
 ALTER TABLE `bookings` ADD CONSTRAINT `bookings_doctorId_fkey` FOREIGN KEY (`doctorId`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `bookings` ADD CONSTRAINT `bookings_serviceId_fkey` FOREIGN KEY (`serviceId`) REFERENCES `services`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `bookings` ADD CONSTRAINT `bookings_serviceId_fkey` FOREIGN KEY (`serviceId`) REFERENCES `services`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `bookings` ADD CONSTRAINT `bookings_roomId_fkey` FOREIGN KEY (`roomId`) REFERENCES `rooms`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `bookings` ADD CONSTRAINT `bookings_bookedBy_fkey` FOREIGN KEY (`bookedBy`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
@@ -814,3 +818,4 @@ ALTER TABLE `ai_chat_sessions` ADD CONSTRAINT `ai_chat_sessions_bookingId_fkey` 
 
 -- AddForeignKey
 ALTER TABLE `ai_chat_messages` ADD CONSTRAINT `ai_chat_messages_sessionId_fkey` FOREIGN KEY (`sessionId`) REFERENCES `ai_chat_sessions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+

@@ -81,7 +81,8 @@ export class BillingService {
     }
 
     const invoiceType = dto.invoiceType ?? InvoiceType.CONSULTATION;
-    const servicePrice = booking.service.price;
+    // Mô hình A: bookings may not have a service yet — service fee defaults to 0
+    const servicePrice = booking.service?.price ?? 0;
 
     // Generate invoice number: INV-YYYYMMDD-XXXX
     const count = await this.financeRepository.countInvoice({});
@@ -108,8 +109,8 @@ export class BillingService {
         },
       });
 
-      // For CONSULTATION: seed first item from booking service
-      if (invoiceType === InvoiceType.CONSULTATION) {
+      // For CONSULTATION: seed first item from booking service (only if service is known)
+      if (invoiceType === InvoiceType.CONSULTATION && booking.service) {
         await tx.invoiceItem.create({
           data: {
             invoiceId: inv.id,

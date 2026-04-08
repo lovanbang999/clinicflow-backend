@@ -443,7 +443,7 @@ export class AdminAnalyticsService {
       if (!inv.booking?.serviceId) continue;
 
       const sId = inv.booking.serviceId;
-      const sName = inv.booking.service.name;
+      const sName = inv.booking.service?.name ?? 'Chưa xác định';
       const amount = Number(inv.totalAmount);
 
       const existing = serviceRevenueMap.get(sId) || {

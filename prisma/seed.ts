@@ -1221,7 +1221,7 @@ async function main() {
     await prisma.visitServiceOrder.create({
       data: {
         medicalRecordId: medicalRecord.id,
-        serviceId: sampleBookingRecord.serviceId,
+        serviceId: sampleBookingRecord.serviceId || '',
         patientProfileId: sampleBookingRecord.patientProfileId,
         bookingId: sampleBookingRecord.id,
         status: 'COMPLETED',
@@ -1253,7 +1253,7 @@ async function main() {
           create: [
             {
               itemName: sampleBooking.service.name,
-              serviceId: sampleBookingRecord.serviceId,
+              serviceId: sampleBookingRecord.serviceId || '',
               unitPrice: subtotal,
               quantity: 1,
               totalPrice: subtotal,
