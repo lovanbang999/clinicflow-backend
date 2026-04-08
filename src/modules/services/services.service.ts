@@ -127,13 +127,13 @@ export class ServicesService {
         {
           name: {
             contains: filters.search,
-            mode: 'insensitive',
+            
           },
         },
         {
           description: {
             contains: filters.search,
-            mode: 'insensitive',
+            
           },
         },
       ];

@@ -398,19 +398,19 @@ export class BookingsService {
 
     if (search) {
       where.OR = [
-        { bookingCode: { contains: search, mode: 'insensitive' } },
+        { bookingCode: { contains: search } },
         {
           patientProfile: {
-            fullName: { contains: search, mode: 'insensitive' },
+            fullName: { contains: search },
           },
         },
         {
           patientProfile: {
-            patientCode: { contains: search, mode: 'insensitive' },
+            patientCode: { contains: search },
           },
         },
         {
-          patientProfile: { phone: { contains: search, mode: 'insensitive' } },
+          patientProfile: { phone: { contains: search } },
         },
       ];
     }
@@ -986,9 +986,9 @@ export class BookingsService {
     const patientWhere: Prisma.PatientProfileWhereInput = {};
     if (search) {
       patientWhere.OR = [
-        { fullName: { contains: search, mode: 'insensitive' } },
-        { patientCode: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } },
+        { fullName: { contains: search } },
+        { patientCode: { contains: search } },
+        { phone: { contains: search } },
       ];
     }
 
@@ -1527,7 +1527,7 @@ export class BookingsService {
     // Off day check skipped — DoctorOffDay is managed separately via schedules service
 
     // 8. Rule: 1 patient + 1 doctor + 1 date = max 1 active booking
-    // (A partial unique index also enforces this at DB level for safety)
+    // Enforced purely at the application level since MySQL doesn't support partial unique indexes
     const existingBooking = await this.bookingRepository.findFirst({
       where: {
         patientProfileId,

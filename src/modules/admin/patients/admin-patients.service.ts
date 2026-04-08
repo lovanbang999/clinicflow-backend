@@ -279,17 +279,17 @@ export class AdminPatientsService {
     }
 
     if (patientCode) {
-      where.patientCode = { contains: patientCode, mode: 'insensitive' };
+      where.patientCode = { contains: patientCode };
     }
 
     if (search) {
       where.OR = [
-        { fullName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } },
-        { patientCode: { contains: search, mode: 'insensitive' } },
-        { insuranceNumber: { contains: search, mode: 'insensitive' } },
-        { nationalId: { contains: search, mode: 'insensitive' } },
+        { fullName: { contains: search } },
+        { email: { contains: search } },
+        { phone: { contains: search } },
+        { patientCode: { contains: search } },
+        { insuranceNumber: { contains: search } },
+        { nationalId: { contains: search } },
       ];
     }
 
@@ -442,17 +442,17 @@ export class AdminPatientsService {
     }
 
     if (patientCode) {
-      where.patientCode = { contains: patientCode, mode: 'insensitive' };
+      where.patientCode = { contains: patientCode };
     }
 
     if (search) {
       where.OR = [
-        { fullName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } },
-        { patientCode: { contains: search, mode: 'insensitive' } },
-        { insuranceNumber: { contains: search, mode: 'insensitive' } },
-        { nationalId: { contains: search, mode: 'insensitive' } },
+        { fullName: { contains: search } },
+        { email: { contains: search } },
+        { phone: { contains: search } },
+        { patientCode: { contains: search } },
+        { insuranceNumber: { contains: search } },
+        { nationalId: { contains: search } },
       ];
     }
 

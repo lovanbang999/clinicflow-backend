@@ -45,8 +45,10 @@ export class AdminDoctorsService {
     // Aggregate specialty counts
     const bySpecialty: Record<string, number> = {};
     for (const p of profilesWithSpecialties) {
-      for (const sp of p.specialties) {
-        bySpecialty[sp] = (bySpecialty[sp] ?? 0) + 1;
+      if (Array.isArray(p.specialties)) {
+        for (const sp of p.specialties as string[]) {
+          bySpecialty[sp] = (bySpecialty[sp] ?? 0) + 1;
+        }
       }
     }
 
@@ -82,14 +84,14 @@ export class AdminDoctorsService {
 
     if (search) {
       where.OR = [
-        { fullName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
+        { fullName: { contains: search } },
+        { email: { contains: search } },
       ];
     }
 
     if (specialty) {
       where.doctorProfile = {
-        specialties: { hasSome: [specialty] },
+        specialties: { string_contains: specialty },
       };
     }
 

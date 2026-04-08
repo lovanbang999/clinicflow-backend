@@ -26,8 +26,8 @@ export class AdminRoomsService {
 
     if (search) {
       where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { notes: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search } },
+        { notes: { contains: search } },
       ];
     }
 

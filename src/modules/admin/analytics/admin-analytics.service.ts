@@ -229,7 +229,8 @@ export class AdminAnalyticsService {
           doctorInfoMap.set(dId, {
             fullName: booking.doctor.fullName,
             avatar: booking.doctor.avatar,
-            specialties: booking.doctor.doctorProfile?.specialties || [],
+            specialties:
+              (booking.doctor.doctorProfile?.specialties as string[]) || [],
           });
         }
       }

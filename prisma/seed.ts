@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { PrismaPg } from '@prisma/adapter-pg';
+
 import {
   PrismaClient,
   UserRole,
@@ -17,17 +17,18 @@ import {
 import * as bcrypt from 'bcrypt';
 import * as fs from 'fs';
 import * as path from 'path';
+import { PrismaMariaDb } from '@prisma/adapter-mariadb';
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  throw new Error(
-    'DATABASE_URL is missing. Make sure .env is in the backend root (be/) or set DOTENV_CONFIG_PATH.',
-  );
-}
-
-console.log('Using database URL:', databaseUrl);
-
-const adapter = new PrismaPg({ connectionString: databaseUrl });
+const databaseUrl = process.env.DATABASE_URL!;
+const url = new URL(databaseUrl);
+const adapter = new PrismaMariaDb({
+  host: url.hostname,
+  port: parseInt(url.port) || 3306,
+  user: url.username,
+  password: url.password,
+  database: url.pathname.replace('/', ''),
+  allowPublicKeyRetrieval: true,
+});
 const prisma = new PrismaClient({ adapter });
 
 // Shared counter for patient codes & booking codes

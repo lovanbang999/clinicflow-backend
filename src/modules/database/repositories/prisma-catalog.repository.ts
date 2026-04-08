@@ -96,7 +96,7 @@ export class PrismaCatalogRepository implements ICatalogRepository {
     excludeId?: string,
   ): Promise<Service | null> {
     const where: Prisma.ServiceWhereInput = {
-      name: { equals: name, mode: 'insensitive' },
+      name: { equals: name },
       isActive: true,
     };
     if (excludeId) {

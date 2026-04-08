@@ -358,10 +358,10 @@ export class UsersService {
 
     if (search) {
       where.OR = [
-        { fullName: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } },
-        { patientCode: { contains: search, mode: 'insensitive' } },
-        { nationalId: { contains: search, mode: 'insensitive' } },
+        { fullName: { contains: search } },
+        { phone: { contains: search } },
+        { patientCode: { contains: search } },
+        { nationalId: { contains: search } },
       ];
     }
 
@@ -571,9 +571,9 @@ export class UsersService {
 
     if (search) {
       where.OR = [
-        { fullName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } },
+        { fullName: { contains: search } },
+        { email: { contains: search } },
+        { phone: { contains: search } },
       ];
     }
 
