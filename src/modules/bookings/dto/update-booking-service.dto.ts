@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsUUID } from 'class-validator';
+import { IsUUID, IsOptional } from 'class-validator';
 
 export class UpdateBookingServiceDto {
   @ApiProperty({
@@ -9,4 +9,14 @@ export class UpdateBookingServiceDto {
   })
   @IsUUID('4', { message: 'Invalid service ID format' })
   serviceId: string;
+
+  @ApiProperty({
+    description:
+      'Doctor ID — BS tư vấn chỉ định bác sĩ khám chuyên khoa phù hợp',
+    example: 'uuid-doctor-id',
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Invalid doctor ID format' })
+  doctorId?: string;
 }
