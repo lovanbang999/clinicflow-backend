@@ -351,7 +351,12 @@ export class BookingsService {
    * B2 — Mô hình A: BS tư vấn xác định dịch vụ chuyên khoa sau khi hỏi thăm bệnh nhân.
    * Triggers auto-create of CONSULTATION invoice.
    */
-  async updateService(bookingId: string, serviceId: string, doctorId: string) {
+  async updateService(
+    bookingId: string,
+    serviceId: string,
+    doctorId: string,
+    newDoctorId?: string,
+  ) {
     const booking = await this.bookingRepository.findBookingById(bookingId);
     if (!booking) {
       throw new ApiException(
@@ -391,25 +396,55 @@ export class BookingsService {
       );
     }
 
+    // 1. Remove from current consultation queue (since consultation is over)
+    await this.queueService.removeFromQueue(bookingId);
+
+    // 2. Update booking: assign service, maybe new doctor, and move back to CONFIRMED
     const updated = await this.bookingRepository.update({
       where: { id: bookingId },
-      data: { serviceId },
+      data: {
+        serviceId,
+        doctorId: newDoctorId ?? booking.doctorId,
+        status: BookingStatus.CONFIRMED,
+        checkedInAt: null, // Reset check-in timestamp so receptionist can check-in for the new service
+      },
     });
 
-    // Auto-create CONSULTATION invoice now that service is known
+    // 3. Create status history tracking
+    await this.bookingRepository.transaction(async (tx) => {
+      await tx.bookingStatusHistory.create({
+        data: {
+          bookingId,
+          oldStatus: booking.status,
+          newStatus: BookingStatus.CONFIRMED,
+          changedById: doctorId,
+          reason:
+            'Service assigned by consultation doctor. Moved to payment stage.',
+        },
+      });
+    });
+
+    // 4. Auto-create specialization invoice
     try {
       await this.billingService.createInvoice({
         bookingId,
-        notes: 'Consultation invoice — service set by doctor',
+        notes: `Specialized service: ${service.name} — assigned by doctor`,
       });
     } catch (e) {
-      console.error('Failed to auto-create consultation invoice:', e);
+      console.error('Failed to auto-create specialized invoice:', e);
     }
+
+    // 5. Notify receptionists
+    await this.notificationsService.notifyReceptionists({
+      title: 'Chờ thanh toán & Khám chuyên khoa',
+      content: `Bệnh nhân ${booking.patientProfile.fullName} đã hoàn tất tư vấn. Cần thanh toán dịch vụ: ${service.name}.`,
+      metadata: { bookingId, serviceId, type: 'PAYMENT_REQUIRED' },
+    });
 
     return ResponseHelper.success(
       updated,
       'BOOKING.SERVICE_UPDATED',
-      'Booking service updated successfully',
+      'Booking service and specialist updated successfully. Patient referred to reception.',
     );
   }
 
@@ -1098,146 +1133,7 @@ export class BookingsService {
   }
 
   async checkIn(bookingId: string, userId: string) {
-    const booking = await this.bookingRepository.findUnique({
-      where: { id: bookingId },
-      include: {
-        service: true,
-        patientProfile: true,
-      },
-    });
-
-    if (!booking) {
-      throw new ApiException(
-        MessageCodes.BOOKING_NOT_FOUND,
-        'Booking not found',
-        404,
-        'Check-in failed',
-      );
-    }
-
-    if (booking.status !== BookingStatus.CONFIRMED) {
-      throw new ApiException(
-        MessageCodes.BOOKING_INVALID_STATUS,
-        'Only confirmed bookings can be checked in',
-        400,
-        'Check-in failed',
-      );
-    }
-
-    // Check if it already has a queue record
-    const existingQueue = await this.bookingRepository.findQueueUnique({
-      where: { bookingId },
-    });
-
-    if (existingQueue) {
-      throw new ApiException(
-        MessageCodes.BOOKING_ALREADY_IN_QUEUE,
-        'Booking is already in the queue',
-        409,
-        'Check-in failed',
-      );
-    }
-
-    // Find the latest queue position for the doctor on that date
-    const latestQueue = await this.bookingRepository.findQueueFirst({
-      where: {
-        doctorId: booking.doctorId,
-        queueDate: booking.bookingDate,
-      },
-      orderBy: {
-        queuePosition: 'desc',
-      },
-      select: {
-        queuePosition: true,
-      },
-    });
-
-    const currentPosition = latestQueue ? latestQueue.queuePosition + 1 : 1;
-
-    // Estimate wait time (naive estimate: active queue size * 30 min)
-    const checkedInCount = await this.bookingRepository.countQueue({
-      where: {
-        doctorId: booking.doctorId,
-        queueDate: booking.bookingDate,
-        booking: { status: BookingStatus.CHECKED_IN },
-      },
-    });
-
-    // Fallback naive heuristic 30 mins per appointment currently checked-in
-    const estWaitMinutes = checkedInCount * 30;
-
-    const result = await this.bookingRepository.transaction(async (tx) => {
-      // 1. Update Booking status
-      const updatedBooking = await tx.booking.update({
-        where: { id: bookingId },
-        data: {
-          status: BookingStatus.CHECKED_IN,
-          checkedInAt: new Date(),
-        },
-      });
-
-      // 2. Create history
-      await tx.bookingStatusHistory.create({
-        data: {
-          bookingId,
-          oldStatus: BookingStatus.CONFIRMED,
-          newStatus: BookingStatus.CHECKED_IN,
-          changedById: userId,
-          reason: 'Patient checked in at reception',
-        },
-      });
-
-      // 3. Create Queue Record (denorm isPreBooked + scheduledTime for priority sort)
-      const queueRecord = await tx.bookingQueue.create({
-        data: {
-          bookingId,
-          doctorId: booking.doctorId,
-          queueDate: booking.bookingDate,
-          queuePosition: currentPosition,
-          estimatedWaitMinutes: estWaitMinutes,
-          isPreBooked: booking.isPreBooked,
-          scheduledTime: booking.startTime ?? null,
-        },
-      });
-      return { booking: updatedBooking, queue: queueRecord };
-    });
-
-    // Broadcast the real-time Queue assignment
-    this.queueGateway.broadcastQueueUpdate(
-      booking.doctorId,
-      'CHECK_IN',
-      result,
-    );
-
-    // Notify admins of status change
-    const statusLabels: Record<string, string> = {
-      CONFIRMED: 'đã xác nhận',
-      CHECKED_IN: 'đã check-in',
-      COMPLETED: 'đã hoàn thành',
-      CANCELLED: 'đã hủy',
-    };
-    if (statusLabels[BookingStatus.CHECKED_IN]) {
-      await this.notificationsService.notifyAdmins({
-        title: 'Cập nhật lịch hẹn',
-        content: `Lịch hẹn của ${booking.patientProfile.fullName} ${statusLabels[BookingStatus.CHECKED_IN]}.`,
-        metadata: { bookingId: booking.id, status: BookingStatus.CHECKED_IN },
-      });
-    }
-
-    // Recalculate estimated times for all walk-in patients of this doctor today
-    this.recalculateEstimatedTimes(
-      booking.doctorId,
-      booking.bookingDate.toISOString().split('T')[0],
-    ).catch((err) =>
-      console.error('Failed to recalculate estimated times:', err),
-    );
-
-    return ResponseHelper.success(
-      result,
-      MessageCodes.BOOKING_UPDATED,
-      'Patient successfully checked in',
-      200,
-    );
+    return this.queueService.addToQueue(bookingId, userId);
   }
 
   /**

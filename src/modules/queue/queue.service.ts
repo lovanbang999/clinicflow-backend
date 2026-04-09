@@ -30,6 +30,146 @@ export class QueueService {
   ) {}
 
   /**
+   * Add a booking to the queue (Check-in)
+   * This logic is extracted from BookingsService to allow shared use.
+   */
+  async addToQueue(bookingId: string, userId: string) {
+    const booking = await this.bookingRepository.findUnique({
+      where: { id: bookingId },
+      include: {
+        service: true,
+        patientProfile: true,
+      },
+    });
+
+    if (!booking) {
+      throw new ApiException(
+        MessageCodes.BOOKING_NOT_FOUND,
+        'Booking not found',
+        404,
+        'Add to queue failed',
+      );
+    }
+
+    if (booking.status !== BookingStatus.CONFIRMED) {
+      throw new ApiException(
+        MessageCodes.BOOKING_INVALID_STATUS,
+        'Only confirmed bookings can be added to queue',
+        400,
+        'Add to queue failed',
+      );
+    }
+
+    // Check if it already has a queue record
+    const existingQueue = await this.bookingRepository.findQueueUnique({
+      where: { bookingId },
+    });
+
+    if (existingQueue) {
+      throw new ApiException(
+        MessageCodes.BOOKING_ALREADY_IN_QUEUE,
+        'Booking is already in the queue',
+        409,
+        'Add to queue failed',
+      );
+    }
+
+    // Find the latest queue position for the doctor on that date
+    const latestQueue = await this.bookingRepository.findQueueFirst({
+      where: {
+        doctorId: booking.doctorId,
+        queueDate: booking.bookingDate,
+      },
+      orderBy: {
+        queuePosition: 'desc',
+      },
+      select: {
+        queuePosition: true,
+      },
+    });
+
+    const currentPosition = latestQueue ? latestQueue.queuePosition + 1 : 1;
+
+    // Estimate wait time (naive estimate: active queue size * 30 min)
+    const checkedInCount = await this.bookingRepository.countQueue({
+      where: {
+        doctorId: booking.doctorId,
+        queueDate: booking.bookingDate,
+        booking: { status: BookingStatus.CHECKED_IN },
+      },
+    });
+
+    const estWaitMinutes = checkedInCount * 30;
+
+    const result = await this.bookingRepository.transaction(async (tx) => {
+      // 1. Update Booking status
+      const updatedBooking = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          status: BookingStatus.CHECKED_IN,
+          checkedInAt: new Date(),
+        },
+        include: BookingInclude,
+      });
+
+      // 2. Create history
+      await tx.bookingStatusHistory.create({
+        data: {
+          bookingId,
+          oldStatus: BookingStatus.CONFIRMED,
+          newStatus: BookingStatus.CHECKED_IN,
+          changedById: userId,
+          reason: 'Patient added to queue (Auto or Manual Check-in)',
+        },
+      });
+
+      // 3. Create Queue Record
+      const queueRecord = await tx.bookingQueue.create({
+        data: {
+          bookingId,
+          doctorId: booking.doctorId,
+          queueDate: booking.bookingDate,
+          queuePosition: currentPosition,
+          estimatedWaitMinutes: estWaitMinutes,
+          isPreBooked: booking.isPreBooked,
+          scheduledTime: booking.startTime ?? null,
+        },
+      });
+      return { booking: updatedBooking, queue: queueRecord };
+    });
+
+    // Broadcast real-time update
+    this.queueGateway.broadcastQueueUpdate(
+      booking.doctorId,
+      'CHECK_IN',
+      result,
+    );
+
+    // Notify staff
+    const statusLabels: Record<string, string> = {
+      CONFIRMED: 'đã xác nhận',
+      CHECKED_IN: 'đã check-in',
+      COMPLETED: 'đã hoàn thành',
+      CANCELLED: 'đã hủy',
+    };
+
+    if (statusLabels[BookingStatus.CHECKED_IN]) {
+      await this.notificationsService.notifyAdmins({
+        title: 'Cập nhật lịch hẹn',
+        content: `Lịch hẹn của ${booking.patientProfile.fullName} đã vào hàng đợi (STT: ${currentPosition}).`,
+        metadata: { bookingId: booking.id, status: BookingStatus.CHECKED_IN },
+      });
+    }
+
+    return ResponseHelper.success(
+      result,
+      MessageCodes.BOOKING_CHECKED_IN,
+      'Patient added to queue successfully',
+      200,
+    );
+  }
+
+  /**
    * Get all queued bookings with filters
    */
   async findAll(filterDto: QueueFilterDto) {

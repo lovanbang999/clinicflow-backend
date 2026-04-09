@@ -33,6 +33,7 @@ import {
 import { NotificationsService } from '../notifications/notifications.service';
 import { LabOrdersGateway } from '../lab-orders/lab-orders.gateway';
 import { format } from 'date-fns';
+import { QueueService } from '../queue/queue.service';
 
 @Injectable()
 export class BillingService {
@@ -47,6 +48,7 @@ export class BillingService {
     private readonly clinicalRepository: IClinicalRepository,
     private readonly notificationsService: NotificationsService,
     private readonly labOrdersGateway: LabOrdersGateway,
+    private readonly queueService: QueueService,
   ) {}
 
   private formatVNCurrency(amount: number): string {
@@ -660,7 +662,7 @@ export class BillingService {
                 userId: tech.id,
                 title: 'Phiếu xét nghiệm mới',
                 content: `Bệnh nhân ${patientName} đã thanh toán. Vui lòng thực hiện các chỉ định xét nghiệm.`,
-                type: 'LAB_RESULT_READY',
+                type: 'SYSTEM',
                 metadata: {
                   invoiceId: invoice.id,
                   bookingId: invoice.bookingId,
@@ -668,6 +670,21 @@ export class BillingService {
               });
             }
           }
+        }
+
+        // If CONSULTATION invoice: if a specialist service is assigned by doctor, auto re-queue
+        if (
+          invoice.invoiceType === InvoiceType.CONSULTATION &&
+          invoice.booking?.serviceId &&
+          invoice.booking?.doctorId
+        ) {
+          // Patient has been referred to a specialist and just paid the fee.
+          // Auto check-in for the new service.
+          // Note: addToQueue handles the status change and queue record creation.
+          await this.queueService.addToQueue(
+            invoice.bookingId,
+            confirmedByUserId,
+          );
         }
       } else if (invoice.status === InvoiceStatus.DRAFT) {
         // First payment: DRAFT → OPEN

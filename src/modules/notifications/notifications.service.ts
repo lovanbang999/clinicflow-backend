@@ -456,4 +456,47 @@ export class NotificationsService {
       this.logger.error('Failed to notify admins:', error);
     }
   }
+
+  /**
+   * Send notification to all RECEPTIONIST users
+   */
+  async notifyReceptionists(data: {
+    title: string;
+    content: string;
+    metadata?: Prisma.InputJsonValue;
+  }) {
+    try {
+      const staff = await this.userRepository.findMany({
+        where: { role: 'RECEPTIONIST', isActive: true },
+        select: { id: true },
+      });
+
+      if (staff.length === 0) return;
+
+      const notifications = await Promise.all(
+        staff.map((s) =>
+          this.systemRepository.createNotification({
+            data: {
+              userId: s.id,
+              title: data.title,
+              content: data.content,
+              type: NotificationType.SYSTEM,
+              channel: NotificationChannel.IN_APP,
+              metadata: data.metadata ?? Prisma.JsonNull,
+            },
+          }),
+        ),
+      );
+
+      staff.forEach((s, index) => {
+        this.gateway.sendToUser(s.id, notifications[index]);
+      });
+
+      this.logger.log(
+        `Staff notification sent to ${staff.length} receptionists`,
+      );
+    } catch (error) {
+      this.logger.error('Failed to notify receptionists:', error);
+    }
+  }
 }

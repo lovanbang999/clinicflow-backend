@@ -4,9 +4,11 @@ import { BillingService } from './billing.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { LabOrdersModule } from '../lab-orders/lab-orders.module';
+import { QueueModule } from '../queue/queue.module';
 
 @Module({
-  imports: [PrismaModule, NotificationsModule, LabOrdersModule],
+  imports: [PrismaModule, NotificationsModule, LabOrdersModule, QueueModule],
+
   controllers: [BillingController],
   providers: [BillingService],
   exports: [BillingService],

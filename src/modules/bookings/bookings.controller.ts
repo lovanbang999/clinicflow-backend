@@ -144,6 +144,7 @@ export class BookingsController {
       bookingId,
       dto.serviceId,
       doctorId,
+      dto.doctorId,
     );
   }
 

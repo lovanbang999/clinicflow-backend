@@ -127,13 +127,11 @@ export class ServicesService {
         {
           name: {
             contains: filters.search,
-            
           },
         },
         {
           description: {
             contains: filters.search,
-            
           },
         },
       ];
