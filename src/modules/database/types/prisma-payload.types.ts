@@ -43,6 +43,14 @@ export const BookingInclude = {
   doctor: DoctorSelect,
   service: ServiceSelect,
   room: true,
+  invoices: {
+    select: {
+      id: true,
+      status: true,
+      invoiceType: true,
+      totalAmount: true,
+    },
+  },
 } as const;
 
 /** Booking with the standard include (patientProfile, doctor, service) */
@@ -121,11 +129,32 @@ export type QueueRecordWithRelations = Prisma.BookingQueueGetPayload<{
   };
 }>;
 
+/** Include for LabOrder with invoice relations - used in deletion guard */
+export const LabOrderDeleteInclude = {
+  invoiceItem: {
+    select: {
+      id: true,
+      invoiceId: true,
+      invoice: {
+        select: { status: true },
+      },
+    },
+  },
+} as const;
+
+/** LabOrder with invoice relations */
+export type LabOrderWithInvoice = Prisma.LabOrderGetPayload<{
+  include: typeof LabOrderDeleteInclude;
+}>;
+
 /** Lab order with booking and doctor info */
 export type LabOrderWithRelations = Prisma.LabOrderGetPayload<{
   include: {
     booking: {
-      select: { bookingCode: true; doctor: { select: { fullName: true } } };
+      select: {
+        bookingCode: true;
+        doctor: { select: { fullName: true } };
+      };
     };
     patientProfile: { select: { fullName: true } };
   };

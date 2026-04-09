@@ -13,8 +13,11 @@ import { MessageCodes } from '../../common/constants/message-codes.const';
 import { CreateLabOrderDto } from './dto/create-lab-order.dto';
 import { UploadLabResultDto } from './dto/upload-lab-result.dto';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
-import { LabOrderStatus } from '@prisma/client';
+import { LabOrderStatus, InvoiceStatus } from '@prisma/client';
 import { LabOrdersGateway } from './lab-orders.gateway';
+import { BillingService } from '../billing/billing.service';
+import { forwardRef } from '@nestjs/common';
+import { LabOrderDeleteInclude } from '../database/types/prisma-payload.types';
 
 @Injectable()
 export class LabOrdersService {
@@ -24,6 +27,8 @@ export class LabOrdersService {
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
     private readonly labOrdersGateway: LabOrdersGateway,
+    @Inject(forwardRef(() => BillingService))
+    private readonly billingService: BillingService,
   ) {}
 
   /**
@@ -80,6 +85,9 @@ export class LabOrdersService {
         status: LabOrderStatus.PENDING, // isPaid = false — receptionist will create a LAB invoice to collect payment
       },
     });
+
+    // Automatically sync to draft invoice
+    await this.billingService.syncLabInvoice(dto.bookingId);
 
     return ResponseHelper.success(
       labOrder,
@@ -419,6 +427,18 @@ export class LabOrdersService {
       );
     }
 
+    // Guard: Prevent proceeding to IN_PROGRESS if the order is still PENDING (unpaid)
+    if (
+      status === LabOrderStatus.IN_PROGRESS &&
+      order.status === LabOrderStatus.PENDING
+    ) {
+      throw new ApiException(
+        'LAB.ORDER_UNPAID',
+        'Cannot perform a lab order that has not been paid.',
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
+
     const updatedOrder = await this.clinicalRepository.updateLabOrder({
       where: { id: labOrderId },
       data: { status },
@@ -435,6 +455,7 @@ export class LabOrdersService {
   async deleteOrder(doctorId: string, labOrderId: string) {
     const order = await this.clinicalRepository.findUniqueLabOrder({
       where: { id: labOrderId },
+      include: LabOrderDeleteInclude,
     });
 
     if (!order) {
@@ -461,9 +482,34 @@ export class LabOrdersService {
       );
     }
 
+    // Protection: Block deletion if already billed (Invoice is OPEN, PAID, ISSUED, etc.)
+    // Only DRAFT invoices allow deletion of items.
+    if (order.invoiceItem?.invoice) {
+      const invStatus = order.invoiceItem.invoice.status;
+      if (invStatus !== InvoiceStatus.DRAFT) {
+        throw new ApiException(
+          MessageCodes.LAB_ORDER_ALREADY_BILLED,
+          'Cannot delete a lab order that has already been billed or paid. Contact receptionist.',
+          HttpStatus.CONFLICT,
+        );
+      }
+    }
+
+    // Explicitly remove the invoice item BEFORE deleting the lab order
+    // This ensures we clean up the billing side while the link is still active.
+    if (order.invoiceItem) {
+      await this.billingService.removeInvoiceItem(
+        order.invoiceItem.invoiceId,
+        order.invoiceItem.id,
+      );
+    }
+
     await this.clinicalRepository.deleteLabOrder({
       where: { id: labOrderId },
     });
+
+    // Auto-sync after deletion to remove from draft invoice
+    await this.billingService.syncLabInvoice(order.bookingId);
 
     return ResponseHelper.success(
       null,
