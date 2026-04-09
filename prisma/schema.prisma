@@ -849,9 +849,12 @@ model LabOrder {
   invoiceItem   InvoiceItem?
   prescriptionItems PrescriptionItem[]
 
+  queueNumber     Int?
+
   @@index([patientProfileId])
   @@index([medicalRecordId])
   @@index([status])
+  @@index([orderedAt])
   @@map("lab_orders")
 }
 

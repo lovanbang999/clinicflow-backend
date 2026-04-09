@@ -1,4 +1,4 @@
-import { Injectable, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpStatus, forwardRef } from '@nestjs/common';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import {
@@ -47,6 +47,7 @@ export class BillingService {
     @Inject(I_CLINICAL_REPOSITORY)
     private readonly clinicalRepository: IClinicalRepository,
     private readonly notificationsService: NotificationsService,
+    @Inject(forwardRef(() => LabOrdersGateway))
     private readonly labOrdersGateway: LabOrdersGateway,
     private readonly queueService: QueueService,
   ) {}
@@ -198,7 +199,21 @@ export class BillingService {
 
       return tx.invoice.findUnique({
         where: { id: inv.id },
-        include: { items: true, payments: true },
+        include: {
+          items: {
+            include: {
+              labOrder: true,
+            },
+          },
+          payments: true,
+          booking: {
+            include: {
+              patientProfile: true,
+              doctor: true,
+              room: true,
+            },
+          },
+        },
       });
     });
 
@@ -246,6 +261,122 @@ export class BillingService {
   }
 
   /**
+   * Automatically synchronizes PENDING lab orders into a DRAFT LAB invoice.
+   * If no draft LAB invoice exists, one is created.
+   * If one exists, it is updated with any new pending lab orders.
+   * If a lab order was removed, it should be removed from the draft invoice.
+   */
+  async syncLabInvoice(bookingId: string) {
+    // 1. Find existing DRAFT LAB invoice
+    const invoice = await this.financeRepository.findFirstInvoice({
+      where: {
+        bookingId,
+        invoiceType: InvoiceType.LAB,
+        status: InvoiceStatus.DRAFT,
+      },
+    });
+
+    const pendingOrders = await this.clinicalRepository.findManyLabOrder({
+      where: {
+        bookingId,
+        status: LabOrderStatus.PENDING,
+      },
+      include: { service: { select: { price: true } } },
+    });
+
+    // If no pending orders and no draft invoice, nothing to do
+    if (pendingOrders.length === 0 && !invoice) {
+      return null;
+    }
+
+    // If pendingOrders.length === 0, we still proceed to the transaction to
+    // remove the obsolete items and then decide if we should delete the invoice.
+    // (We removed the early-deletion block to be more robust)
+
+    if (!invoice) {
+      // Create new draft
+      const result = await this.createInvoice({
+        bookingId,
+        invoiceType: InvoiceType.LAB,
+      });
+      this.labOrdersGateway.server.emit('billing_list_refresh', { bookingId });
+      return result.data;
+    }
+
+    // Update existing draft
+    await this.financeRepository.transaction(async (tx) => {
+      // Get existing items on this invoice that are linked to lab orders
+      const existingItems = await tx.invoiceItem.findMany({
+        where: { invoiceId: invoice.id, labOrderId: { not: null } },
+      });
+      const existingLabOrderIds = existingItems.map((it) => it.labOrderId);
+
+      // 1. Add new items for new pending orders
+      for (const order of pendingOrders) {
+        if (!existingLabOrderIds.includes(order.id)) {
+          const price = order.service?.price ? Number(order.service.price) : 0;
+          await tx.invoiceItem.create({
+            data: {
+              invoiceId: invoice.id,
+              labOrderId: order.id,
+              itemName: order.testName,
+              unitPrice: price,
+              quantity: 1,
+              totalPrice: price,
+              sortOrder: 0,
+            },
+          });
+        }
+      }
+
+      // 2. Remove items that are no longer pending (e.g. doctor removed the order)
+      const currentPendingIds = pendingOrders.map((o) => o.id);
+      for (const item of existingItems) {
+        if (!currentPendingIds.includes(item.labOrderId!)) {
+          await tx.invoiceItem.delete({ where: { id: item.id } });
+        }
+      }
+
+      // 3. RECAlCULATE TOTAL FROM ALL ITEMS (Most robust way)
+      const allItems = await tx.invoiceItem.findMany({
+        where: { invoiceId: invoice.id },
+      });
+
+      const newTotal = allItems.reduce(
+        (sum, item) => sum + Number(item.totalPrice),
+        0,
+      );
+
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: { subtotal: newTotal, totalAmount: newTotal },
+      });
+    });
+
+    // 4. POST-SYNC CHECK: If invoice is now empty (0 items) and it's still a draft, delete it
+    const finalItems = await this.financeRepository.findManyInvoiceItem({
+      where: { invoiceId: invoice.id },
+    });
+
+    if (finalItems.length === 0) {
+      // Re-fetch invoice status to be absolutely safe before deleting
+      const finalInvoice = await this.financeRepository.findUniqueInvoice({
+        where: { id: invoice.id },
+      });
+      if (finalInvoice && finalInvoice.status === InvoiceStatus.DRAFT) {
+        await this.deleteInvoice(invoice.id);
+        this.labOrdersGateway.server.emit('billing_list_refresh', {
+          bookingId,
+        });
+        return null;
+      }
+    }
+
+    this.labOrdersGateway.server.emit('billing_list_refresh', { bookingId });
+    return this.getInvoiceById(invoice.id);
+  }
+
+  /**
    * List all invoices for a booking (multiple invoices per booking).
    */
   async listInvoicesByBooking(bookingId: string) {
@@ -264,7 +395,10 @@ export class BillingService {
     const invoices = await this.financeRepository.findManyInvoice({
       where: { bookingId },
       include: {
-        items: { orderBy: { sortOrder: 'asc' } },
+        items: {
+          orderBy: { sortOrder: 'asc' },
+          include: { labOrder: true },
+        },
         payments: { orderBy: { paidAt: 'desc' } },
         booking: {
           include: {
@@ -303,7 +437,10 @@ export class BillingService {
     const invoice = await this.financeRepository.findUniqueInvoice({
       where: { id },
       include: {
-        items: { orderBy: { sortOrder: 'asc' } },
+        items: {
+          orderBy: { sortOrder: 'asc' },
+          include: { labOrder: true },
+        },
         payments: { orderBy: { paidAt: 'desc' } },
         booking: {
           include: {
@@ -377,7 +514,11 @@ export class BillingService {
       this.financeRepository.findManyInvoice({
         where,
         include: {
-          items: { take: 1, orderBy: { sortOrder: 'asc' } },
+          items: {
+            take: 1,
+            orderBy: { sortOrder: 'asc' },
+            include: { labOrder: true },
+          },
           booking: {
             include: {
               patientProfile: { select: { fullName: true, patientCode: true } },
@@ -590,6 +731,12 @@ export class BillingService {
     const invoiceTotal = Number(invoice.totalAmount);
     const shouldAutoFinalize = newTotalPaid >= invoiceTotal;
 
+    let broadcastPayload: {
+      labOrderIds: string[];
+      patientName: string;
+      invoiceId: string;
+    } | null = null;
+
     await this.financeRepository.transaction(async (tx) => {
       await tx.payment.create({
         data: {
@@ -641,15 +788,37 @@ export class BillingService {
               data: { status: LabOrderStatus.PAID },
             });
 
+            // Assign daily queue numbers to each paid lab order
+            const startOfDay = new Date();
+            startOfDay.setHours(0, 0, 0, 0);
+
+            for (const labOrderId of labOrderIds) {
+              const lastOrder = await tx.labOrder.findFirst({
+                where: {
+                  createdAt: { gte: startOfDay },
+                  queueNumber: { not: null },
+                },
+                orderBy: { queueNumber: 'desc' },
+                select: { queueNumber: true },
+              });
+              const nextQueueNumber: number =
+                (Number(lastOrder?.queueNumber) || 0) + 1;
+
+              await tx.labOrder.update({
+                where: { id: labOrderId },
+                data: { queueNumber: nextQueueNumber },
+              });
+            }
+
             const patientName =
               invoice.booking?.patientProfile?.fullName || 'Khách';
 
-            // Push real-time event to all connected technicians
-            this.labOrdersGateway.broadcastNewLabOrder({
+            // Capture data for post-commit broadcast
+            broadcastPayload = {
               labOrderIds,
               patientName,
               invoiceId: invoice.id,
-            });
+            };
 
             // Notify technicians that new lab orders are ready to be performed
             const technicians = await tx.user.findMany({
@@ -703,10 +872,15 @@ export class BillingService {
       }
     });
 
+    // Broadcast WebSocket event AFTER transaction successfully commits
+    if (broadcastPayload) {
+      this.labOrdersGateway.broadcastNewLabOrder(broadcastPayload);
+    }
+
     const updated = await this.financeRepository.findUniqueInvoice({
       where: { id: invoiceId },
       include: {
-        items: true,
+        items: { include: { labOrder: true } },
         payments: true,
         booking: {
           include: {
@@ -756,7 +930,21 @@ export class BillingService {
   async finalizeInvoice(invoiceId: string) {
     const invoice = await this.financeRepository.findUniqueInvoice({
       where: { id: invoiceId },
-      include: { payments: true },
+      include: {
+        items: {
+          include: {
+            labOrder: true,
+          },
+        },
+        payments: true,
+        booking: {
+          include: {
+            patientProfile: true,
+            doctor: true,
+            room: true,
+          },
+        },
+      },
     });
 
     if (!invoice) {
