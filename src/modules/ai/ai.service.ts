@@ -6,12 +6,14 @@ import {
 } from '@google/genai';
 import {
   AI_PROVIDER,
-  GEMINI_SYSTEM_PROMPT,
   CHATBOT_TOOLS,
+  PatientContext,
+  buildSystemPrompt,
 } from './ai.provider';
 import { SpecialtyTool } from './tools/specialty.tool';
 import { ScheduleTool } from './tools/schedule.tool';
 import { BookingTool } from './tools/booking.tool';
+import { DoctorTool } from './tools/doctor.tool';
 import { CloudflareAdapter } from './cloudflare.adapter';
 import { AiSessionService } from './ai-session.service';
 import { AiSessionOutcome, AiMessageRole } from '@prisma/client';
@@ -26,6 +28,7 @@ export class AiService {
     private readonly specialtyTool: SpecialtyTool,
     private readonly scheduleTool: ScheduleTool,
     private readonly bookingTool: BookingTool,
+    private readonly doctorTool: DoctorTool,
     private readonly cloudflareAdapter: CloudflareAdapter,
     private readonly aiSessionService: AiSessionService,
   ) {}
@@ -33,11 +36,25 @@ export class AiService {
   /**
    * Handles tool call execution mapping
    */
-  async executeTool(name: string, args: any, patientId: string) {
+  private async executeTool(
+    name: string,
+    args: Record<string, unknown>,
+    patientId: string,
+    userId?: string,
+  ): Promise<unknown> {
     this.logger.log(`Executing tool: ${name}`);
+
     if (name === 'getSpecialtyBySymptoms') {
       return this.specialtyTool.execute(args as { symptoms: string });
-    } else if (name === 'getAvailableSlots') {
+    }
+
+    if (name === 'getDoctorInfo') {
+      return this.doctorTool.execute(
+        args as { doctorName: string; specialtyName?: string },
+      );
+    }
+
+    if (name === 'getAvailableSlots') {
       return this.scheduleTool.execute(
         args as {
           serviceId?: string;
@@ -46,50 +63,66 @@ export class AiService {
           limit?: number;
         },
       );
-    } else if (name === 'createBookingFromChat') {
+    }
+
+    if (name === 'createBookingFromChat') {
       return this.bookingTool.execute({
         ...args,
         patientProfileId: patientId,
+        userId: userId!,
       } as {
         patientProfileId: string;
+        userId: string;
         doctorId: string;
         serviceId: string;
         date: string;
         startTime: string;
       });
     }
+
     return { error: `Tool ${name} not found` };
   }
 
   /**
    * SSE Stream endpoint. Uses RxJS Observable to stream chunks.
    * Persists all messages to the session.
+   * Accepts optional patientContext to build a personalized system prompt.
    */
   chatStream(
     historyMessages: any[],
     userMessage: string,
     patientId: string,
+    userId: string,
     sessionId: string,
+    patientContext?: PatientContext,
   ): Observable<any> {
     return new Observable((subscriber) => {
       this.processChat(
         historyMessages,
         userMessage,
         patientId,
+        userId,
         sessionId,
         subscriber,
+        patientContext,
       ).catch(async (err) => {
         const errorProxy = err as {
           status?: number;
           message?: string;
           [key: string]: unknown;
         };
-        if (
-          errorProxy?.status === 429 ||
-          errorProxy?.message?.includes('429')
-        ) {
+        const errorMsg = errorProxy?.message || '';
+        const isQuotaExceeded =
+          errorProxy?.status === 429 || errorMsg.includes('429');
+        const isHighDemand =
+          errorProxy?.status === 503 ||
+          errorMsg.includes('503') ||
+          errorMsg.toLowerCase().includes('high demand') ||
+          errorMsg.toLowerCase().includes('service unavailable');
+
+        if (isQuotaExceeded || isHighDemand) {
           this.logger.warn(
-            'Gemini quota exceeded. Triggering Cloudflare fallback...',
+            `Gemini ${isQuotaExceeded ? 'Quota Exceeded' : 'High Demand (503)'}. Triggering Cloudflare fallback...`,
           );
           await this.cloudflareAdapter.processFallbackChat(
             historyMessages as Array<{
@@ -112,8 +145,10 @@ export class AiService {
     historyMessages: any[],
     userMessage: string,
     patientId: string,
+    userId: string,
     sessionId: string,
     subscriber: Subscriber<any>,
+    patientContext?: PatientContext,
   ) {
     // Persist the user message first (fire-and-forget, non-blocking)
     void this.aiSessionService.saveMessage(
@@ -122,10 +157,13 @@ export class AiService {
       userMessage,
     );
 
+    // Build a personalized system prompt with patient context + current time
+    const systemInstruction = buildSystemPrompt(patientContext);
+
     const chat = this.ai.chats.create({
       model: 'gemini-2.5-flash',
       config: {
-        systemInstruction: GEMINI_SYSTEM_PROMPT,
+        systemInstruction,
         tools: CHATBOT_TOOLS,
       },
       history: historyMessages,
@@ -159,10 +197,12 @@ export class AiService {
       if (functionCallsInTurn.length > 0) {
         const toolResults = await Promise.all(
           functionCallsInTurn.map(async (call) => {
+            console.log(`[AiService] TOOL EXECUTION: ${call.name}`, call.args);
             const result = await this.executeTool(
               call.name || '',
-              call.args,
+              call.args || {},
               patientId,
+              userId,
             );
 
             // Persist tool call message with result
@@ -173,10 +213,61 @@ export class AiService {
               JSON.stringify(toolResult),
               {
                 toolName: call.name,
-                toolInput: call.args as Record<string, unknown>,
+                toolInput: call.args || {},
                 toolOutput: toolResult,
               },
             );
+
+            // Emit structured slots data for the frontend SlotPicker
+            if (call.name === 'getAvailableSlots') {
+              const r = toolResult as { slots?: unknown[]; metadata?: unknown };
+              if (r?.slots && Array.isArray(r.slots) && r.slots.length > 0) {
+                subscriber.next({ slotsData: r.slots, metadata: r.metadata });
+              }
+            }
+
+            // Emit doctor info with slots for SlotPicker
+            if (call.name === 'getDoctorInfo') {
+              interface DoctorSlot {
+                slotId: string;
+                date: string;
+                startTime: string;
+                endTime: string;
+                roomName?: string;
+              }
+              interface DoctorInfoEntry {
+                doctorId: string;
+                fullName: string;
+                specialties?: string[];
+                services?: { serviceId: string }[];
+                upcomingSlots?: DoctorSlot[];
+              }
+              interface DoctorInfoResult {
+                found?: boolean;
+                doctors?: DoctorInfoEntry[];
+              }
+              const r = toolResult as DoctorInfoResult;
+              if (r?.found && r.doctors && r.doctors.length > 0) {
+                const slots = r.doctors.flatMap((d) => {
+                  // Fallback to the first available service ID, required for online bookings
+                  const serviceId =
+                    d.services && d.services.length > 0
+                      ? d.services[0].serviceId
+                      : 'unknown';
+
+                  return (d.upcomingSlots || []).map((s) => ({
+                    ...s,
+                    doctorId: d.doctorId,
+                    doctorName: d.fullName,
+                    specialties: d.specialties,
+                    serviceId,
+                  }));
+                });
+                if (slots.length > 0) {
+                  subscriber.next({ slotsData: slots });
+                }
+              }
+            }
 
             // If booking was just created, mark session as BOOKING_MADE
             const r = result as { bookingId?: string; status?: string };

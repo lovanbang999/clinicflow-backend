@@ -9,12 +9,14 @@ export class BookingTool {
 
   async execute(args: {
     patientProfileId: string;
+    userId: string;
     doctorId: string;
     serviceId: string;
     date: string;
     startTime: string;
   }) {
-    const { patientProfileId, doctorId, serviceId, date, startTime } = args;
+    const { patientProfileId, userId, doctorId, serviceId, date, startTime } =
+      args;
 
     const createDto = {
       patientProfileId,
@@ -26,10 +28,7 @@ export class BookingTool {
       priority: BookingPriority.NORMAL,
     } as unknown as CreateBookingDto;
 
-    const result = await this.bookingsService.create(
-      createDto,
-      patientProfileId,
-    );
+    const result = await this.bookingsService.create(createDto, userId);
 
     return {
       status: 'success',

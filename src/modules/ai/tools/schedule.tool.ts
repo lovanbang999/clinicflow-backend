@@ -15,7 +15,10 @@ interface SlotWithRelations {
   doctor: {
     id: string;
     fullName: string;
-    doctorProfile?: { specialties: string[] } | null;
+    doctorProfile?: {
+      specialties: string[];
+      services: { serviceId: string }[];
+    } | null;
   };
   room?: { name: string } | null;
 }
@@ -35,60 +38,106 @@ export class ScheduleTool {
   }) {
     const { specialtyName, date, limit = 5 } = args;
 
-    const whereClause: Record<string, unknown> = {
-      status: 'SCHEDULED',
-      isActive: true,
-    };
+    const findSlots = async (searchDate?: Date, isRange = false) => {
+      const whereClause: Record<string, any> = {
+        status: 'SCHEDULED',
+        isActive: true,
+      };
 
-    if (date) {
-      whereClause.date = new Date(date);
-    } else {
-      whereClause.date = { gte: new Date() };
-    }
+      if (searchDate) {
+        if (isRange) {
+          whereClause.date = {
+            gte: searchDate,
+            lte: new Date(searchDate.getTime() + 7 * 24 * 60 * 60 * 1000), // + 7 days
+          };
+        } else {
+          // Exact date match (ignoring time)
+          const start = new Date(searchDate);
+          start.setHours(0, 0, 0, 0);
+          const end = new Date(searchDate);
+          end.setHours(23, 59, 59, 999);
+          whereClause.date = { gte: start, lte: end };
+        }
+      } else {
+        whereClause.date = { gte: new Date() };
+      }
 
-    const slots = (await this.bookingRepository.findManyDoctorScheduleSlot({
-      where: whereClause,
-      include: {
-        doctor: {
-          select: {
-            id: true,
-            fullName: true,
-            doctorProfile: {
-              select: { specialties: true },
+      const slots = (await this.bookingRepository.findManyDoctorScheduleSlot({
+        where: whereClause,
+        include: {
+          doctor: {
+            select: {
+              id: true,
+              fullName: true,
+              doctorProfile: {
+                select: {
+                  specialties: true,
+                  services: {
+                    select: { serviceId: true },
+                  },
+                },
+              },
             },
           },
+          room: {
+            select: { name: true },
+          },
         },
-        room: {
-          select: { name: true },
-        },
-      },
-      orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
-    })) as unknown as SlotWithRelations[];
+        orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+      })) as unknown as SlotWithRelations[];
 
-    // filter available slots
-    const availableSlots = slots.filter(
-      (slot) => slot.bookedCount < slot.maxPatients,
-    );
+      // Filter available and specialty
+      return slots
+        .filter((slot) => slot.bookedCount < slot.maxPatients)
+        .filter((s) => {
+          if (!specialtyName) return true;
+          return s.doctor.doctorProfile?.specialties.some((sp) =>
+            sp.toLowerCase().includes(specialtyName.toLowerCase()),
+          );
+        });
+    };
 
-    // Filter by specialty if provided
-    let filteredSlots = availableSlots;
-    if (specialtyName) {
-      filteredSlots = filteredSlots.filter((s) =>
-        s.doctor.doctorProfile?.specialties.some((sp) =>
-          sp.toLowerCase().includes(specialtyName.toLowerCase()),
-        ),
-      );
+    const searchDate = date ? new Date(date) : undefined;
+    let filteredSlots = await findSlots(searchDate, false);
+    let isFallback = false;
+
+    // If no slots found on specific date, try next 7 days
+    if (date && filteredSlots.length === 0) {
+      filteredSlots = await findSlots(new Date(), true);
+      isFallback = true;
     }
 
-    return filteredSlots.slice(0, limit).map((slot) => ({
-      slotId: slot.id,
-      doctorId: slot.doctor.id,
-      doctorName: slot.doctor.fullName,
-      specialties: slot.doctor.doctorProfile?.specialties,
-      date: slot.date.toISOString().split('T')[0],
-      startTime: slot.startTime,
-      endTime: slot.endTime,
-      roomName: slot.room?.name,
-    }));
+    return {
+      slots: filteredSlots.slice(0, limit).map((slot) => {
+        const dp = slot.doctor.doctorProfile;
+        const defaultServiceId =
+          dp?.services && dp.services.length > 0
+            ? dp.services[0].serviceId
+            : 'unknown';
+
+        return {
+          slotId: slot.id,
+          doctorId: slot.doctor.id,
+          doctorName: slot.doctor.fullName,
+          specialties: dp?.specialties,
+          serviceId: defaultServiceId,
+          date: slot.date.toISOString().split('T')[0],
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          roomName: slot.room?.name,
+        };
+      }),
+      metadata: {
+        searchedDate: date || 'today+',
+        foundCount: filteredSlots.length,
+        isFallbackSuggestions: isFallback,
+        message:
+          isFallback && filteredSlots.length > 0
+            ? `Không có lịch vào ngày ${date}, đây là các gợi ý trong 7 ngày tới.`
+            : filteredSlots.length === 0
+              ? 'Hiện tại không có lịch khám trống nào phù hợp.'
+              : undefined,
+      },
+    };
   }
 }

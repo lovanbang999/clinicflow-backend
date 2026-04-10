@@ -5,13 +5,15 @@ import { aiProvider } from './ai.provider';
 import { SpecialtyTool } from './tools/specialty.tool';
 import { ScheduleTool } from './tools/schedule.tool';
 import { BookingTool } from './tools/booking.tool';
+import { DoctorTool } from './tools/doctor.tool';
 import { CloudflareAdapter } from './cloudflare.adapter';
 import { AiSessionService } from './ai-session.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { BookingsModule } from '../bookings/bookings.module';
+import { DatabaseModule } from '../database/database.module';
 
 @Module({
-  imports: [PrismaModule, BookingsModule],
+  imports: [PrismaModule, DatabaseModule, BookingsModule],
   controllers: [AiController],
   providers: [
     AiService,
@@ -20,6 +22,7 @@ import { BookingsModule } from '../bookings/bookings.module';
     SpecialtyTool,
     ScheduleTool,
     BookingTool,
+    DoctorTool,
     CloudflareAdapter,
   ],
 })
