@@ -187,8 +187,8 @@ async function main() {
   });
   console.log('  ✅ Admin created:', admin.email);
 
-  // DOCTORS WITH PROFILES
-  const doctorsData = [
+  // PROVIDERS (Doctors & Technicians with profiles)
+  const providersData = [
     {
       user: {
         email: 'bs.nguyenvana@clinic.com',
@@ -197,21 +197,18 @@ async function main() {
         dateOfBirth: new Date('1975-03-20'),
         gender: Gender.MALE,
         address: '456 Lê Lợi, Quận 3, TP.HCM',
+        role: UserRole.DOCTOR,
       },
       profile: {
-        specialties: ['Nội tổng quát', 'Khám sức khỏe định kỳ'],
+        specialties: ['Nội khoa', 'Khám sức khỏe tổng quát'],
         qualifications: ['Bác sĩ CK1', 'Thạc sĩ Y khoa'],
         yearsOfExperience: 15,
         rating: 4.8,
         reviewCount: 120,
         bio: 'Bác sĩ có 15 năm kinh nghiệm trong lĩnh vực nội tổng quát, tận tâm với bệnh nhân',
+        consultationFee: 200000,
       },
-      serviceNames: [
-        'Khám tổng quát',
-        'Xét nghiệm máu tổng quát',
-        'Siêu âm tổng quát',
-        'Nội soi dạ dày',
-      ],
+      serviceNames: ['Khám tổng quát'],
     },
     {
       user: {
@@ -221,20 +218,18 @@ async function main() {
         dateOfBirth: new Date('1980-07-10'),
         gender: Gender.FEMALE,
         address: '789 Trần Hưng Đạo, Quận 5, TP.HCM',
+        role: UserRole.DOCTOR,
       },
       profile: {
-        specialties: ['Tim mạch', 'Điều trị bệnh mạch vành'],
+        specialties: ['Nội khoa', 'Tim mạch'],
         qualifications: ['Bác sĩ CK2', 'Tiến sĩ Y khoa'],
         yearsOfExperience: 12,
         rating: 4.9,
         reviewCount: 89,
         bio: 'Chuyên gia tim mạch với 12 năm kinh nghiệm, từng tu nghiệp tại Nhật Bản',
+        consultationFee: 300000,
       },
-      serviceNames: [
-        'Khám tim mạch',
-        'Xét nghiệm máu tổng quát',
-        'Siêu âm tổng quát',
-      ],
+      serviceNames: ['Khám tim mạch'],
     },
     {
       user: {
@@ -244,6 +239,7 @@ async function main() {
         dateOfBirth: new Date('1982-11-25'),
         gender: Gender.FEMALE,
         address: '321 Hai Bà Trưng, Quận 1, TP.HCM',
+        role: UserRole.DOCTOR,
       },
       profile: {
         specialties: ['Da liễu', 'Thẩm mỹ da'],
@@ -252,8 +248,9 @@ async function main() {
         rating: 4.7,
         reviewCount: 156,
         bio: 'Bác sĩ da liễu với chuyên môn sâu về điều trị mụn và thẩm mỹ da',
+        consultationFee: 250000,
       },
-      serviceNames: ['Khám da liễu', 'Xét nghiệm máu tổng quát'],
+      serviceNames: ['Khám da liễu'],
     },
     {
       user: {
@@ -263,14 +260,16 @@ async function main() {
         dateOfBirth: new Date('1986-04-08'),
         gender: Gender.MALE,
         address: '555 Võ Văn Tần, Quận 3, TP.HCM',
+        role: UserRole.DOCTOR,
       },
       profile: {
-        specialties: ['Răng hàm mặt', 'Nha khoa thẩm mỹ'],
+        specialties: ['Răng Hàm Mặt', 'Nha khoa thẩm mỹ'],
         qualifications: ['Bác sĩ CK1', 'Bác sĩ nội trú'],
         yearsOfExperience: 8,
         rating: 4.6,
         reviewCount: 95,
         bio: 'Chuyên gia răng hàm mặt, tập trung vào nha khoa thẩm mỹ và implant',
+        consultationFee: 350000,
       },
       serviceNames: ['Khám răng hàm mặt'],
     },
@@ -282,6 +281,7 @@ async function main() {
         dateOfBirth: new Date('1978-09-15'),
         gender: Gender.FEMALE,
         address: '888 Pasteur, Quận 1, TP.HCM',
+        role: UserRole.DOCTOR,
       },
       profile: {
         specialties: ['Mắt', 'Phẫu thuật khúc xạ'],
@@ -290,8 +290,9 @@ async function main() {
         rating: 4.9,
         reviewCount: 203,
         bio: 'Bác sĩ mắt giàu kinh nghiệm, chuyên về phẫu thuật khúc xạ và điều trị bệnh lý võng mạc',
+        consultationFee: 200000,
       },
-      serviceNames: ['Khám mắt', 'Xét nghiệm máu tổng quát'],
+      serviceNames: ['Khám mắt'],
     },
     {
       user: {
@@ -301,16 +302,18 @@ async function main() {
         dateOfBirth: new Date('1977-06-12'),
         gender: Gender.MALE,
         address: '200 Nam Kỳ Khởi Nghĩa, Quận 3, TP.HCM',
+        role: UserRole.DOCTOR,
       },
       profile: {
-        specialties: ['Tai mũi họng'],
+        specialties: ['Tai Mũi Họng'],
         qualifications: ['Bác sĩ CK2', 'Thạc sĩ Y khoa'],
         yearsOfExperience: 16,
         rating: 4.8,
         reviewCount: 175,
         bio: 'Chuyên gia tai mũi họng với hơn 16 năm kinh nghiệm điều trị các bệnh lý tai mũi họng phức tạp',
+        consultationFee: 220000,
       },
-      serviceNames: ['Khám tai mũi họng', 'Xét nghiệm máu tổng quát'],
+      serviceNames: ['Khám tai mũi họng'],
     },
     {
       user: {
@@ -320,6 +323,7 @@ async function main() {
         dateOfBirth: new Date('1983-02-28'),
         gender: Gender.FEMALE,
         address: '300 Cộng Hòa, Tân Bình, TP.HCM',
+        role: UserRole.DOCTOR,
       },
       profile: {
         specialties: ['Sản phụ khoa'],
@@ -328,36 +332,90 @@ async function main() {
         rating: 4.85,
         reviewCount: 210,
         bio: 'Bác sĩ sản phụ khoa tận tâm, có kinh nghiệm chăm sóc sức khỏe phụ nữ và theo dõi thai kỳ',
+        consultationFee: 300000,
+      },
+      serviceNames: ['Khám sản phụ khoa'],
+    },
+    // TECHNICIANS as providers for booking
+    {
+      user: {
+        email: 'ktv.phuong@clinic.com',
+        fullName: 'KTV. Trần Thị Phương',
+        phone: '0981111111',
+        dateOfBirth: new Date('1990-05-15'),
+        gender: Gender.FEMALE,
+        address: '111 Nguyễn Trãi, Quận 1, TP.HCM',
+        role: UserRole.TECHNICIAN,
+      },
+      profile: {
+        specialties: ['Xét nghiệm'],
+        qualifications: ['Cử nhân Xét nghiệm'],
+        yearsOfExperience: 6,
+        rating: 4.5,
+        reviewCount: 45,
+        bio: 'Kỹ thuật viên xét nghiệm tận tâm, chính xác trong các chỉ số bệnh lý',
+        consultationFee: 0,
       },
       serviceNames: [
-        'Khám sản phụ khoa',
-        'Siêu âm tổng quát',
         'Xét nghiệm máu tổng quát',
+        'Xét nghiệm nước tiểu',
+        'Xét nghiệm HbA1c',
+      ],
+    },
+    {
+      user: {
+        email: 'ktv.tuan@clinic.com',
+        fullName: 'KTV. Lê Anh Tuấn',
+        phone: '0982222222',
+        dateOfBirth: new Date('1992-08-22'),
+        gender: Gender.MALE,
+        address: '222 Lê Lợi, Quận 1, TP.HCM',
+        role: UserRole.TECHNICIAN,
+      },
+      profile: {
+        specialties: ['Chẩn đoán hình ảnh'],
+        qualifications: ['Cử nhân Chẩn đoán hình ảnh'],
+        yearsOfExperience: 5,
+        rating: 4.6,
+        reviewCount: 38,
+        bio: 'Kỹ thuật viên chẩn đoán hình ảnh chuyên về Siêu âm và X-quang',
+        consultationFee: 0,
+      },
+      serviceNames: [
+        'Siêu âm tim',
+        'Siêu âm tổng quát',
+        'X-quang ngực thẳng',
+        'Điện tâm đồ (ECG)',
+        'Đo loãng xương',
       ],
     },
   ];
 
-  const createdDoctors: User[] = [];
-  for (const doctorData of doctorsData) {
-    const doctor = await prisma.user.create({
+  const createdProviders: User[] = [];
+  for (const providerData of providersData) {
+    const user = await prisma.user.create({
       data: {
-        email: doctorData.user.email,
-        password: await hashPassword('doctor123'),
-        role: UserRole.DOCTOR,
-        fullName: doctorData.user.fullName,
-        phone: doctorData.user.phone,
-        dateOfBirth: doctorData.user.dateOfBirth,
-        gender: doctorData.user.gender,
-        address: doctorData.user.address,
+        email: providerData.user.email,
+        password: await hashPassword(
+          providerData.user.role === UserRole.DOCTOR
+            ? 'doctor123'
+            : 'technician123',
+        ),
+        role: providerData.user.role,
+        fullName: providerData.user.fullName,
+        phone: providerData.user.phone,
+        dateOfBirth: providerData.user.dateOfBirth,
+        gender: providerData.user.gender,
+        address: providerData.user.address,
         isActive: true,
         isVerified: true,
         doctorProfile: {
-          create: doctorData.profile,
+          create: providerData.profile,
         },
       },
     });
-    createdDoctors.push(doctor);
-    console.log(`  ✅ Doctor created: ${doctor.fullName}`);
+    createdProviders.push(user);
+    console.log(`  ✅ ${providerData.user.role} created: ${user.fullName}`);
   }
 
   // RECEPTIONISTS
@@ -398,43 +456,9 @@ async function main() {
   }
   console.log('  ✅ Receptionists created');
 
-  // TECHNICIANS
-  const techniciansData = [
-    {
-      email: 'ktv.phuong@clinic.com',
-      fullName: 'KTV. Trần Thị Phương',
-      phone: '0981111111',
-      dateOfBirth: new Date('1990-05-15'),
-      gender: Gender.FEMALE,
-      address: '111 Nguyễn Trãi, Quận 1, TP.HCM',
-    },
-    {
-      email: 'ktv.tuan@clinic.com',
-      fullName: 'KTV. Lê Anh Tuấn',
-      phone: '0982222222',
-      dateOfBirth: new Date('1992-08-22'),
-      gender: Gender.MALE,
-      address: '222 Lê Lợi, Quận 1, TP.HCM',
-    },
-  ];
-
-  for (const technician of techniciansData) {
-    await prisma.user.create({
-      data: {
-        email: technician.email,
-        password: await hashPassword('technician123'),
-        role: UserRole.TECHNICIAN,
-        fullName: technician.fullName,
-        phone: technician.phone,
-        dateOfBirth: technician.dateOfBirth,
-        gender: technician.gender,
-        address: technician.address,
-        isActive: true,
-        isVerified: true,
-      },
-    });
-  }
-  console.log('  ✅ Technicians created');
+  console.log(
+    '  ✅ Technicians represent clinical providers (Labs/Imaging) with schedules',
+  );
 
   // ============================================
   // 3. CREATE REGISTERED PATIENTS (User + PatientProfile)
@@ -846,23 +870,23 @@ async function main() {
   }
 
   // ============================================
-  // 6. LINK DOCTORS ↔ SERVICES
+  // 6. LINK PROVIDERS ↔ SERVICES
   // ============================================
-  console.log('\n🔗 Linking doctors to services...');
+  console.log('\n🔗 Linking providers to services...');
 
   let doctorServiceCount = 0;
-  for (let i = 0; i < doctorsData.length; i++) {
-    const doctorData = doctorsData[i];
-    const doctor = createdDoctors[i];
+  for (let i = 0; i < providersData.length; i++) {
+    const providerData = providersData[i];
+    const provider = createdProviders[i];
 
     const profile = await prisma.doctorProfile.findUnique({
-      where: { userId: doctor.id },
+      where: { userId: provider.id },
       select: { id: true },
     });
 
     if (!profile) continue;
 
-    for (const serviceName of doctorData.serviceNames) {
+    for (const serviceName of providerData.serviceNames) {
       const service = serviceMap.get(serviceName);
       if (!service) continue;
       await prisma.doctorService.create({
@@ -874,15 +898,15 @@ async function main() {
       doctorServiceCount++;
     }
     console.log(
-      `  ✅ ${doctor.fullName} → [${doctorData.serviceNames.join(', ')}]`,
+      `  ✅ ${provider.role} ${provider.fullName} → [${providerData.serviceNames.join(', ')}]`,
     );
   }
-  console.log(`  ✅ Total DoctorService records: ${doctorServiceCount}`);
+  console.log(`  ✅ Total Provider-Service records: ${doctorServiceCount}`);
 
   // ============================================
-  // 7. CREATE DOCTOR WORKING HOURS
+  // 7. CREATE PROVIDER WORKING HOURS
   // ============================================
-  console.log('\n⏰ Creating doctor working hours...');
+  console.log('\n⏰ Creating provider working hours...');
 
   const workingDays = [
     DayOfWeek.MONDAY,
@@ -894,11 +918,11 @@ async function main() {
   ];
 
   let workingHoursCount = 0;
-  for (const doctor of createdDoctors) {
+  for (const provider of createdProviders) {
     for (const day of workingDays) {
       await prisma.doctorWorkingHours.create({
         data: {
-          doctorId: doctor.id,
+          doctorId: provider.id,
           dayOfWeek: day,
           startTime: '08:00',
           endTime: '17:00',
@@ -908,7 +932,7 @@ async function main() {
     }
     await prisma.doctorWorkingHours.create({
       data: {
-        doctorId: doctor.id,
+        doctorId: provider.id,
         dayOfWeek: DayOfWeek.SATURDAY,
         startTime: '08:00',
         endTime: '12:00',
@@ -916,7 +940,9 @@ async function main() {
     });
     workingHoursCount++;
   }
-  console.log(`  ✅ Created ${workingHoursCount} working hour records`);
+  console.log(
+    `  ✅ Created ${workingHoursCount} provider working hour records`,
+  );
 
   // ============================================
   // 8. CREATE BREAK TIMES (Lunch breaks)
@@ -935,10 +961,10 @@ async function main() {
     const breakDate = new Date(dateOnly);
     breakDate.setDate(dateOnly.getDate() + dayOffset);
     if (breakDate.getDay() === 0) continue;
-    for (const doctor of createdDoctors) {
+    for (const provider of createdProviders) {
       await prisma.doctorBreakTime.create({
         data: {
-          doctorId: doctor.id,
+          doctorId: provider.id,
           breakDate: breakDate,
           startTime: '12:00',
           endTime: '13:00',
@@ -951,9 +977,9 @@ async function main() {
   console.log(`  ✅ Created ${breakTimeCount} break time records`);
 
   // ============================================
-  // 9. CREATE DOCTOR SCHEDULE SLOTS (Capacity tracking)
+  // 9. CREATE PROVIDER SCHEDULE SLOTS (Capacity tracking)
   // ============================================
-  console.log('\n📅 Creating doctor schedule slots...');
+  console.log('\n📅 Creating provider schedule slots...');
 
   let slotCount = 0;
   // Seed slots for the next 7 days
@@ -962,7 +988,7 @@ async function main() {
     slotDate.setDate(dateOnly.getDate() + dayOffset);
     if (slotDate.getDay() === 0) continue; // Skip Sunday
 
-    for (const doctor of createdDoctors) {
+    for (const provider of createdProviders) {
       // Create slots from 08:00 to 17:00 (hourly)
       for (let hour = 8; hour < 17; hour++) {
         if (hour === 12) continue; // Skip lunch hour
@@ -970,25 +996,38 @@ async function main() {
         const startTime = `${String(hour).padStart(2, '0')}:00`;
         const endTime = `${String(hour + 1).padStart(2, '0')}:00`;
 
-        // Assign a consultation room simply by matching index
-        const consultationRooms = createdRooms.filter(
-          (r) => r.type === RoomType.CONSULTATION,
-        );
-        const assignedRoom =
-          consultationRooms[
-            createdDoctors.findIndex((d) => d.id === doctor.id) %
-              consultationRooms.length
-          ];
+        // Assign a consultation room
+        let assignedRoom: Room | undefined;
+        if (provider.role === UserRole.DOCTOR) {
+          const consultationRooms = createdRooms.filter(
+            (r) => r.type === RoomType.CONSULTATION,
+          );
+          assignedRoom =
+            consultationRooms[
+              createdProviders.findIndex((p) => p.id === provider.id) %
+                consultationRooms.length
+            ];
+        } else {
+          // Technicians get LAB or ULTRASOUND rooms
+          const techRooms = createdRooms.filter(
+            (r) => r.type === RoomType.LAB || r.type === RoomType.ULTRASOUND,
+          );
+          assignedRoom =
+            techRooms[
+              createdProviders.findIndex((p) => p.id === provider.id) %
+                techRooms.length
+            ];
+        }
 
         await prisma.doctorScheduleSlot.create({
           data: {
-            doctorId: doctor.id,
+            doctorId: provider.id,
             roomId: assignedRoom?.id,
             date: slotDate,
             startTime,
             endTime,
-            maxPreBookings: 2, // 2 pre-bookings per hour
-            maxQueueSize: 5, // 5 walk-in slots per hour
+            maxPreBookings: 2,
+            maxQueueSize: 5,
             preBookedCount: 0,
             queueCount: 0,
             isActive: true,
@@ -998,15 +1037,19 @@ async function main() {
       }
     }
   }
-  console.log(`  ✅ Created ${slotCount} schedule slots`);
+  console.log(`  ✅ Created ${slotCount} provider schedule slots`);
 
   // ============================================
   // 9. CREATE SAMPLE BOOKINGS (hybrid: pre-booking + walk-in)
   // ============================================
   console.log('\n📅 Creating sample bookings...');
 
-  const doctorVanAn = createdDoctors[0]; // Nội tổng quát
-  const doctorLeBinh = createdDoctors[1]; // Tim mạch
+  const doctorVanAn = createdProviders.find(
+    (p) => p.email === 'bs.nguyenvana@clinic.com',
+  )!;
+  const doctorLeBinh = createdProviders.find(
+    (p) => p.email === 'bs.lethib@clinic.com',
+  )!;
   const khamTongQuat = serviceMap.get('Khám tổng quát')!;
   const khamTimMach = serviceMap.get('Khám tim mạch')!;
   const xetNghiem = serviceMap.get('Xét nghiệm máu tổng quát')!;
