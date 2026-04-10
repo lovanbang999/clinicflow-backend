@@ -17,6 +17,12 @@ import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { AiSessionOutcome } from '@prisma/client';
 import { Response } from 'express';
+import { PatientContext } from './ai.provider';
+import {
+  I_PROFILE_REPOSITORY,
+  IProfileRepository,
+} from '../database/interfaces/profile.repository.interface';
+import { Inject } from '@nestjs/common';
 
 @Controller('ai')
 @UseGuards(JwtAuthGuard)
@@ -24,12 +30,15 @@ export class AiController {
   constructor(
     private readonly aiService: AiService,
     private readonly aiSessionService: AiSessionService,
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
   ) {}
 
   /**
    * POST /ai/chat
-   * - If sessionId is provided in body, reuse the existing session.
-   * - Otherwise create a new session and return its ID via X-Session-Id header.
+   * - Fetches patient profile to build personalized system prompt.
+   * - If sessionId is provided in body, reuses the existing session.
+   * - Otherwise creates a new session and returns its ID via X-Session-Id header.
    */
   @Post('chat')
   async chatStream(
@@ -45,13 +54,53 @@ export class AiController {
       sessionId = await this.aiSessionService.createSession(user.id);
     }
 
+    // Fetch patient profile for context and booking tool
+    let patientContext: PatientContext | undefined;
+    let patientProfileId: string = user.id; // Fallback to userId if profile not found
+    try {
+      const profile = await this.profileRepository.findFirstPatientProfile({
+        where: { userId: user.id },
+        select: {
+          id: true,
+          fullName: true,
+          gender: true,
+          dateOfBirth: true,
+          bloodType: true,
+          allergies: true,
+          chronicConditions: true,
+        },
+      });
+
+      if (profile) {
+        // patientProfileId is passed separately for booking tool — NOT user.id
+        patientProfileId = profile.id;
+        patientContext = {
+          fullName: profile.fullName,
+          gender: profile.gender,
+          dateOfBirth: profile.dateOfBirth ?? undefined,
+          bloodType: profile.bloodType,
+          allergies: profile.allergies,
+          chronicConditions: profile.chronicConditions,
+        };
+      }
+    } catch {
+      // Profile fetch failure should not block the chat
+    }
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Session-Id', sessionId); // Let frontend persist the sessionId
+    res.setHeader('X-Session-Id', sessionId);
 
     const subscription = this.aiService
-      .chatStream(history, message, user.id, sessionId)
+      .chatStream(
+        history,
+        message,
+        patientProfileId,
+        user.id, // Pass userId for auditing
+        sessionId,
+        patientContext,
+      )
       .subscribe({
         next: (data: unknown) => {
           res.write(`data: ${JSON.stringify(data)}\n\n`);
