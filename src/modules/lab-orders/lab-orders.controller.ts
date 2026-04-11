@@ -18,7 +18,7 @@ import { LabOrdersService } from './lab-orders.service';
 import { CreateLabOrderDto } from './dto/create-lab-order.dto';
 import { UploadLabResultDto } from './dto/upload-lab-result.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { LabOrderStatus, UserRole } from '@prisma/client';
+import { LabOrderStatus, UserRole, User } from '@prisma/client';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -34,18 +34,26 @@ export class LabOrdersController {
   @Roles(UserRole.DOCTOR, UserRole.ADMIN)
   @ApiOperation({ summary: 'Create a new lab order' })
   @ApiResponse({ status: 201, description: 'Lab order created successfully' })
-  createOrder(
-    @CurrentUser('id') doctorId: string,
+  createLabOrder(
+    @CurrentUser() user: User,
     @Body() createLabOrderDto: CreateLabOrderDto,
   ) {
-    return this.labOrdersService.createOrder(doctorId, createLabOrderDto);
+    return this.labOrdersService.createOrder(user.id, createLabOrderDto, user);
   }
 
   @Get('booking/:id')
-  @Roles(UserRole.DOCTOR, UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @Roles(
+    UserRole.DOCTOR,
+    UserRole.ADMIN,
+    UserRole.RECEPTIONIST,
+    UserRole.PATIENT,
+  )
   @ApiOperation({ summary: 'Get lab orders for a specific booking' })
-  getOrdersByBooking(@Param('id') bookingId: string) {
-    return this.labOrdersService.getOrdersByBooking(bookingId);
+  getLabOrdersByBooking(
+    @Param('id') bookingId: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.labOrdersService.getOrdersByBooking(bookingId, user);
   }
 
   @Get('pending')
@@ -91,10 +99,11 @@ export class LabOrdersController {
     UserRole.RECEPTIONIST,
     UserRole.DOCTOR,
     UserRole.TECHNICIAN,
+    UserRole.PATIENT,
   )
   @ApiOperation({ summary: 'Get a single lab order by ID' })
-  getOrderById(@Param('id') id: string) {
-    return this.labOrdersService.getOrderById(id);
+  getLabOrderById(@CurrentUser() user: User, @Param('id') labOrderId: string) {
+    return this.labOrdersService.getOrderById(labOrderId, user);
   }
 
   @Get('booking/:id/pending-unbilled')
@@ -103,8 +112,11 @@ export class LabOrdersController {
     summary:
       'Get PENDING lab orders for a booking not yet added to any invoice',
   })
-  getPendingUnbilledOrders(@Param('id') bookingId: string) {
-    return this.labOrdersService.getPendingUnbilledOrders(bookingId);
+  getPendingUnbilledOrders(
+    @Param('id') bookingId: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.labOrdersService.getPendingUnbilledOrders(bookingId, user);
   }
 
   @Patch(':id/result')
@@ -117,21 +129,18 @@ export class LabOrdersController {
   @ApiOperation({ summary: 'Add or update the lab result for an order' })
   @ApiResponse({ status: 200, description: 'Lab result saved successfully' })
   addResult(
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: User,
     @Param('id') labOrderId: string,
     @Body() dto: UploadLabResultDto,
   ) {
-    return this.labOrdersService.addResult(userId, labOrderId, dto);
+    return this.labOrdersService.addResult(user.id, labOrderId, dto, user);
   }
 
   @Delete(':id')
   @Roles(UserRole.DOCTOR, UserRole.ADMIN)
   @ApiOperation({ summary: 'Delete a pending lab order' })
-  deleteOrder(
-    @CurrentUser('id') doctorId: string,
-    @Param('id') labOrderId: string,
-  ) {
-    return this.labOrdersService.deleteOrder(doctorId, labOrderId);
+  deleteOrder(@CurrentUser() user: User, @Param('id') labOrderId: string) {
+    return this.labOrdersService.deleteOrder(user.id, labOrderId, user);
   }
 
   @Patch(':id/status')
@@ -143,10 +152,11 @@ export class LabOrdersController {
   )
   @ApiOperation({ summary: 'Update the lab order status (e.g. IN_PROGRESS)' })
   @ApiResponse({ status: 200, description: 'Lab order status updated' })
-  updateOrderStatus(
+  updateStatus(
     @Param('id') labOrderId: string,
     @Body('status') status: LabOrderStatus,
+    @CurrentUser() user: User,
   ) {
-    return this.labOrdersService.updateOrderStatus(labOrderId, status);
+    return this.labOrdersService.updateStatus(labOrderId, status, user);
   }
 }

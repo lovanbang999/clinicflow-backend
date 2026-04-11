@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { BookingsService } from './bookings.service';
+import { QueueService } from '../queue/queue.service';
 import {
   I_BOOKING_REPOSITORY,
   IBookingRepository,
@@ -16,6 +17,7 @@ export class BookingsCronService {
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
     private readonly bookingsService: BookingsService,
+    private readonly queueService: QueueService,
   ) {}
 
   /**
@@ -78,7 +80,7 @@ export class BookingsCronService {
         );
 
         // After freeing the slot, recalculate estimated times for walk-ins
-        this.bookingsService
+        this.queueService
           .recalculateEstimatedTimes(
             booking.doctorId,
             booking.bookingDate.toISOString().split('T')[0],

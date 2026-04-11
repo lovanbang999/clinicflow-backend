@@ -7,7 +7,6 @@ import {
   Patch,
   Post,
   Query,
-  Req,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -17,8 +16,9 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { UserRole, User } from '@prisma/client';
 
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -43,9 +43,9 @@ export class MedicalRecordsController {
   @ApiResponse({ status: 200 })
   upsertMedicalRecord(
     @Body() dto: CreateMedicalRecordDto,
-    @Req() req: { user: { id: string } },
+    @CurrentUser() user: User,
   ) {
-    return this.medicalRecordsService.upsertMedicalRecord(dto, req.user.id);
+    return this.medicalRecordsService.upsertMedicalRecord(dto, user.id, user);
   }
 
   // Symptoms
@@ -55,9 +55,14 @@ export class MedicalRecordsController {
   saveSymptoms(
     @Param('bookingId') bookingId: string,
     @Body() dto: SaveSymptomsDto,
-    @Req() req: { user: { id: string } },
+    @CurrentUser() user: User,
   ) {
-    return this.medicalRecordsService.saveSymptoms(bookingId, dto, req.user.id);
+    return this.medicalRecordsService.saveSymptoms(
+      bookingId,
+      dto,
+      user.id,
+      user,
+    );
   }
 
   // Service Orders
@@ -67,12 +72,13 @@ export class MedicalRecordsController {
   orderServices(
     @Param('bookingId') bookingId: string,
     @Body() dto: OrderServicesDto,
-    @Req() req: { user: { id: string } },
+    @CurrentUser() user: User,
   ) {
     return this.medicalRecordsService.orderServices(
       bookingId,
       dto,
-      req.user.id,
+      user.id,
+      user,
     );
   }
 
@@ -82,12 +88,13 @@ export class MedicalRecordsController {
   removeServiceOrder(
     @Param('bookingId') bookingId: string,
     @Param('orderId') orderId: string,
-    @Req() req: { user: { id: string } },
+    @CurrentUser() user: User,
   ) {
     return this.medicalRecordsService.removeServiceOrder(
       bookingId,
       orderId,
-      req.user.id,
+      user.id,
+      user,
     );
   }
 
@@ -97,8 +104,11 @@ export class MedicalRecordsController {
   @ApiOperation({
     summary: 'B4: Get visit results (service orders + existing diagnosis)',
   })
-  getVisitResults(@Param('bookingId') bookingId: string) {
-    return this.medicalRecordsService.getVisitResults(bookingId);
+  getVisitResults(
+    @Param('bookingId') bookingId: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.medicalRecordsService.getVisitResults(bookingId, user);
   }
 
   @Patch(':bookingId/diagnose')
@@ -107,12 +117,13 @@ export class MedicalRecordsController {
   saveDiagnosis(
     @Param('bookingId') bookingId: string,
     @Body() dto: SaveDiagnosisDto,
-    @Req() req: { user: { id: string } },
+    @CurrentUser() user: User,
   ) {
     return this.medicalRecordsService.saveDiagnosis(
       bookingId,
       dto,
-      req.user.id,
+      user.id,
+      user,
     );
   }
 
@@ -125,12 +136,13 @@ export class MedicalRecordsController {
   savePrescription(
     @Param('bookingId') bookingId: string,
     @Body() dto: CreatePrescriptionDto,
-    @Req() req: { user: { id: string } },
+    @CurrentUser() user: User,
   ) {
     return this.medicalRecordsService.savePrescription(
       bookingId,
       dto,
-      req.user.id,
+      user.id,
+      user,
     );
   }
 
@@ -152,11 +164,13 @@ export class MedicalRecordsController {
     @Param('patientProfileId') patientProfileId: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
+    @CurrentUser() user?: User,
   ) {
     return this.medicalRecordsService.getPatientHistory(
       patientProfileId,
       page ? Number(page) : 1,
       limit ? Number(limit) : 10,
+      user,
     );
   }
 
@@ -167,14 +181,15 @@ export class MedicalRecordsController {
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   getMyVisits(
-    @Req() req: { user: { id: string } },
+    @CurrentUser() user: User,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
     return this.medicalRecordsService.getMyVisits(
-      req.user.id,
+      user.id,
       page ? Number(page) : 1,
       limit ? Number(limit) : 10,
+      user,
     );
   }
 
@@ -182,15 +197,15 @@ export class MedicalRecordsController {
   @Get('patient/my-stats')
   @Roles(UserRole.PATIENT)
   @ApiOperation({ summary: 'Patient visit stats for their dashboard' })
-  getPatientStats(@Req() req: { user: { id: string } }) {
-    return this.medicalRecordsService.getPatientStats(req.user.id);
+  getPatientStats(@CurrentUser() user: User) {
+    return this.medicalRecordsService.getPatientStats(user.id, user);
   }
 
   // Doctor stats
   @Get('doctor/stats')
   @Roles(UserRole.DOCTOR)
   @ApiOperation({ summary: 'Doctor stats for their dashboard panel' })
-  getDoctorStats(@Req() req: { user: { id: string } }) {
-    return this.medicalRecordsService.getDoctorStats(req.user.id);
+  getDoctorStats(@CurrentUser() user: User) {
+    return this.medicalRecordsService.getDoctorStats(user.id);
   }
 }

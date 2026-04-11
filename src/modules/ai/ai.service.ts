@@ -3,6 +3,7 @@ import {
   GoogleGenAI,
   SendMessageParameters,
   FunctionCall,
+  Part,
 } from '@google/genai';
 import {
   AI_PROVIDER,
@@ -89,14 +90,14 @@ export class AiService {
    * Accepts optional patientContext to build a personalized system prompt.
    */
   chatStream(
-    historyMessages: any[],
+    historyMessages: unknown[],
     userMessage: string,
     patientId: string,
     userId: string,
     sessionId: string,
     patientContext?: PatientContext,
-  ): Observable<any> {
-    return new Observable((subscriber) => {
+  ): Observable<unknown> {
+    return new Observable((subscriber: Subscriber<unknown>) => {
       this.processChat(
         historyMessages,
         userMessage,
@@ -142,12 +143,12 @@ export class AiService {
   }
 
   private async processChat(
-    historyMessages: any[],
+    historyMessages: unknown[],
     userMessage: string,
     patientId: string,
     userId: string,
     sessionId: string,
-    subscriber: Subscriber<any>,
+    subscriber: Subscriber<unknown>,
     patientContext?: PatientContext,
   ) {
     // Persist the user message first (fire-and-forget, non-blocking)
@@ -166,7 +167,7 @@ export class AiService {
         systemInstruction,
         tools: CHATBOT_TOOLS,
       },
-      history: historyMessages,
+      history: historyMessages as any[],
     });
 
     let messageToProcess: SendMessageParameters = {
@@ -198,12 +199,15 @@ export class AiService {
         const toolResults = await Promise.all(
           functionCallsInTurn.map(async (call) => {
             console.log(`[AiService] TOOL EXECUTION: ${call.name}`, call.args);
-            const result = await this.executeTool(
+            const rawResult = await this.executeTool(
               call.name || '',
               call.args || {},
               patientId,
               userId,
             );
+
+            // Sanitize result to remove non-serializable objects (like Prisma Decimals)
+            const result = this.sanitizeToolResult(rawResult);
 
             // Persist tool call message with result
             const toolResult = result as Record<string, unknown>;
@@ -278,7 +282,6 @@ export class AiService {
                 r.bookingId,
               );
             }
-
             return {
               functionResponse: {
                 name: call.name,
@@ -287,7 +290,7 @@ export class AiService {
             };
           }),
         );
-        messageToProcess = { message: toolResults };
+        messageToProcess = { message: toolResults as Part[] };
       } else {
         hasMoreTurns = false;
       }
@@ -303,5 +306,21 @@ export class AiService {
     }
 
     subscriber.complete();
+  }
+
+  /**
+   * Deeply cleans tool results to ensure they are plain JSON objects.
+   * Specifically converts Prisma Decimal objects to numbers/strings
+   * and ensures no functions or non-clonable classes remain.
+   */
+  private sanitizeToolResult(result: unknown): unknown {
+    if (!result) return result;
+    try {
+      // Simple but effective: pipe through JSON to strip functions and convert Decimals to strings/numbers
+      return JSON.parse(JSON.stringify(result));
+    } catch (error) {
+      this.logger.error('Failed to sanitize tool result:', error);
+      return result;
+    }
   }
 }

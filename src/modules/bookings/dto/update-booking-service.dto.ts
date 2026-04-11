@@ -18,5 +18,5 @@ export class UpdateBookingServiceDto {
   })
   @IsOptional()
   @IsUUID('4', { message: 'Invalid doctor ID format' })
-  doctorId?: string;
+  newDoctorId?: string;
 }

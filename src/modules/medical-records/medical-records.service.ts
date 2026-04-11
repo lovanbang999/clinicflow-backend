@@ -73,14 +73,81 @@ export class MedicalRecordsService {
   ) {}
 
   // PRIVATE HELPERS
-  private async getVerifiedBooking(bookingId: string, doctorId: string) {
+  private async getVerifiedBooking(
+    bookingId: string,
+    doctorId: string,
+    currentUser?: Express.User,
+  ) {
     const booking = await this.bookingRepository.findUnique({
       where: { id: bookingId },
     });
     if (!booking) throw new NotFoundException('Booking not found');
-    if (booking.doctorId !== doctorId)
+
+    // Ownership check: If doctor, must be the assigned doctor
+    if (
+      currentUser?.role === 'DOCTOR' &&
+      booking.doctorId !== currentUser.id &&
+      booking.doctorId !== doctorId
+    ) {
       throw new ForbiddenException('You are not authorized for this booking');
+    }
+
     return booking;
+  }
+
+  /**
+   * Verified if the requester has a treatment relationship with the patient.
+   * - Patient: Always if it's their own record.
+   * - Doctor: If they are currently assigned or have treated them before.
+   * - Admin: Always.
+   */
+  private async validateTreatmentRelation(
+    patientProfileId: string,
+    currentUser?: Express.User,
+  ) {
+    if (!currentUser) return; // For internal calls
+
+    if (currentUser.role === 'ADMIN') return;
+
+    if (currentUser.role === 'PATIENT') {
+      const profile = await this.profileRepository.findFirstPatientProfile({
+        where: { userId: currentUser.id },
+      });
+      if (!profile || profile.id !== patientProfileId) {
+        throw new ForbiddenException(
+          'You can only access your own medical records',
+        );
+      }
+      return;
+    }
+
+    if (currentUser.role === 'DOCTOR') {
+      // Check for ANY active or COMPLETED booking between this doctor and patient
+      const treatmentRelation = await this.bookingRepository.findFirst({
+        where: {
+          doctorId: currentUser.id,
+          patientProfileId,
+          status: {
+            in: [
+              'CONFIRMED',
+              'CHECKED_IN',
+              'IN_PROGRESS',
+              'COMPLETED',
+              'PENDING',
+            ],
+          },
+        },
+      });
+
+      if (!treatmentRelation) {
+        throw new ForbiddenException(
+          'You are not authorized to view this patient history (No prior treatment relationship)',
+        );
+      }
+      return;
+    }
+
+    throw new ForbiddenException('Unauthorized access');
   }
 
   private async getOrCreateRecord(
@@ -132,8 +199,9 @@ export class MedicalRecordsService {
     bookingId: string,
     dto: SaveSymptomsDto,
     doctorId: string,
+    currentUser?: Express.User,
   ) {
-    await this.getVerifiedBooking(bookingId, doctorId);
+    await this.getVerifiedBooking(bookingId, doctorId, currentUser);
 
     const record = await this.clinicalRepository.transaction(async (tx) => {
       const b = await this.bookingRepository.findUnique({
@@ -199,8 +267,13 @@ export class MedicalRecordsService {
     bookingId: string,
     dto: OrderServicesDto,
     doctorId: string,
+    currentUser?: Express.User,
   ) {
-    const booking = await this.getVerifiedBooking(bookingId, doctorId);
+    const booking = await this.getVerifiedBooking(
+      bookingId,
+      doctorId,
+      currentUser,
+    );
 
     // Validate services exist
     const services = await this.clinicalRepository.transaction(async (tx) => {
@@ -301,8 +374,9 @@ export class MedicalRecordsService {
     bookingId: string,
     orderId: string,
     doctorId: string,
+    currentUser?: Express.User,
   ) {
-    await this.getVerifiedBooking(bookingId, doctorId);
+    await this.getVerifiedBooking(bookingId, doctorId, currentUser);
 
     const order = await this.clinicalRepository.findUniqueVisitServiceOrder({
       where: { id: orderId },
@@ -326,7 +400,14 @@ export class MedicalRecordsService {
   }
 
   // GET Results — composite response for B4
-  async getVisitResults(bookingId: string) {
+  async getVisitResults(bookingId: string, currentUser?: Express.User) {
+    const booking = await this.bookingRepository.findUnique({
+      where: { id: bookingId },
+    });
+    if (!booking) throw new NotFoundException('Booking not found');
+
+    // Ownership check for doctors/patients
+    await this.validateTreatmentRelation(booking.patientProfileId, currentUser);
     const record = await this.clinicalRepository.findUniqueMedicalRecord({
       where: { bookingId },
       include: this.visitIncludes,
@@ -345,8 +426,9 @@ export class MedicalRecordsService {
     bookingId: string,
     dto: SaveDiagnosisDto,
     doctorId: string,
+    currentUser?: Express.User,
   ) {
-    await this.getVerifiedBooking(bookingId, doctorId);
+    await this.getVerifiedBooking(bookingId, doctorId, currentUser);
 
     const record = await this.clinicalRepository.findUniqueMedicalRecord({
       where: { bookingId },
@@ -399,8 +481,13 @@ export class MedicalRecordsService {
     bookingId: string,
     dto: CreatePrescriptionDto,
     doctorId: string,
+    currentUser?: Express.User,
   ) {
-    const booking = await this.getVerifiedBooking(bookingId, doctorId);
+    const booking = await this.getVerifiedBooking(
+      bookingId,
+      doctorId,
+      currentUser,
+    );
 
     const record = await this.clinicalRepository.findUniqueMedicalRecord({
       where: { bookingId },
@@ -572,18 +659,12 @@ export class MedicalRecordsService {
   }
 
   // LEGACY: Kept for compatibility — delegates to step engine
-  async upsertMedicalRecord(dto: CreateMedicalRecordDto, doctorId: string) {
-    const booking = await this.bookingRepository.findUnique({
-      where: { id: dto.bookingId },
-    });
-    if (!booking)
-      throw new ApiException(
-        MessageCodes.BOOKING_NOT_FOUND,
-        'Booking not found',
-        404,
-      );
-    if (booking.doctorId !== doctorId)
-      throw new ApiException(MessageCodes.INVALID_QUERY, 'Not authorized', 403);
+  async upsertMedicalRecord(
+    dto: CreateMedicalRecordDto,
+    doctorId: string,
+    currentUser?: Express.User,
+  ) {
+    await this.getVerifiedBooking(dto.bookingId, doctorId, currentUser);
 
     // Route to step engine based on what data is present
     if (
@@ -661,7 +742,13 @@ export class MedicalRecordsService {
   }
 
   // Patient History
-  async getPatientHistory(patientProfileId: string, page = 1, limit = 10) {
+  async getPatientHistory(
+    patientProfileId: string,
+    page = 1,
+    limit = 10,
+    currentUser?: Express.User,
+  ) {
+    await this.validateTreatmentRelation(patientProfileId, currentUser);
     const patientProfile =
       await this.profileRepository.findUniquePatientProfile({
         where: { id: patientProfileId },
@@ -733,7 +820,12 @@ export class MedicalRecordsService {
   }
 
   // Patient my-visits (self-service)
-  async getMyVisits(userId: string, page = 1, limit = 10) {
+  async getMyVisits(
+    userId: string,
+    page = 1,
+    limit = 10,
+    currentUser?: Express.User,
+  ) {
     const patientProfile = await this.profileRepository.findFirstPatientProfile(
       {
         where: { userId },
@@ -742,11 +834,11 @@ export class MedicalRecordsService {
     if (!patientProfile)
       throw new NotFoundException('Patient profile not found');
 
-    return this.getPatientHistory(patientProfile.id, page, limit);
+    return this.getPatientHistory(patientProfile.id, page, limit, currentUser);
   }
 
   // Patient visit stats
-  async getPatientStats(userId: string) {
+  async getPatientStats(userId: string, currentUser?: Express.User) {
     const patientProfile = await this.profileRepository.findFirstPatientProfile(
       {
         where: { userId },
@@ -754,6 +846,9 @@ export class MedicalRecordsService {
     );
     if (!patientProfile)
       throw new NotFoundException('Patient profile not found');
+
+    // Ownership check
+    await this.validateTreatmentRelation(patientProfile.id, currentUser);
 
     const now = new Date();
     const startOfYear = new Date(now.getFullYear(), 0, 1);

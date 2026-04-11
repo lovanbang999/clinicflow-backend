@@ -40,21 +40,24 @@ export class BillingController {
   // Invoice CRUD
 
   @Post('invoices')
-  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
   @ApiOperation({
     summary:
       'Create DRAFT invoice for a booking (Phương án B: nhiều invoice/booking)',
   })
-  createInvoice(@Body() dto: CreateInvoiceDto) {
-    return this.billingService.createInvoice(dto);
+  createInvoice(@Body() dto: CreateInvoiceDto, @CurrentUser() user: any) {
+    return this.billingService.createInvoice(dto, user);
   }
 
   @Delete('invoices/:id')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete a DRAFT invoice' })
-  deleteInvoice(@Param('id', ParseUUIDPipe) id: string) {
-    return this.billingService.deleteInvoice(id);
+  deleteInvoice(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.billingService.deleteInvoice(id, user);
   }
 
   @Get('invoices')
@@ -75,6 +78,7 @@ export class BillingController {
     @Query('endDate') endDate?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @CurrentUser() user?: any,
   ) {
     return this.billingService.listInvoices({
       status,
@@ -84,16 +88,25 @@ export class BillingController {
       endDate,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 20,
+      currentUser: user,
     });
   }
 
   @Get('invoices/booking/:bookingId')
-  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.RECEPTIONIST,
+    UserRole.DOCTOR,
+    UserRole.PATIENT,
+  )
   @ApiOperation({
     summary: 'List all invoices for a booking (Phương án B: returns array)',
   })
-  listInvoicesByBooking(@Param('bookingId', ParseUUIDPipe) bookingId: string) {
-    return this.billingService.listInvoicesByBooking(bookingId);
+  listInvoicesByBooking(
+    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.billingService.listInvoicesByBooking(bookingId, user);
   }
 
   @Get('invoices/booking/:bookingId/pending-labs')
@@ -109,10 +122,15 @@ export class BillingController {
   }
 
   @Get('invoices/:id')
-  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.RECEPTIONIST,
+    UserRole.DOCTOR,
+    UserRole.PATIENT,
+  )
   @ApiOperation({ summary: 'Get invoice by invoice ID' })
-  getInvoice(@Param('id', ParseUUIDPipe) id: string) {
-    return this.billingService.getInvoiceById(id);
+  getInvoice(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
+    return this.billingService.getInvoiceById(id, user);
   }
 
   // Invoice Items
@@ -123,8 +141,9 @@ export class BillingController {
   addItem(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AddInvoiceItemDto,
+    @CurrentUser() user: any,
   ) {
-    return this.billingService.addInvoiceItem(id, dto);
+    return this.billingService.addInvoiceItem(id, dto, user);
   }
 
   @Delete('invoices/:id/items/:itemId')
@@ -134,8 +153,9 @@ export class BillingController {
   removeItem(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('itemId', ParseUUIDPipe) itemId: string,
+    @CurrentUser() user: any,
   ) {
-    return this.billingService.removeInvoiceItem(id, itemId);
+    return this.billingService.removeInvoiceItem(id, itemId, user);
   }
 
   // Payment
@@ -148,9 +168,9 @@ export class BillingController {
   addPayment(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ConfirmPaymentDto,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: any,
   ) {
-    return this.billingService.addPayment(id, dto, user.id);
+    return this.billingService.addPayment(id, dto, user.id, user);
   }
 
   @Get('my-invoices')

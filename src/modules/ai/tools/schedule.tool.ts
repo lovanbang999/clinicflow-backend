@@ -36,9 +36,15 @@ export class ScheduleTool {
     date?: string;
     limit?: number;
   }) {
-    const { specialtyName, date, limit = 5 } = args;
+    const { serviceId, specialtyName, date, limit = 5 } = args;
 
     const findSlots = async (searchDate?: Date, isRange = false) => {
+      const getVnDate = (date: Date) => {
+        return new Date(
+          date.toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }),
+        );
+      };
+
       const whereClause: Record<string, any> = {
         status: 'SCHEDULED',
         isActive: true,
@@ -51,15 +57,18 @@ export class ScheduleTool {
             lte: new Date(searchDate.getTime() + 7 * 24 * 60 * 60 * 1000), // + 7 days
           };
         } else {
-          // Exact date match (ignoring time)
-          const start = new Date(searchDate);
+          // Exact date match (ignoring time) in local TZ
+          const start = getVnDate(searchDate);
           start.setHours(0, 0, 0, 0);
-          const end = new Date(searchDate);
+          const end = getVnDate(searchDate);
           end.setHours(23, 59, 59, 999);
           whereClause.date = { gte: start, lte: end };
         }
       } else {
-        whereClause.date = { gte: new Date() };
+        // Today and future in local TZ
+        const today = getVnDate(new Date());
+        today.setHours(0, 0, 0, 0);
+        whereClause.date = { gte: today };
       }
 
       const slots = (await this.bookingRepository.findManyDoctorScheduleSlot({
@@ -94,6 +103,12 @@ export class ScheduleTool {
           return s.doctor.doctorProfile?.specialties.some((sp) =>
             sp.toLowerCase().includes(specialtyName.toLowerCase()),
           );
+        })
+        .filter((s) => {
+          if (!serviceId) return true;
+          return s.doctor.doctorProfile?.services.some(
+            (sv) => sv.serviceId === serviceId,
+          );
         });
     };
 
@@ -121,7 +136,12 @@ export class ScheduleTool {
           doctorName: slot.doctor.fullName,
           specialties: dp?.specialties,
           serviceId: defaultServiceId,
-          date: slot.date.toISOString().split('T')[0],
+          date: new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Ho_Chi_Minh',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(slot.date),
           startTime: slot.startTime,
           endTime: slot.endTime,
           roomName: slot.room?.name,
