@@ -6,14 +6,21 @@ import {
   IBookingRepository,
   I_BOOKING_REPOSITORY,
 } from '../database/interfaces/booking.repository.interface';
+import {
+  IProfileRepository,
+  I_PROFILE_REPOSITORY,
+} from '../database/interfaces/profile.repository.interface';
 import { Injectable, HttpStatus, Inject } from '@nestjs/common';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 
 import { CreateLabOrderDto } from './dto/create-lab-order.dto';
 import { UploadLabResultDto } from './dto/upload-lab-result.dto';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
-import { LabOrderStatus, InvoiceStatus } from '@prisma/client';
+import {
+  ResponseHelper,
+  ApiResponse,
+} from '../../common/interfaces/api-response.interface';
+import { LabOrderStatus, InvoiceStatus, User } from '@prisma/client';
 import { LabOrdersGateway } from './lab-orders.gateway';
 import { BillingService } from '../billing/billing.service';
 import { forwardRef } from '@nestjs/common';
@@ -26,17 +33,90 @@ export class LabOrdersService {
     private readonly clinicalRepository: IClinicalRepository,
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
     private readonly labOrdersGateway: LabOrdersGateway,
     @Inject(forwardRef(() => BillingService))
     private readonly billingService: BillingService,
   ) {}
 
   /**
+   * Verified if the requester has access to the lab order details.
+   */
+  private async validateLabOrderAccess(
+    patientProfileId: string,
+    doctorId: string | undefined,
+    currentUser?: Express.User,
+  ) {
+    if (!currentUser) return; // Internal calls
+
+    if (currentUser.role === 'ADMIN' || currentUser.role === 'TECHNICIAN')
+      return;
+
+    if (currentUser.role === 'PATIENT') {
+      const profile = await this.profileRepository.findFirstPatientProfile({
+        where: { userId: currentUser.id },
+      });
+      if (!profile || profile.id !== patientProfileId) {
+        throw new ApiException(
+          MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+          'You can only access your own lab results',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+      return;
+    }
+
+    if (currentUser.role === 'DOCTOR') {
+      // Check if they are the assigned doctor OR have a treatment relationship
+      if (doctorId === currentUser.id) return;
+
+      const treatmentRelation = await this.bookingRepository.findFirst({
+        where: {
+          doctorId: currentUser.id,
+          patientProfileId,
+          status: {
+            in: [
+              'CONFIRMED',
+              'CHECKED_IN',
+              'IN_PROGRESS',
+              'COMPLETED',
+              'PENDING',
+            ],
+          },
+        },
+      });
+
+      if (!treatmentRelation) {
+        throw new ApiException(
+          MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+          'You are not authorized to view this patient lab data (No prior treatment relationship)',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+      return;
+    }
+
+    if (currentUser.role === 'RECEPTIONIST') return; // Allow for billing/coordination
+
+    throw new ApiException(
+      MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+      'Unauthorized access',
+      HttpStatus.FORBIDDEN,
+    );
+  }
+
+  /**
    * Doctor create lab order
+
    * Lab order is created with status PENDING (isPaid = false).
    * Receptionist will create a LAB invoice to collect payment, backend automatically seeds items from PENDING orders.
    */
-  async createOrder(doctorId: string, dto: CreateLabOrderDto) {
+  async createOrder(
+    doctorId: string,
+    dto: CreateLabOrderDto,
+    currentUser?: Express.User,
+  ) {
     const booking = await this.bookingRepository.findUnique({
       where: { id: dto.bookingId },
     });
@@ -49,7 +129,10 @@ export class LabOrdersService {
       );
     }
 
-    if (booking.doctorId !== doctorId) {
+    if (
+      booking.doctorId !== doctorId ||
+      (currentUser?.role === 'DOCTOR' && booking.doctorId !== currentUser.id)
+    ) {
       throw new ApiException(
         MessageCodes.BOOKING_ACCESS_FORBIDDEN,
         'Not authorized to access this booking',
@@ -97,7 +180,23 @@ export class LabOrdersService {
     );
   }
 
-  async getOrdersByBooking(bookingId: string) {
+  async getOrdersByBooking(bookingId: string, currentUser?: Express.User) {
+    const booking = await this.bookingRepository.findUnique({
+      where: { id: bookingId },
+    });
+    if (!booking) {
+      throw new ApiException(
+        MessageCodes.BOOKING_NOT_FOUND,
+        'Booking not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    await this.validateLabOrderAccess(
+      booking.patientProfileId,
+      booking.doctorId,
+      currentUser,
+    );
     const orders = await this.clinicalRepository.findManyLabOrder({
       where: { bookingId },
       include: {
@@ -120,7 +219,20 @@ export class LabOrdersService {
    * Get PENDING lab orders for a booking not yet added to any invoice.
    * Used for receptionist to know when to create a LAB invoice.
    */
-  async getPendingUnbilledOrders(bookingId: string) {
+  async getPendingUnbilledOrders(
+    bookingId: string,
+    currentUser?: Express.User,
+  ) {
+    const booking = await this.bookingRepository.findUnique({
+      where: { id: bookingId },
+    });
+    if (booking) {
+      await this.validateLabOrderAccess(
+        booking.patientProfileId,
+        booking.doctorId,
+        currentUser,
+      );
+    }
     const orders = await this.clinicalRepository.findManyLabOrder({
       where: {
         bookingId,
@@ -181,14 +293,17 @@ export class LabOrdersService {
     return ResponseHelper.success(orders, 'LAB.FETCHED_PENDING', '', 200);
   }
 
-  async getOrderById(id: string) {
+  async getOrderById(id: string, currentUser?: Express.User) {
     const rawOrder = await this.clinicalRepository.findUniqueLabOrder({
       where: { id },
       include: {
         result: true,
         booking: {
           select: {
+            id: true,
             bookingCode: true,
+            doctorId: true,
+            patientProfileId: true,
             doctor: { select: { fullName: true } },
             patientProfile: {
               select: {
@@ -208,6 +323,15 @@ export class LabOrdersService {
         MessageCodes.LAB_ORDER_NOT_FOUND,
         'Lab order not found',
         HttpStatus.NOT_FOUND,
+      );
+    }
+
+    // Ownership check
+    if (rawOrder.booking) {
+      await this.validateLabOrderAccess(
+        rawOrder.booking.patientProfileId,
+        rawOrder.booking.doctorId,
+        currentUser,
       );
     }
 
@@ -354,7 +478,15 @@ export class LabOrdersService {
     resultAuthorId: string,
     labOrderId: string,
     dto: UploadLabResultDto,
+    currentUser?: Express.User,
   ) {
+    if (currentUser?.role !== 'TECHNICIAN' && currentUser?.role !== 'ADMIN') {
+      throw new ApiException(
+        MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+        'Only technicians or admins can record lab results',
+        HttpStatus.FORBIDDEN,
+      );
+    }
     const order = await this.clinicalRepository.findUniqueLabOrder({
       where: { id: labOrderId },
     });
@@ -414,7 +546,22 @@ export class LabOrdersService {
     );
   }
 
-  async updateOrderStatus(labOrderId: string, status: LabOrderStatus) {
+  async updateStatus(
+    labOrderId: string,
+    status: LabOrderStatus,
+    currentUser?: User,
+  ): Promise<ApiResponse<any>> {
+    if (
+      currentUser?.role !== 'TECHNICIAN' &&
+      currentUser?.role !== 'ADMIN' &&
+      currentUser?.role !== 'RECEPTIONIST' // Receptionists might update status or trigger it
+    ) {
+      throw new ApiException(
+        MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+        'Action not authorized',
+        HttpStatus.FORBIDDEN,
+      );
+    }
     const order = await this.clinicalRepository.findUniqueLabOrder({
       where: { id: labOrderId },
     });
@@ -452,7 +599,11 @@ export class LabOrdersService {
     );
   }
 
-  async deleteOrder(doctorId: string, labOrderId: string) {
+  async deleteOrder(
+    doctorId: string,
+    labOrderId: string,
+    currentUser?: Express.User,
+  ) {
     const order = await this.clinicalRepository.findUniqueLabOrder({
       where: { id: labOrderId },
       include: LabOrderDeleteInclude,
@@ -466,7 +617,10 @@ export class LabOrdersService {
       );
     }
 
-    if (order.doctorId !== doctorId) {
+    if (
+      order.doctorId !== doctorId ||
+      (currentUser?.role === 'DOCTOR' && order.doctorId !== currentUser.id)
+    ) {
       throw new ApiException(
         MessageCodes.LAB_ORDER_DELETE_FORBIDDEN,
         'Only the assigned doctor can delete this order',
