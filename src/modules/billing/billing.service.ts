@@ -59,6 +59,58 @@ export class BillingService {
     }).format(amount);
   }
 
+  /**
+   * Verified if the requester has access to the invoice details.
+   */
+  private async validateInvoiceAccess(
+    patientProfileId: string,
+    currentUser?: Express.User,
+  ) {
+    if (!currentUser) return; // Internal calls
+
+    if (currentUser.role === 'ADMIN' || currentUser.role === 'RECEPTIONIST')
+      return;
+
+    if (currentUser.role === 'PATIENT') {
+      const profile = await this.profileRepository.findFirstPatientProfile({
+        where: { userId: currentUser.id },
+      });
+      if (!profile || profile.id !== patientProfileId) {
+        throw new ApiException(
+          MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+          'You can only access your own invoices',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+      return;
+    }
+
+    if (currentUser.role === 'DOCTOR') {
+      // Check for a treatment relationship
+      const treatmentRelation = await this.bookingRepository.findFirst({
+        where: {
+          doctorId: currentUser.id,
+          patientProfileId,
+        },
+      });
+
+      if (!treatmentRelation) {
+        throw new ApiException(
+          MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+          'You are not authorized to view this patient billing data (No prior treatment relationship)',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+      return;
+    }
+
+    throw new ApiException(
+      MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+      'Unauthorized access',
+      HttpStatus.FORBIDDEN,
+    );
+  }
+
   // Invoice CRUD
 
   /**
@@ -66,7 +118,18 @@ export class BillingService {
    * A booking can have multiple invoices (Consultation / Lab / Pharmacy).
    * Auto-seeds a first line item from the booking's service (for CONSULTATION type).
    */
-  async createInvoice(dto: CreateInvoiceDto) {
+  async createInvoice(dto: CreateInvoiceDto, currentUser?: Express.User) {
+    if (
+      currentUser &&
+      currentUser.role !== 'ADMIN' &&
+      currentUser.role !== 'RECEPTIONIST'
+    ) {
+      throw new ApiException(
+        MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+        'Only receptionists and admins can create invoices',
+        HttpStatus.FORBIDDEN,
+      );
+    }
     const booking = await this.bookingRepository.findUniqueBooking({
       where: { id: dto.bookingId },
       include: {
@@ -232,7 +295,18 @@ export class BillingService {
    * As a result, any linked LabOrders will be unlinked (invoiceItem becomes null)
    * and they will reappear in the pending lab orders list.
    */
-  async deleteInvoice(id: string) {
+  async deleteInvoice(id: string, currentUser?: Express.User) {
+    if (
+      currentUser &&
+      currentUser.role !== 'ADMIN' &&
+      currentUser.role !== 'RECEPTIONIST'
+    ) {
+      throw new ApiException(
+        MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+        'Only receptionists and admins can delete invoices',
+        HttpStatus.FORBIDDEN,
+      );
+    }
     const invoice = await this.financeRepository.findUniqueInvoice({
       where: { id },
     });
@@ -379,10 +453,10 @@ export class BillingService {
   /**
    * List all invoices for a booking (multiple invoices per booking).
    */
-  async listInvoicesByBooking(bookingId: string) {
+  async listInvoicesByBooking(bookingId: string, currentUser?: Express.User) {
     const booking = await this.bookingRepository.findUniqueBooking({
       where: { id: bookingId },
-      select: { id: true },
+      select: { id: true, patientProfileId: true },
     });
     if (!booking) {
       throw new ApiException(
@@ -391,6 +465,8 @@ export class BillingService {
         HttpStatus.NOT_FOUND,
       );
     }
+
+    await this.validateInvoiceAccess(booking.patientProfileId, currentUser);
 
     const invoices = await this.financeRepository.findManyInvoice({
       where: { bookingId },
@@ -430,10 +506,8 @@ export class BillingService {
     );
   }
 
-  /**
-   * Get invoice by invoice ID.
-   */
-  async getInvoiceById(id: string) {
+  // Get invoice by invoice ID.
+  async getInvoiceById(id: string, currentUser?: Express.User) {
     const invoice = await this.financeRepository.findUniqueInvoice({
       where: { id },
       include: {
@@ -467,6 +541,8 @@ export class BillingService {
       );
     }
 
+    await this.validateInvoiceAccess(invoice.patientProfileId, currentUser);
+
     return ResponseHelper.success(
       invoice,
       'BILLING.INVOICE_FETCHED',
@@ -486,7 +562,19 @@ export class BillingService {
     endDate?: string;
     page?: number;
     limit?: number;
+    currentUser?: Express.User;
   }) {
+    if (
+      params.currentUser &&
+      params.currentUser.role !== 'ADMIN' &&
+      params.currentUser.role !== 'RECEPTIONIST'
+    ) {
+      throw new ApiException(
+        MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+        'Unauthorized access to financial records',
+        HttpStatus.FORBIDDEN,
+      );
+    }
     const {
       status,
       patientProfileId,
@@ -576,7 +664,22 @@ export class BillingService {
   /**
    * Add an extra line item to a DRAFT invoice (e.g. additional services).
    */
-  async addInvoiceItem(invoiceId: string, dto: AddInvoiceItemDto) {
+  async addInvoiceItem(
+    invoiceId: string,
+    dto: AddInvoiceItemDto,
+    currentUser?: Express.User,
+  ) {
+    if (
+      currentUser &&
+      currentUser.role !== 'ADMIN' &&
+      currentUser.role !== 'RECEPTIONIST'
+    ) {
+      throw new ApiException(
+        MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+        'Only receptionists and admins can modify invoices',
+        HttpStatus.FORBIDDEN,
+      );
+    }
     const invoice = await this.financeRepository.findUniqueInvoice({
       where: { id: invoiceId },
     });
@@ -632,7 +735,22 @@ export class BillingService {
   /**
    * Remove a line item from a DRAFT invoice.
    */
-  async removeInvoiceItem(invoiceId: string, itemId: string) {
+  async removeInvoiceItem(
+    invoiceId: string,
+    itemId: string,
+    currentUser?: Express.User,
+  ) {
+    if (
+      currentUser &&
+      currentUser.role !== 'ADMIN' &&
+      currentUser.role !== 'RECEPTIONIST'
+    ) {
+      throw new ApiException(
+        MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+        'Only receptionists and admins can modify invoices',
+        HttpStatus.FORBIDDEN,
+      );
+    }
     const invoice = await this.financeRepository.findUniqueInvoice({
       where: { id: invoiceId },
     });
@@ -679,7 +797,19 @@ export class BillingService {
     invoiceId: string,
     dto: ConfirmPaymentDto,
     confirmedByUserId: string,
+    currentUser?: Express.User,
   ) {
+    if (
+      currentUser &&
+      currentUser.role !== 'ADMIN' &&
+      currentUser.role !== 'RECEPTIONIST'
+    ) {
+      throw new ApiException(
+        MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+        'Only receptionists and admins can confirm payments',
+        HttpStatus.FORBIDDEN,
+      );
+    }
     const invoice = await this.financeRepository.findUniqueInvoice({
       where: { id: invoiceId },
       include: {
