@@ -10,6 +10,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -28,7 +29,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { UserRole } from '@prisma/client';
+import { UserRole, User } from '@prisma/client';
 
 @ApiTags('bookings')
 @Controller('bookings')
@@ -136,15 +137,15 @@ export class BookingsController {
   @ApiResponse({ status: 404, description: 'Booking or Service not found' })
   @ApiResponse({ status: 409, description: 'Service already set' })
   updateService(
-    @Param('id') bookingId: string,
+    @Param('id', ParseUUIDPipe) bookingId: string,
     @Body() dto: UpdateBookingServiceDto,
-    @CurrentUser('id') doctorId: string,
+    @CurrentUser() user: User,
   ) {
-    return this.bookingsService.updateService(
+    return this.bookingsService.assignSpecialistService(
       bookingId,
       dto.serviceId,
-      doctorId,
-      dto.doctorId,
+      user.id,
+      dto.newDoctorId,
     );
   }
 
@@ -160,15 +161,16 @@ export class BookingsController {
   @ApiQuery({ name: 'limit', required: false })
   @ApiResponse({ status: 200, description: 'Patients retrieved successfully' })
   getMyPatients(
-    @CurrentUser('id') doctorId: string,
+    @CurrentUser() user: User,
     @Query('search') search?: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
+    @Query('page') page = '1',
+    @Query('limit') limit = '20',
   ) {
-    return this.bookingsService.getMyPatients(doctorId, {
+    return this.bookingsService.findMyPatients(user.id, {
       search,
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 10,
+      page: parseInt(page, 10),
+      limit: parseInt(limit, 10),
+      currentUser: user,
     });
   }
 
@@ -255,12 +257,12 @@ export class BookingsController {
     },
   })
   getMyBookings(
-    @CurrentUser('id') patientId: string,
     @Query('status') status?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @CurrentUser() user?: User,
   ) {
-    return this.bookingsService.getMyBookings(patientId, {
+    return this.bookingsService.findMyBookings(user!.id, {
       status,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 10,
@@ -268,6 +270,12 @@ export class BookingsController {
   }
 
   @Get(':id')
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.RECEPTIONIST,
+    UserRole.DOCTOR,
+    UserRole.PATIENT,
+  )
   @ApiOperation({
     summary: 'Get booking details by ID',
     description:
@@ -299,28 +307,29 @@ export class BookingsController {
     },
   })
   @ApiResponse({ status: 404, description: 'Booking not found' })
-  findOne(@Param('id') id: string) {
-    return this.bookingsService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.bookingsService.findOne(id, user);
   }
 
   @Post(':id/check-in')
   @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Check in a patient for their appointment',
+    summary: 'Check-in patient to consultation queue',
     description:
-      'Transitions a CONFIRMED booking to CHECKED_IN, assigning a daily STT (queuePosition) and calculating estimated wait time.',
+      'Marks the booking as CHECKED_IN and adds the patient to the priority queue based on their appointment time.',
   })
   @ApiResponse({
     status: 200,
-    description: 'Patient successfully checked in',
+    description: 'Patient checked in and added to queue',
     schema: {
       example: {
         success: true,
-        statusCode: 200,
-        message: 'Patient successfully checked in',
+        message: 'QUEUE.PROMOTE.SUCCESS',
         data: {
           booking: {
             id: 'uuid',
+            bookingCode: 'BK-20240101-0001',
             status: 'CHECKED_IN',
           },
           queue: {
@@ -336,8 +345,8 @@ export class BookingsController {
     description:
       'Only confirmed bookings can be checked in, or already in queue',
   })
-  checkIn(@Param('id') id: string, @CurrentUser('id') userId: string) {
-    return this.bookingsService.checkIn(id, userId);
+  checkIn(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.bookingsService.checkIn(id, user.id);
   }
 
   @Patch(':id/status')
@@ -368,18 +377,18 @@ export class BookingsController {
     description: 'Invalid status transition (e.g. Completed -> Cancelled)',
   })
   updateStatus(
-    @Param('id') id: string,
-    @Body() updateStatusDto: UpdateBookingStatusDto,
-    @CurrentUser('id') userId: string,
+    @Param('id') bookingId: string,
+    @Body() dto: UpdateBookingStatusDto,
+    @CurrentUser() user: User,
   ) {
-    return this.bookingsService.updateStatus(id, updateStatusDto, userId);
+    return this.bookingsService.updateStatus(bookingId, dto, user.id, user);
   }
 
   @Patch(':id/start')
   @Roles(UserRole.DOCTOR, UserRole.ADMIN)
   @ApiOperation({ summary: 'Start examination' })
-  startExamination(@Param('id') id: string, @CurrentUser('id') userId: string) {
-    return this.bookingsService.startExamination(id, userId);
+  startExamination(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.bookingsService.startExamination(id, user.id, user);
   }
 
   @Patch(':id/complete')
@@ -388,20 +397,26 @@ export class BookingsController {
   completeVisit(
     @Param('id') id: string,
     @Body('doctorNotes') doctorNotes: string,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: User,
   ) {
-    return this.bookingsService.completeVisit(id, userId, doctorNotes);
+    return this.bookingsService.completeVisit(id, user.id, doctorNotes, user);
   }
 
   @Patch(':id/no-show')
   @Roles(UserRole.RECEPTIONIST, UserRole.DOCTOR, UserRole.ADMIN)
   @ApiOperation({ summary: 'Mark as no-show' })
-  markNoShow(@Param('id') id: string, @CurrentUser('id') userId: string) {
-    return this.bookingsService.markNoShow(id, userId);
+  markNoShow(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.bookingsService.markNoShow(id, user.id, user);
   }
 
   @Patch(':id/cancel')
   @HttpCode(HttpStatus.OK)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.RECEPTIONIST,
+    UserRole.DOCTOR,
+    UserRole.PATIENT,
+  )
   @ApiOperation({
     summary: 'Cancel an appointment',
     description:
@@ -422,12 +437,12 @@ export class BookingsController {
     status: 400,
     description: 'Cancellation reason is required and must be detailed',
   })
-  cancel(
+  cancelBooking(
     @Param('id') id: string,
-    @Body() cancelBookingDto: CancelBookingDto,
-    @CurrentUser('id') userId: string,
+    @Body() dto: CancelBookingDto,
+    @CurrentUser() user: User,
   ) {
-    return this.bookingsService.cancel(id, userId, cancelBookingDto.reason);
+    return this.bookingsService.cancelBooking(id, user.id, dto.reason, user);
   }
 
   @Delete(':id')

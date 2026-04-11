@@ -1,20 +1,19 @@
-import { format } from 'date-fns';
-import { vi } from 'date-fns/locale';
 import {
   BookingStatus,
   BookingSource,
   BookingPriority,
   UserRole,
-  DayOfWeek,
   Prisma,
   InvoiceStatus,
+  User,
 } from '@prisma/client';
 import {
   BookingInclude,
   BookingWithRelations,
 } from '../database/types/prisma-payload.types';
 import { Injectable, Inject } from '@nestjs/common';
-import { NotificationsService } from '../notifications/notifications.service';
+import { BookingValidatorService } from './services/booking-validator.service';
+import { BookingNotificationService } from './services/booking-notification.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { FilterBookingDto } from './dto/filter-booking.dto';
@@ -22,7 +21,10 @@ import { QueueGateway } from '../queue/queue.gateway';
 import { QueueService } from '../queue/queue.service';
 import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { ApiException } from 'src/common/exceptions/api.exception';
-import { ResponseHelper } from 'src/common/interfaces/api-response.interface';
+import {
+  ResponseHelper,
+  ApiResponse,
+} from 'src/common/interfaces/api-response.interface';
 import { BillingService } from '../billing/billing.service';
 import {
   IBookingRepository,
@@ -62,7 +64,8 @@ export class BookingsService {
     private readonly catalogRepository: ICatalogRepository,
     @Inject(I_PROFILE_REPOSITORY)
     private readonly profileRepository: IProfileRepository,
-    private readonly notificationsService: NotificationsService,
+    private readonly validator: BookingValidatorService,
+    private readonly bookingNotification: BookingNotificationService,
     private readonly queueGateway: QueueGateway,
     private readonly queueService: QueueService,
     private readonly billingService: BillingService,
@@ -103,7 +106,10 @@ export class BookingsService {
       );
     }
 
-    await this.validateBooking({ ...createBookingDto, isPreBooked: true });
+    await this.validator.validateBooking({
+      ...createBookingDto,
+      isPreBooked: true,
+    });
 
     const service = await this.catalogRepository.findServiceById(serviceId);
 
@@ -116,9 +122,12 @@ export class BookingsService {
       );
     }
 
-    const endTime = this.calculateEndTime(startTime, service.durationMinutes);
+    const endTime = this.validator.calculateEndTime(
+      startTime,
+      service.durationMinutes,
+    );
 
-    void (await this.checkSlotAvailability(
+    void (await this.validator.checkSlotAvailability(
       doctorId,
       bookingDate,
       startTime,
@@ -161,7 +170,7 @@ export class BookingsService {
       return newBooking;
     });
 
-    this.sendBookingNotification(booking).catch((error) => {
+    this.bookingNotification.sendBookingNotification(booking).catch((error) => {
       console.error('Failed to send booking notification:', error);
     });
 
@@ -173,11 +182,7 @@ export class BookingsService {
     }
 
     // Notify admins of new booking
-    await this.notificationsService.notifyAdmins({
-      title: 'Lịch hẹn mới',
-      content: `${booking.patientProfile.fullName} vừa đặt khám ${booking.service?.name ?? 'Dịch vụ chưa xác định'}.`,
-      metadata: { bookingId: booking.id },
-    });
+    await this.bookingNotification.notifyAdminsOfBooking(booking, 'CREATED');
 
     return ResponseHelper.success(
       booking,
@@ -209,7 +214,7 @@ export class BookingsService {
       isPreBooked = false, // Default: walk-in for receptionist
     } = createBookingDto;
 
-    await this.validateBooking(createBookingDto);
+    await this.validator.validateBooking(createBookingDto);
 
     // Service is optional for walk-in consultations — Dotor consulation will be determined after meeting the patient
     let service: Prisma.ServiceGetPayload<{
@@ -248,7 +253,10 @@ export class BookingsService {
       }
       // Calculate endTime only if service is already known
       if (service) {
-        endTime = this.calculateEndTime(startTime, service.durationMinutes);
+        endTime = this.validator.calculateEndTime(
+          startTime,
+          service.durationMinutes,
+        );
       }
     } else {
       // Walk-in: verify queue capacity for this doctor+date
@@ -311,7 +319,7 @@ export class BookingsService {
       return newBooking;
     })) as unknown as BookingWithRelations;
 
-    this.sendBookingNotification(booking).catch((error) => {
+    this.bookingNotification.sendBookingNotification(booking).catch((error) => {
       console.error('Failed to send booking notification:', error);
     });
 
@@ -329,13 +337,7 @@ export class BookingsService {
       }
     }
 
-    // Notify admins of new booking (by staff)
-    const serviceName = service?.name ?? 'Chưa xác định dịch vụ';
-    await this.notificationsService.notifyAdmins({
-      title: 'Lịch hẹn mới (từ nhân viên)',
-      content: `${booking.patientProfile.fullName} được đặt khám ${serviceName}.`,
-      metadata: { bookingId: booking.id },
-    });
+    await this.bookingNotification.notifyAdminsOfBooking(booking, 'CREATED');
 
     return ResponseHelper.success(
       booking,
@@ -351,13 +353,16 @@ export class BookingsService {
    * B2 — Mô hình A: BS tư vấn xác định dịch vụ chuyên khoa sau khi hỏi thăm bệnh nhân.
    * Triggers auto-create of CONSULTATION invoice.
    */
-  async updateService(
+  async assignSpecialistService(
     bookingId: string,
     serviceId: string,
     doctorId: string,
     newDoctorId?: string,
-  ) {
-    const booking = await this.bookingRepository.findBookingById(bookingId);
+  ): Promise<ApiResponse<any>> {
+    const booking = await this.bookingRepository.findUniqueBooking({
+      where: { id: bookingId },
+      include: BookingInclude,
+    });
     if (!booking) {
       throw new ApiException(
         MessageCodes.BOOKING_NOT_FOUND,
@@ -435,11 +440,10 @@ export class BookingsService {
     }
 
     // 5. Notify receptionists
-    await this.notificationsService.notifyReceptionists({
-      title: 'Chờ thanh toán & Khám chuyên khoa',
-      content: `Bệnh nhân ${booking.patientProfile.fullName} đã hoàn tất tư vấn. Cần thanh toán dịch vụ: ${service.name}.`,
-      metadata: { bookingId, serviceId, type: 'PAYMENT_REQUIRED' },
-    });
+    await this.bookingNotification.notifyReceptionistsOfPayment(
+      booking,
+      service.name,
+    );
 
     return ResponseHelper.success(
       updated,
@@ -448,7 +452,7 @@ export class BookingsService {
     );
   }
 
-  async findAll(filterDto: FilterBookingDto) {
+  async findAll(filterDto: FilterBookingDto): Promise<ApiResponse<any>> {
     const {
       patientProfileId,
       doctorId,
@@ -528,9 +532,9 @@ export class BookingsService {
   }
 
   /**
-   * Find one booking by ID
+   * Find one booking by ID with ownership validation
    */
-  async findOne(id: string) {
+  async findOne(id: string, currentUser?: Express.User) {
     const booking = await this.bookingRepository.findUnique({
       where: { id },
       include: {
@@ -576,6 +580,36 @@ export class BookingsService {
       );
     }
 
+    // Ownership & Permission Validation
+    if (currentUser) {
+      const isPatient = currentUser.role === UserRole.PATIENT;
+      const isDoctor = currentUser.role === UserRole.DOCTOR;
+      const isStaff =
+        currentUser.role === UserRole.ADMIN ||
+        currentUser.role === UserRole.RECEPTIONIST;
+
+      if (isPatient) {
+        // Patient can only see their own bookings
+        if (booking.patientProfile.userId !== currentUser.id) {
+          throw new ApiException(
+            MessageCodes.UNAUTHORIZED,
+            'You are not authorized to view this booking',
+            403,
+          );
+        }
+      } else if (isDoctor) {
+        // Doctor can only see their assigned bookings (or if clinic policy allows all, we can modify this)
+        if (booking.doctorId !== currentUser.id && !isStaff) {
+          throw new ApiException(
+            MessageCodes.UNAUTHORIZED,
+            'You are not authorized to view this booking',
+            403,
+          );
+        }
+      }
+      // Staff (Admin/Receptionist) always allowed
+    }
+
     return ResponseHelper.success(
       booking,
       MessageCodes.BOOKING_RETRIEVED,
@@ -591,10 +625,11 @@ export class BookingsService {
     id: string,
     updateStatusDto: UpdateBookingStatusDto,
     changedById: string,
+    currentUser?: Express.User,
   ) {
     const { status, reason, doctorNotes } = updateStatusDto;
 
-    const bookingResponse = await this.findOne(id);
+    const bookingResponse = await this.findOne(id, currentUser);
     const booking = bookingResponse.data;
 
     if (!booking) {
@@ -606,7 +641,7 @@ export class BookingsService {
       );
     }
 
-    this.validateStatusTransition(booking.status, status);
+    this.validator.validateStatusTransition(booking.status, status);
 
     // Build extra timestamps for key transitions
     const extraData: Prisma.BookingUpdateInput = {};
@@ -682,37 +717,19 @@ export class BookingsService {
     );
 
     if (status === BookingStatus.CANCELLED) {
-      this.sendCancellationNotification(updatedBooking).catch((error) => {
-        console.error('Failed to send cancellation notification:', error);
-      });
+      this.bookingNotification
+        .sendCancellationNotification(updatedBooking)
+        .catch((error) => {
+          console.error('Failed to send cancellation notification:', error);
+        });
     }
 
     if (status === BookingStatus.CONFIRMED) {
-      const email = updatedBooking.patientProfile?.email;
-      if (email) {
-        this.notificationsService
-          .sendBookingConfirmation({
-            bookingId: updatedBooking.bookingCode ?? updatedBooking.id,
-            patientId: updatedBooking.patientProfile.userId ?? undefined,
-            patientName: updatedBooking.patientProfile.fullName,
-            patientEmail: email,
-            doctorName: updatedBooking.doctor.fullName,
-            serviceName:
-              updatedBooking.service?.name ?? 'Tư vấn (Chưa xác định)',
-            bookingDate: format(
-              new Date(updatedBooking.bookingDate),
-              'EEEE, dd/MM/yyyy',
-              { locale: vi },
-            ),
-            startTime: updatedBooking.startTime ?? '',
-            endTime: updatedBooking.endTime ?? '',
-            duration: updatedBooking.service?.durationMinutes ?? 0,
-            status: updatedBooking.status,
-          })
-          .catch((error) => {
-            console.error('Failed to send confirmation notification:', error);
-          });
-      }
+      this.bookingNotification
+        .sendStatusSpecificNotification(updatedBooking)
+        .catch((error) => {
+          console.error('Failed to send confirmation notification:', error);
+        });
     }
 
     // Notify admins of status change
@@ -723,11 +740,10 @@ export class BookingsService {
       CANCELLED: 'đã hủy',
     };
     if (statusLabels[status]) {
-      await this.notificationsService.notifyAdmins({
-        title: 'Cập nhật lịch hẹn',
-        content: `Lịch hẹn của ${updatedBooking.patientProfile.fullName} ${statusLabels[status]}.`,
-        metadata: { bookingId: updatedBooking.id, status: status },
-      });
+      await this.bookingNotification.notifyAdminsOfBooking(
+        updatedBooking,
+        'UPDATED',
+      );
     }
 
     return ResponseHelper.success(
@@ -741,7 +757,12 @@ export class BookingsService {
   /**
    * Cancel booking
    */
-  async cancel(id: string, userId: string, reason?: string) {
+  async cancelBooking(
+    id: string,
+    userId: string,
+    reason?: string,
+    currentUser?: User,
+  ): Promise<ApiResponse<any>> {
     const result = await this.updateStatus(
       id,
       {
@@ -749,17 +770,18 @@ export class BookingsService {
         reason: reason || 'Cancelled by user',
       },
       userId,
+      currentUser,
     );
 
     const booking = result.data;
     if (!booking) return result;
 
     // Notify admins of cancellation
-    await this.notificationsService.notifyAdmins({
-      title: 'Lịch hẹn đã hủy',
-      content: `Lịch hẹn của ${booking.patientProfile.fullName} đã bị hủy.`,
-      metadata: { bookingId: id },
-    });
+    await this.bookingNotification.notifyAdminsOfBooking(
+      booking,
+      'CANCELLED',
+      reason ? `Lý do: ${reason}` : undefined,
+    );
 
     return ResponseHelper.success(
       result.data,
@@ -772,8 +794,17 @@ export class BookingsService {
   /**
    * Delete booking (soft delete — effectively cancel)
    */
-  async remove(id: string, userId: string) {
-    const result = await this.cancel(id, userId, 'Booking deleted');
+  async remove(
+    id: string,
+    userId: string,
+    currentUser?: User,
+  ): Promise<ApiResponse<any>> {
+    const result = await this.cancelBooking(
+      id,
+      userId,
+      'Booking deleted',
+      currentUser,
+    );
 
     return ResponseHelper.success(
       result.data,
@@ -786,11 +817,13 @@ export class BookingsService {
   /**
    * Start examination (Move from CHECKED_IN to IN_PROGRESS)
    */
-  async startExamination(id: string, userId: string) {
-    const booking = await this.bookingRepository.findUnique({
-      where: { id },
-      select: { doctorId: true },
-    });
+  async startExamination(
+    id: string,
+    userId: string,
+    currentUser?: Express.User,
+  ) {
+    const bookingResponse = await this.findOne(id, currentUser);
+    const booking = bookingResponse.data;
 
     if (!booking) {
       throw new ApiException(
@@ -826,13 +859,19 @@ export class BookingsService {
         reason: 'Examination started by doctor',
       },
       userId,
+      currentUser,
     );
   }
 
   /**
    * Complete visit (Move from IN_PROGRESS to COMPLETED)
    */
-  async completeVisit(id: string, userId: string, doctorNotes?: string) {
+  async completeVisit(
+    id: string,
+    userId: string,
+    doctorNotes: string,
+    currentUser?: Express.User,
+  ) {
     return this.updateStatus(
       id,
       {
@@ -841,13 +880,14 @@ export class BookingsService {
         doctorNotes,
       },
       userId,
+      currentUser,
     );
   }
 
   /**
    * Mark as no-show (Move from CHECKED_IN to NO_SHOW)
    */
-  async markNoShow(id: string, userId: string) {
+  async markNoShow(id: string, userId: string, currentUser?: Express.User) {
     return this.updateStatus(
       id,
       {
@@ -855,20 +895,21 @@ export class BookingsService {
         reason: 'Patient did not arrive within 30 minutes of check-in',
       },
       userId,
+      currentUser,
     );
   }
 
   /**
    * Get my bookings (for current patient — filter by patientProfile.userId)
    */
-  async getMyBookings(
+  async findMyBookings(
     userId: string,
     options: {
       status?: string;
       page?: number;
       limit?: number;
     },
-  ) {
+  ): Promise<ApiResponse<any>> {
     const { status, page = 1, limit = 10 } = options;
 
     // Find the PatientProfile belonging to this user
@@ -1030,10 +1071,15 @@ export class BookingsService {
    * Get unique patients who have had completed visits with this doctor.
    * Supports pagination and search by name / patient code / phone.
    */
-  async getMyPatients(
+  async findMyPatients(
     doctorId: string,
-    options: { search?: string; page?: number; limit?: number },
-  ) {
+    options: {
+      search?: string;
+      page?: number;
+      limit?: number;
+      currentUser?: User;
+    },
+  ): Promise<ApiResponse<any>> {
     const { search, page = 1, limit = 10 } = options;
 
     const patientWhere: Prisma.PatientProfileWhereInput = {};
@@ -1133,177 +1179,8 @@ export class BookingsService {
   }
 
   async checkIn(bookingId: string, userId: string) {
-    return this.queueService.addToQueue(bookingId, userId);
-  }
-
-  /**
-   * Recalculate estimatedTime for all walk-in patients of a doctor on a given date.
-   * Called after each check-in to keep estimated times accurate.
-   */
-  async recalculateEstimatedTimes(
-    doctorId: string,
-    bookingDate: string,
-  ): Promise<void> {
-    // Fetch all pre-bookings still active today (to find gaps)
-    const preBookings = await this.bookingRepository.findMany({
-      where: {
-        doctorId,
-        bookingDate: new Date(bookingDate),
-        isPreBooked: true,
-        startTime: { not: null },
-        status: {
-          notIn: [
-            BookingStatus.CANCELLED,
-            BookingStatus.NO_SHOW,
-            BookingStatus.COMPLETED,
-          ],
-        },
-      },
-      select: { startTime: true, endTime: true },
-      orderBy: { startTime: 'asc' },
-    });
-
-    // Fetch walk-in queue records for this doctor today
-    const walkInQueues = await this.bookingRepository.findQueueMany({
-      where: {
-        doctorId,
-        queueDate: new Date(bookingDate),
-        isPreBooked: false,
-        booking: {
-          status: {
-            notIn: [
-              BookingStatus.CANCELLED,
-              BookingStatus.NO_SHOW,
-              BookingStatus.COMPLETED,
-            ],
-          },
-        },
-      },
-      include: {
-        booking: {
-          select: {
-            id: true,
-            service: { select: { durationMinutes: true } },
-          },
-        },
-      },
-      orderBy: { queuePosition: 'asc' },
-    });
-
-    if (walkInQueues.length === 0) return;
-
-    // Find available gaps between pre-bookings or use end-of-day
-    // Simple strategy: stack walk-ins starting from last pre-booking end time
-    const now = new Date();
-    const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const lastPreEnd = preBookings.at(-1)?.endTime ?? nowTimeStr;
-
-    let cursor = new Date(bookingDate);
-    const [hh, mm] = lastPreEnd.split(':').map(Number);
-    cursor.setHours(hh, mm, 0, 0);
-
-    for (const record of walkInQueues) {
-      const estTime = new Date(cursor);
-      const duration = record.booking.service?.durationMinutes ?? 30;
-
-      await this.bookingRepository.update({
-        where: { id: record.booking.id },
-        data: { estimatedTime: estTime },
-      });
-
-      cursor = new Date(cursor.getTime() + duration * 60 * 1000);
-    }
-  }
-
-  /**
-   * Get receptionist dashboard statistics
-   */
-  async getReceptionistDashboardStats() {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const nextDay = new Date(today);
-    nextDay.setDate(today.getDate() + 1);
-
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
-
-    const todayWhere = {
-      bookingDate: {
-        gte: today,
-        lt: nextDay,
-      },
-    };
-
-    const yesterdayWhere = {
-      bookingDate: {
-        gte: yesterday,
-        lt: today,
-      },
-    };
-
-    const [
-      pendingToday,
-      confirmedToday,
-      completedToday,
-      cancelledToday,
-      pendingYesterday,
-      confirmedYesterday,
-      completedYesterday,
-      cancelledYesterday,
-    ] = await Promise.all([
-      // Today
-      this.bookingRepository.count({
-        where: { ...todayWhere, status: BookingStatus.PENDING },
-      }),
-      this.bookingRepository.count({
-        where: { ...todayWhere, status: BookingStatus.CONFIRMED },
-      }),
-      this.bookingRepository.count({
-        where: { ...todayWhere, status: BookingStatus.COMPLETED },
-      }),
-      this.bookingRepository.count({
-        where: { ...todayWhere, status: BookingStatus.CANCELLED },
-      }),
-      // Yesterday
-      this.bookingRepository.count({
-        where: { ...yesterdayWhere, status: BookingStatus.PENDING },
-      }),
-      this.bookingRepository.count({
-        where: { ...yesterdayWhere, status: BookingStatus.CONFIRMED },
-      }),
-      this.bookingRepository.count({
-        where: { ...yesterdayWhere, status: BookingStatus.COMPLETED },
-      }),
-      this.bookingRepository.count({
-        where: { ...yesterdayWhere, status: BookingStatus.CANCELLED },
-      }),
-    ]);
-
-    const calcTrend = (t: number, y: number) => {
-      if (y === 0) {
-        if (t === 0) return { value: t, trend: 0, trendDir: 'neutral' };
-        return { value: t, trend: 100, trendDir: 'up' };
-      }
-      const diff = t - y;
-      const percentage = Math.round((Math.abs(diff) / y) * 100);
-
-      if (diff > 0) return { value: t, trend: percentage, trendDir: 'up' };
-      if (diff < 0) return { value: t, trend: percentage, trendDir: 'down' };
-      return { value: t, trend: 0, trendDir: 'neutral' };
-    };
-
-    return ResponseHelper.success(
-      {
-        pending: calcTrend(pendingToday, pendingYesterday),
-        confirmed: calcTrend(confirmedToday, confirmedYesterday),
-        completed: calcTrend(completedToday, completedYesterday),
-        cancelled: calcTrend(cancelledToday, cancelledYesterday),
-      },
-      MessageCodes.BOOKING_LIST_RETRIEVED,
-      'Receptionist dashboard statistics retrieved successfully',
-      200,
-    );
+    const result = await this.queueService.addToQueue(bookingId, userId);
+    return result;
   }
 
   // ============================================
@@ -1311,172 +1188,12 @@ export class BookingsService {
   // ============================================
 
   /**
-   * Validate booking data.
-   * Rules:
-   *   - Date must be today or future
-   *   - Patient, doctor, service must exist and be active
-   *   - Doctor must work on the requested day
-   *   - startTime must be within working hours (pre-booking only)
-   *   - 1 patient + 1 doctor + 1 date = max 1 active booking
-   */
-  private async validateBooking(dto: CreateBookingDto) {
-    const {
-      patientProfileId,
-      doctorId,
-      serviceId,
-      bookingDate,
-      startTime,
-      isPreBooked = true,
-    } = dto;
-
-    // 1. Check booking date is today or in the future
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const requestedDate = new Date(bookingDate);
-
-    if (requestedDate < today) {
-      throw new ApiException(
-        MessageCodes.BOOKING_INVALID_DATE,
-        'Booking date must be today or in the future',
-        400,
-        'Booking validation failed',
-      );
-    }
-
-    // 2. Check patientProfile exists
-    const patientProfile = await this.profileRepository.findFirstPatientProfile(
-      {
-        where: { id: patientProfileId },
-      },
-    );
-
-    if (!patientProfile) {
-      throw new ApiException(
-        MessageCodes.USER_NOT_FOUND,
-        'Patient profile not found',
-        404,
-        'Booking validation failed',
-      );
-    }
-
-    // 3. Check doctor exists and is active
-    const doctor = await this.userRepository.findUnique({
-      where: { id: doctorId },
-    });
-
-    if (!doctor) {
-      throw new ApiException(
-        MessageCodes.USER_NOT_FOUND,
-        'Doctor not found',
-        404,
-        'Booking validation failed',
-      );
-    }
-
-    if (doctor.role !== UserRole.DOCTOR) {
-      throw new ApiException(
-        MessageCodes.USER_NOT_FOUND,
-        'User is not a doctor',
-        400,
-        'Booking validation failed',
-      );
-    }
-
-    if (!doctor.isActive) {
-      throw new ApiException(
-        MessageCodes.ACCOUNT_INACTIVE,
-        'Doctor is not active',
-        400,
-        'Booking validation failed',
-      );
-    }
-
-    // 4. Check service exists and is active (only if provided - Model A support)
-    if (serviceId) {
-      const service = await this.catalogRepository.findUnique({
-        where: { id: serviceId },
-      });
-
-      if (!service || !service.isActive) {
-        throw new ApiException(
-          MessageCodes.SERVICE_NOT_FOUND,
-          'Service not found or inactive',
-          404,
-          'Booking validation failed',
-        );
-      }
-    }
-
-    // 5. Check doctor working hours
-    const dayOfWeek = this.getDayOfWeek(new Date(bookingDate));
-    const workingHours = await this.bookingRepository.findDoctorWorkingHours(
-      doctorId,
-      dayOfWeek,
-    );
-
-    if (!workingHours) {
-      throw new ApiException(
-        MessageCodes.SCHEDULE_NOT_FOUND,
-        'Doctor does not work on this day',
-        400,
-        'Booking validation failed',
-      );
-    }
-
-    // 6. startTime validation (only for pre-bookings)
-    if (isPreBooked && startTime) {
-      if (
-        startTime < workingHours.startTime ||
-        startTime >= workingHours.endTime
-      ) {
-        throw new ApiException(
-          MessageCodes.BOOKING_INVALID_TIME,
-          `Time slot is outside doctor's working hours (${workingHours.startTime} - ${workingHours.endTime})`,
-          400,
-          'Booking validation failed',
-        );
-      }
-
-      // Break time check skipped — DoctorBreakTime is managed separately via schedules service
-    }
-
-    // Off day check skipped — DoctorOffDay is managed separately via schedules service
-
-    // 8. Rule: 1 patient + 1 doctor + 1 date = max 1 active booking
-    // Enforced purely at the application level since MySQL doesn't support partial unique indexes
-    const existingBooking = await this.bookingRepository.findFirst({
-      where: {
-        patientProfileId,
-        doctorId,
-        bookingDate: new Date(bookingDate),
-        status: {
-          notIn: [
-            BookingStatus.CANCELLED,
-            BookingStatus.NO_SHOW,
-            BookingStatus.COMPLETED,
-          ],
-        },
-      },
-    });
-
-    if (existingBooking) {
-      throw new ApiException(
-        MessageCodes.BOOKING_DUPLICATE,
-        'This patient already has an active booking with this doctor on this date',
-        409,
-        'Booking validation failed',
-      );
-    }
-  }
-
-  /**
-   * Generate a human-readable booking code: BK-YYYYMMDD-NNNN (Production-ready)
+   * Generate a human-readable booking code: BK-YYYYMMDD-NNNN
    */
   private async generateBookingCode(bookingDate: string): Promise<string> {
     const compact = bookingDate.replace(/-/g, '');
     const prefix = `BK-${compact}-`;
 
-    // Find the latest booking code for this prefix to avoid collisions after deletions
     const lastBooking = await this.bookingRepository.findFirst({
       where: { bookingCode: { startsWith: prefix } },
       orderBy: { bookingCode: 'desc' },
@@ -1496,103 +1213,7 @@ export class BookingsService {
   }
 
   /**
-   * Check if slot is available
-   */
-  private async checkSlotAvailability(
-    doctorId: string,
-    bookingDate: string,
-    startTime: string,
-    endTime: string,
-    maxSlotsPerHour: number,
-  ): Promise<boolean> {
-    void endTime; // not used for count check currently
-    const confirmedBookings = await this.bookingRepository.count({
-      where: {
-        doctorId,
-        bookingDate: new Date(bookingDate),
-        startTime,
-        status: {
-          in: [
-            BookingStatus.PENDING,
-            BookingStatus.CONFIRMED,
-            BookingStatus.CHECKED_IN,
-            BookingStatus.IN_PROGRESS,
-          ],
-        },
-      },
-    });
-
-    return confirmedBookings < maxSlotsPerHour;
-  }
-
-  /**
-   * Calculate end time based on duration
-   */
-  private calculateEndTime(startTime: string, durationMinutes: number): string {
-    const [hours, minutes] = startTime.split(':').map(Number);
-    const totalMinutes = hours * 60 + minutes + durationMinutes;
-    const endHours = Math.floor(totalMinutes / 60);
-    const endMinutes = totalMinutes % 60;
-
-    return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
-  }
-
-  /**
-   * Get day of week from date
-   */
-  private getDayOfWeek(date: Date): DayOfWeek {
-    const days: DayOfWeek[] = [
-      DayOfWeek.SUNDAY,
-      DayOfWeek.MONDAY,
-      DayOfWeek.TUESDAY,
-      DayOfWeek.WEDNESDAY,
-      DayOfWeek.THURSDAY,
-      DayOfWeek.FRIDAY,
-      DayOfWeek.SATURDAY,
-    ];
-    return days[date.getDay()];
-  }
-
-  /**
-   * Validate status transition
-   */
-  private validateStatusTransition(
-    currentStatus: BookingStatus,
-    newStatus: BookingStatus,
-  ) {
-    const validTransitions: Record<BookingStatus, BookingStatus[]> = {
-      [BookingStatus.PENDING]: [
-        BookingStatus.CONFIRMED,
-        BookingStatus.CANCELLED,
-      ],
-      [BookingStatus.CONFIRMED]: [
-        BookingStatus.CHECKED_IN,
-        BookingStatus.CANCELLED,
-        BookingStatus.NO_SHOW,
-      ],
-      [BookingStatus.CHECKED_IN]: [
-        BookingStatus.IN_PROGRESS,
-        BookingStatus.CANCELLED,
-      ],
-      [BookingStatus.IN_PROGRESS]: [BookingStatus.COMPLETED],
-      [BookingStatus.COMPLETED]: [],
-      [BookingStatus.CANCELLED]: [],
-      [BookingStatus.NO_SHOW]: [],
-      [BookingStatus.QUEUED]: [], // deprecated
-    };
-
-    if (!validTransitions[currentStatus]?.includes(newStatus)) {
-      throw new ApiException(
-        MessageCodes.BOOKING_INVALID_STATUS_TRANSITION,
-        `Invalid status transition from ${currentStatus} to ${newStatus}`,
-        400,
-        'Status update failed',
-      );
-    }
-  }
-
-  /**
-   * Handle booking completion (Remove from queue)
+   * Handle booking completion logic
    */
   private async handleBookingCompletion(booking: {
     id: string;
@@ -1600,93 +1221,63 @@ export class BookingsService {
     bookingDate: Date;
     startTime: string;
   }): Promise<void> {
-    console.log(
-      `Booking ${booking.id} completed/cancelled/no-show. Removing from queue...`,
-    );
-
-    // Call QueueService to handle record deletion and shift queue positions
     await this.queueService.removeFromQueue(booking.id);
 
-    // Broadcast update so the board refreshes
     this.queueGateway.broadcastQueueUpdate(booking.doctorId, 'UPDATE', {
       bookingId: booking.id,
       status: 'REMOVED',
     });
   }
 
-  /**
-   * Send booking notification — supports both registered and guest patients
-   */
-  private async sendBookingNotification(
-    booking: BookingWithRelations,
-  ): Promise<void> {
-    // Guest patients may not have email — skip silently if no email available
-    const email = booking.patientProfile.email;
-    if (!email) return;
+  async getReceptionistDashboardStats(): Promise<ApiResponse<any>> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
 
-    try {
-      await this.notificationsService.sendBookingConfirmation({
-        bookingId: booking.id,
-        patientId: booking.patientProfile.userId ?? undefined,
-        patientName: booking.patientProfile.fullName,
-        patientEmail: email,
-        doctorName: booking.doctor.fullName,
-        serviceName: booking.service?.name ?? 'Tư vấn (Chưa xác định)',
-        bookingDate: this.formatDate(booking.bookingDate),
-        startTime: booking.startTime ?? '',
-        endTime: booking.endTime ?? '',
-        duration: booking.service?.durationMinutes ?? 0,
-        status: booking.status,
-        price: booking.service?.price
-          ? Number(booking.service.price)
-          : undefined,
-        patientNotes: booking.patientNotes ?? undefined,
-      });
-    } catch (error) {
-      console.error('Failed to send booking notification:', error);
+    interface DashboardStatResult {
+      status: BookingStatus;
+      _count: {
+        _all: number;
+      };
     }
-  }
 
-  /**
-   * Send cancellation notification — supports both registered and guest patients
-   */
-  private async sendCancellationNotification(
-    booking: BookingWithRelations,
-  ): Promise<void> {
-    const email = booking.patientProfile.email;
-    if (!email) return;
+    const stats = (await this.bookingRepository.groupByBooking({
+      by: ['status'],
+      where: {
+        bookingDate: {
+          gte: today,
+          lt: tomorrow,
+        },
+      },
+      _count: {
+        _all: true,
+      },
+    })) as DashboardStatResult[];
 
-    try {
-      await this.notificationsService.sendBookingCancellation({
-        bookingId: booking.id,
-        patientId: booking.patientProfile.userId ?? undefined,
-        patientName: booking.patientProfile.fullName,
-        patientEmail: email,
-        doctorName: booking.doctor.fullName,
-        serviceName: booking.service?.name ?? 'Tư vấn (Chưa xác định)',
-        bookingDate: this.formatDate(booking.bookingDate),
-        startTime: booking.startTime ?? '',
-        endTime: booking.endTime ?? '',
-        duration: booking.service?.durationMinutes ?? 0,
-        status: booking.status,
-        price: booking.service?.price
-          ? Number(booking.service.price)
-          : undefined,
-      });
-    } catch (error) {
-      console.error('Failed to send cancellation notification:', error);
-    }
-  }
+    const result = {
+      pending: 0,
+      confirmed: 0,
+      completed: 0,
+      cancelled: 0,
+    };
 
-  /**
-   * Format date to readable string
-   */
-  private formatDate(date: Date): string {
-    return new Date(date).toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
+    stats.forEach((s) => {
+      const statusKey = s.status.toLowerCase();
+      if (statusKey in result) {
+        result[statusKey as keyof typeof result] = s._count._all;
+      }
     });
+
+    return ResponseHelper.success(
+      {
+        pending: { value: result.pending, trend: 0, trendDir: 'neutral' },
+        confirmed: { value: result.confirmed, trend: 0, trendDir: 'neutral' },
+        completed: { value: result.completed, trend: 0, trendDir: 'neutral' },
+        cancelled: { value: result.cancelled, trend: 0, trendDir: 'neutral' },
+      },
+      MessageCodes.BOOKING_LIST_RETRIEVED,
+      'Receptionist dashboard stats fetched successfully',
+    );
   }
 }

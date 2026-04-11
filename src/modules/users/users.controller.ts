@@ -34,6 +34,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { UserRole } from '@prisma/client';
 
 @ApiTags('users')
@@ -233,6 +234,7 @@ export class UsersController {
   }
 
   @Get('me')
+  @Authenticated()
   @ApiOperation({
     summary: 'Get current user profile',
     description: 'Get the profile of the currently authenticated user',
@@ -246,6 +248,7 @@ export class UsersController {
   }
 
   @Patch('me')
+  @Authenticated()
   @ApiOperation({
     summary: 'Update current user profile',
     description: 'Users can update their own profile (excluding role)',
@@ -265,6 +268,7 @@ export class UsersController {
   }
 
   @Patch('me/password')
+  @Authenticated()
   @ApiOperation({
     summary: 'Change password',
     description: 'User can change their own password',

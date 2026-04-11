@@ -145,6 +145,12 @@ export class QueueService {
       result,
     );
 
+    // Recalculate estimated times for the doctor's queue today
+    await this.recalculateEstimatedTimes(
+      booking.doctorId,
+      booking.bookingDate.toISOString().split('T')[0],
+    );
+
     // Notify staff
     const statusLabels: Record<string, string> = {
       CONFIRMED: 'đã xác nhận',
@@ -696,6 +702,84 @@ export class QueueService {
       });
     } catch (error) {
       console.error('Failed to send queue promotion notification:', error);
+    }
+  }
+
+  /**
+   * Recalculate estimatedTime for all walk-in patients of a doctor on a given date.
+   * Called after each check-in to keep estimated times accurate.
+   */
+  async recalculateEstimatedTimes(
+    doctorId: string,
+    bookingDate: string,
+  ): Promise<void> {
+    // Fetch all pre-bookings still active today (to find gaps)
+    const preBookings = await this.bookingRepository.findMany({
+      where: {
+        doctorId,
+        bookingDate: new Date(bookingDate),
+        isPreBooked: true,
+        startTime: { not: null },
+        status: {
+          notIn: [
+            BookingStatus.CANCELLED,
+            BookingStatus.NO_SHOW,
+            BookingStatus.COMPLETED,
+          ],
+        },
+      },
+      select: { startTime: true, endTime: true },
+      orderBy: { startTime: 'asc' },
+    });
+
+    // Fetch walk-in queue records for this doctor today
+    const walkInQueues = await this.bookingRepository.findQueueMany({
+      where: {
+        doctorId,
+        queueDate: new Date(bookingDate),
+        isPreBooked: false,
+        booking: {
+          status: {
+            notIn: [
+              BookingStatus.CANCELLED,
+              BookingStatus.NO_SHOW,
+              BookingStatus.COMPLETED,
+            ],
+          },
+        },
+      },
+      include: {
+        booking: {
+          select: {
+            id: true,
+            service: { select: { durationMinutes: true } },
+          },
+        },
+      },
+      orderBy: { queuePosition: 'asc' },
+    });
+
+    if (walkInQueues.length === 0) return;
+
+    // Find available gaps between pre-bookings or use end-of-day
+    const now = new Date();
+    const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const lastPreEnd = preBookings.at(-1)?.endTime ?? nowTimeStr;
+
+    let cursor = new Date(bookingDate);
+    const [hh, mm] = lastPreEnd.split(':').map(Number);
+    cursor.setHours(hh, mm, 0, 0);
+
+    for (const record of walkInQueues) {
+      const estTime = new Date(cursor);
+      const duration = record.booking.service?.durationMinutes ?? 30;
+
+      await this.bookingRepository.update({
+        where: { id: record.booking.id },
+        data: { estimatedTime: estTime },
+      });
+
+      cursor = new Date(cursor.getTime() + duration * 60 * 1000);
     }
   }
 
