@@ -293,12 +293,12 @@ export class BookingsService {
           startTime: isPreBooked ? startTime : undefined,
           endTime: isPreBooked ? endTime : undefined,
           isPreBooked,
-          status: BookingStatus.CONFIRMED,
+          status: isPreBooked ? BookingStatus.PENDING : BookingStatus.CONFIRMED,
           source,
           priority,
           patientNotes,
           bookedBy: createdById,
-          confirmedAt: new Date(),
+          confirmedAt: isPreBooked ? null : new Date(),
           roomId: slot?.roomId || undefined,
         },
         include: BookingInclude,
@@ -308,11 +308,13 @@ export class BookingsService {
         data: {
           bookingId: newBooking.id,
           oldStatus: null,
-          newStatus: BookingStatus.CONFIRMED,
+          newStatus: isPreBooked
+            ? BookingStatus.PENDING
+            : BookingStatus.CONFIRMED,
           changedById: createdById,
           reason: isPreBooked
-            ? 'Pre-booking created by receptionist'
-            : 'Walk-in booking created by receptionist',
+            ? 'Pre-booking created by receptionist, pending confirmation'
+            : 'Walk-in booking created by receptionist, auto-confirmed',
         },
       });
 
@@ -624,7 +626,7 @@ export class BookingsService {
   async updateStatus(
     id: string,
     updateStatusDto: UpdateBookingStatusDto,
-    changedById: string,
+    changedById?: string | null,
     currentUser?: Express.User,
   ) {
     const { status, reason, doctorNotes } = updateStatusDto;
@@ -665,8 +667,8 @@ export class BookingsService {
             bookingId: id,
             oldStatus: booking.status,
             newStatus: status,
-            changedById,
-            reason,
+            changedById: changedById!,
+            reason: reason!,
           },
         });
 
@@ -887,7 +889,11 @@ export class BookingsService {
   /**
    * Mark as no-show (Move from CHECKED_IN to NO_SHOW)
    */
-  async markNoShow(id: string, userId: string, currentUser?: Express.User) {
+  async markNoShow(
+    id: string,
+    userId: string | null,
+    currentUser?: Express.User,
+  ) {
     return this.updateStatus(
       id,
       {

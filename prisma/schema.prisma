@@ -383,12 +383,12 @@ model BookingStatusHistory {
   bookingId   String
   oldStatus   BookingStatus?
   newStatus   BookingStatus
-  changedById String
+  changedById String?
   reason      String?
   metadata    Json?
   createdAt   DateTime       @default(now())
   booking     Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  changedBy   User           @relation("ChangedByUser", fields: [changedById], references: [id])
+  changedBy   User?          @relation("ChangedByUser", fields: [changedById], references: [id])
 
   @@index([bookingId])
   @@index([createdAt])

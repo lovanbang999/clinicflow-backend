@@ -270,7 +270,7 @@ export class SchedulesController {
       'Returns available time slots considering working hours, break times, off days, and existing bookings. Optionally excludes slots already booked by a specific patient.',
   })
   @ApiQuery({ name: 'doctorId', required: true })
-  @ApiQuery({ name: 'serviceId', required: true })
+  @ApiQuery({ name: 'serviceId', required: false })
   @ApiQuery({ name: 'date', required: true, example: '2024-12-26' })
   @ApiQuery({
     name: 'patientId',
