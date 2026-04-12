@@ -13,10 +13,11 @@ export class AvailableSlotsQueryDto {
   @ApiProperty({
     description: 'Service ID',
     example: 'uuid-service-id',
+    required: false,
   })
   @IsUUID('4')
-  @IsNotEmpty()
-  serviceId: string;
+  @IsOptional()
+  serviceId?: string;
 
   @ApiProperty({
     description: 'Date (YYYY-MM-DD)',

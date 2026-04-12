@@ -402,15 +402,21 @@ export class SchedulesService {
    */
   async getAvailableSlots(queryDto: AvailableSlotsQueryDto) {
     const { doctorId, date, serviceId } = queryDto;
+    let durationMinutes = 30; // Default: 30 minutes
+    let maxSlotsPerHour = 1; // Default: 1 slot per slot (usually matching doctor availability)
 
-    const service = await this.catalogRepository.findServiceById(serviceId);
-    if (!service) {
-      throw new ApiException(
-        MessageCodes.SERVICE_NOT_FOUND,
-        'Service not found',
-        404,
-        'Available slots retrieval failed',
-      );
+    if (serviceId) {
+      const service = await this.catalogRepository.findServiceById(serviceId);
+      if (!service) {
+        throw new ApiException(
+          MessageCodes.SERVICE_NOT_FOUND,
+          'Service not found',
+          404,
+          'Available slots retrieval failed',
+        );
+      }
+      durationMinutes = service.durationMinutes;
+      maxSlotsPerHour = service.maxSlotsPerHour;
     }
 
     const requestedDate = new Date(date);
@@ -459,14 +465,14 @@ export class SchedulesService {
     const allSlots = this.generateTimeSlots(
       workingHours.startTime,
       workingHours.endTime,
-      service.durationMinutes,
+      durationMinutes,
     );
 
     const slotsAfterBreaks = allSlots.filter((slot) => {
       return !breakTimes.some((breakTime) => {
         return this.isTimeConflict(
           slot,
-          service.durationMinutes,
+          durationMinutes,
           breakTime.startTime,
           breakTime.endTime,
         );
@@ -477,7 +483,7 @@ export class SchedulesService {
       slotsAfterBreaks,
       doctorId,
       date,
-      service.maxSlotsPerHour,
+      maxSlotsPerHour,
       queryDto.patientId,
     );
 

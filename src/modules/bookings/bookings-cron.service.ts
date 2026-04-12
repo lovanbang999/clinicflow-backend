@@ -74,7 +74,7 @@ export class BookingsCronService {
 
     for (const booking of overdueBookings) {
       try {
-        await this.bookingsService.markNoShow(booking.id, 'system-cron');
+        await this.bookingsService.markNoShow(booking.id, null);
         this.logger.log(
           `Pre-booking ${booking.bookingCode} auto-marked as NO_SHOW (15-min timeout)`,
         );
