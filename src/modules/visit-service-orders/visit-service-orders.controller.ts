@@ -14,8 +14,8 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { LabOrderStatus, UserRole } from '@prisma/client';
-
+import { UserRole } from '@prisma/client';
+import { ServiceOrderStatus } from '../../common/constants/enums';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -34,10 +34,10 @@ export class VisitServiceOrdersController {
   @ApiOperation({
     summary: 'B3: KTV worklist — pending/in-progress service orders',
   })
-  @ApiQuery({ name: 'status', required: false, enum: LabOrderStatus })
+  @ApiQuery({ name: 'status', required: false, enum: ServiceOrderStatus })
   getWorklist(
     @Req() req: { user: { id: string } },
-    @Query('status') status?: LabOrderStatus,
+    @Query('status') status?: ServiceOrderStatus,
   ) {
     return this.service.getWorklist(req.user.id, status);
   }

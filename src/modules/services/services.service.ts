@@ -103,6 +103,7 @@ export class ServicesService {
     search?: string;
     category?: string;
     categoryType?: 'EXAMINATION' | 'LAB';
+    performedBy?: 'TECHNICIAN' | 'DOCTOR';
   }) {
     const where: Prisma.ServiceWhereInput = {};
 
@@ -117,6 +118,10 @@ export class ServicesService {
           : {}),
         type: filters.categoryType,
       };
+    }
+
+    if (filters?.performedBy) {
+      where.performerType = filters.performedBy;
     }
 
     if (filters?.isActive !== undefined) {
@@ -138,7 +143,20 @@ export class ServicesService {
       ];
     }
 
-    const services = await this.catalogRepository.findServices(where);
+    const services = await this.catalogRepository.findManyServices({
+      where,
+      include: {
+        category: true,
+        doctorServices: {
+          include: {
+            doctorProfile: {
+              include: { user: { select: { fullName: true } } },
+            },
+          },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
 
     return ResponseHelper.success(
       services,

@@ -102,11 +102,13 @@ export class ServicesController {
     @Query('isActive') isActive?: string,
     @Query('search') search?: string,
     @Query('categoryType') categoryType?: string,
+    @Query('performedBy') performedBy?: string,
   ) {
     const filters: {
       isActive?: boolean;
       search?: string;
-      categoryType?: any;
+      categoryType?: 'EXAMINATION' | 'LAB';
+      performedBy?: 'TECHNICIAN' | 'DOCTOR';
     } = {};
 
     if (isActive !== undefined) {
@@ -118,7 +120,11 @@ export class ServicesController {
     }
 
     if (categoryType) {
-      filters.categoryType = categoryType;
+      filters.categoryType = categoryType as 'EXAMINATION' | 'LAB';
+    }
+
+    if (performedBy === 'TECHNICIAN' || performedBy === 'DOCTOR') {
+      filters.performedBy = performedBy;
     }
 
     return this.servicesService.findAll(filters);

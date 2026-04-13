@@ -9,11 +9,11 @@ import {
   NotFoundException,
   Inject,
 } from '@nestjs/common';
-import { LabOrderStatus, Prisma, VisitStep } from '@prisma/client';
+import { Prisma, VisitStep, NotificationType } from '@prisma/client';
+import { ServiceOrderStatus } from '../../common/constants/enums';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { CompleteServiceOrderDto } from './dto/complete-service-order.dto';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationType } from '@prisma/client';
 
 @Injectable()
 export class VisitServiceOrdersService {
@@ -24,10 +24,10 @@ export class VisitServiceOrdersService {
   ) {}
 
   // KTV Worklist — list service orders assigned to perform
-  async getWorklist(technicianId: string, status?: LabOrderStatus) {
+  async getWorklist(technicianId: string, status?: ServiceOrderStatus) {
     const where: Prisma.VisitServiceOrderWhereInput = {
       status: status ?? {
-        in: [LabOrderStatus.PENDING, LabOrderStatus.IN_PROGRESS],
+        in: [ServiceOrderStatus.PENDING, ServiceOrderStatus.IN_PROGRESS],
       },
     };
 
@@ -74,13 +74,13 @@ export class VisitServiceOrdersService {
       where: { id: orderId },
     });
     if (!order) throw new NotFoundException('Service order not found');
-    if (order.status !== LabOrderStatus.PENDING)
+    if (order.status !== ServiceOrderStatus.PENDING)
       throw new ConflictException(`Order is already ${order.status}`);
 
     const updated = await this.clinicalRepository.updateVisitServiceOrder({
       where: { id: orderId },
       data: {
-        status: LabOrderStatus.IN_PROGRESS,
+        status: ServiceOrderStatus.IN_PROGRESS,
         performedBy: technicianId,
         startedAt: new Date(),
       },
@@ -104,9 +104,9 @@ export class VisitServiceOrdersService {
       where: { id: orderId },
     });
     if (!order) throw new NotFoundException('Service order not found');
-    if (order.status === LabOrderStatus.COMPLETED)
+    if (order.status === ServiceOrderStatus.COMPLETED)
       throw new ConflictException('Order already completed');
-    if (order.status === LabOrderStatus.CANCELLED)
+    if (order.status === ServiceOrderStatus.CANCELLED)
       throw new BadRequestException('Cannot complete a cancelled order');
 
     const updatedOrder = await this.clinicalRepository.transaction(
@@ -115,7 +115,7 @@ export class VisitServiceOrdersService {
         const completed = await tx.visitServiceOrder.update({
           where: { id: orderId },
           data: {
-            status: LabOrderStatus.COMPLETED,
+            status: ServiceOrderStatus.COMPLETED,
             performedBy: technicianId,
             resultText: dto.resultText,
             resultFileUrl: dto.resultFileUrl,
@@ -132,7 +132,7 @@ export class VisitServiceOrdersService {
         });
 
         const allDone = allSiblings.every(
-          (o) => o.id === orderId || o.status === LabOrderStatus.COMPLETED,
+          (o) => o.id === orderId || o.status === ServiceOrderStatus.COMPLETED,
         );
 
         if (allDone) {
