@@ -23,7 +23,8 @@ import {
   NotFoundException,
   Inject,
 } from '@nestjs/common';
-import { LabOrderStatus, Prisma, VisitStep } from '@prisma/client';
+import { Prisma, VisitStep } from '@prisma/client';
+import { ServiceOrderStatus } from '../../common/constants/enums';
 import { format } from 'date-fns';
 import { vi } from 'date-fns/locale';
 import { MessageCodes } from '../../common/constants/message-codes.const';
@@ -47,7 +48,7 @@ export class MedicalRecordsService {
       orderBy: { createdAt: 'asc' },
     },
     labOrders: {
-      include: { result: true },
+      include: { result: true, service: true },
       orderBy: { createdAt: 'asc' },
     },
     prescription: {
@@ -182,7 +183,7 @@ export class MedicalRecordsService {
     if (allOrders.length === 0) return;
 
     const allDone = allOrders.every(
-      (o) => o.status === LabOrderStatus.COMPLETED,
+      (o) => o.status === ServiceOrderStatus.COMPLETED,
     );
     if (allDone) {
       await tx.medicalRecord.update({
@@ -332,7 +333,7 @@ export class MedicalRecordsService {
             patientProfileId: booking.patientProfileId,
             bookingId,
             orderedBy: doctorId,
-            status: LabOrderStatus.PENDING,
+            status: ServiceOrderStatus.PENDING,
           })),
         });
       }
@@ -387,7 +388,7 @@ export class MedicalRecordsService {
     });
     if (!order || order.bookingId !== bookingId)
       throw new NotFoundException('Service order not found');
-    if (order.status !== LabOrderStatus.PENDING)
+    if (order.status !== ServiceOrderStatus.PENDING)
       throw new ConflictException(
         'Cannot remove a service order that is already in progress',
       );

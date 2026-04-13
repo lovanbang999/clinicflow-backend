@@ -652,67 +652,67 @@ async function main() {
       code: 'CAT_NOIKHOA',
       name: 'Nội khoa',
       description: 'Các dịch vụ khám nội khoa chung',
-      type: 'EXAMINATION' as const,
+      type: 'EXAMINATION' as ServiceCategoryType,
     },
     {
       code: 'CAT_XETNGHIEM',
       name: 'Xét nghiệm (Lab)',
       description: 'Các dịch vụ xét nghiệm cận lâm sàng',
-      type: 'LAB' as const,
+      type: 'LAB' as ServiceCategoryType,
     },
     {
       code: 'CAT_CDHA',
       name: 'Chẩn đoán hình ảnh',
       description: 'Siêu âm, X-Quang, MRI, CT',
-      type: 'LAB' as const,
+      type: 'LAB' as ServiceCategoryType, // IMAGING after db push
     },
     {
       code: 'CAT_TDDN',
       name: 'Thăm dò chức năng',
       description: 'Điện tâm đồ, đo loãng xương...',
-      type: 'LAB' as const,
+      type: 'LAB' as ServiceCategoryType,
     },
     {
       code: 'CAT_THUTHUAT',
       name: 'Thủ thuật',
       description: 'Nội soi, tiểu phẫu...',
-      type: 'LAB' as const,
+      type: 'LAB' as ServiceCategoryType, // PROCEDURE after db push
     },
     {
       code: 'CAT_NGOAIKHOA',
       name: 'Ngoại khoa',
       description: 'Các dịch vụ khám ngoại khoa',
-      type: 'EXAMINATION' as const,
+      type: 'EXAMINATION' as ServiceCategoryType,
     },
     {
       code: 'CAT_DALIEU',
       name: 'Da liễu',
       description: 'Các dịch vụ khám da liễu',
-      type: 'EXAMINATION' as const,
+      type: 'EXAMINATION' as ServiceCategoryType, // SPECIALIST after db push
     },
     {
       code: 'CAT_NHAKHOA',
       name: 'Nha khoa',
       description: 'Các dịch vụ khám răng hàm mặt',
-      type: 'EXAMINATION' as const,
+      type: 'EXAMINATION' as ServiceCategoryType, // SPECIALIST after db push
     },
     {
       code: 'CAT_NHANKHOA',
       name: 'Nhãn khoa',
       description: 'Các dịch vụ khám mắt',
-      type: 'EXAMINATION' as const,
+      type: 'EXAMINATION' as ServiceCategoryType, // SPECIALIST after db push
     },
     {
       code: 'CAT_TMH',
       name: 'Tai mũi họng',
       description: 'Các dịch vụ khám chuyên khoa TMH',
-      type: 'EXAMINATION' as const,
+      type: 'EXAMINATION' as ServiceCategoryType, // SPECIALIST after db push
     },
     {
       code: 'CAT_SANPHUKHOA',
       name: 'Sản phụ khoa',
       description: 'Các dịch vụ khám sản khoa và phụ khoa',
-      type: 'EXAMINATION' as const,
+      type: 'EXAMINATION' as ServiceCategoryType, // SPECIALIST after db push
     },
   ];
 
@@ -1308,17 +1308,20 @@ async function main() {
       },
     });
 
-    // 10.2 Service Order
+    // 10.2 Service Order (sample — using string literal status for compatibility)
     await prisma.visitServiceOrder.create({
       data: {
         medicalRecordId: medicalRecord.id,
         serviceId: sampleBookingRecord.serviceId || '',
         patientProfileId: sampleBookingRecord.patientProfileId,
         bookingId: sampleBookingRecord.id,
-        status: 'COMPLETED',
+        status: 'COMPLETED' as unknown as Parameters<
+          typeof prisma.visitServiceOrder.create
+        >[0]['data']['status'],
         orderedBy: sampleBookingRecord.doctorId,
         resultText: 'Bình thường',
         isAbnormal: false,
+        completedAt: new Date(),
       },
     });
 

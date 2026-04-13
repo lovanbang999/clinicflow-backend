@@ -32,6 +32,7 @@ import {
   VisitStep,
   Prisma,
 } from '@prisma/client';
+import { ServiceOrderStatus } from '../../common/constants/enums';
 import { NotificationsService } from '../notifications/notifications.service';
 import { LabOrdersGateway } from '../lab-orders/lab-orders.gateway';
 import { format } from 'date-fns';
@@ -236,7 +237,7 @@ export class BillingService {
 
         const vsoWhere = {
           bookingId: dto.bookingId,
-          status: LabOrderStatus.PENDING,
+          status: ServiceOrderStatus.PENDING,
           invoiceItem: null,
         } as Prisma.VisitServiceOrderWhereInput & { invoiceItem?: null };
         if (dto.visitServiceOrderIds && dto.visitServiceOrderIds.length > 0) {
@@ -390,7 +391,7 @@ export class BillingService {
       {
         where: {
           bookingId,
-          status: LabOrderStatus.PENDING,
+          status: ServiceOrderStatus.PENDING,
         },
         include: { service: { select: { price: true, name: true } } },
       },
@@ -1020,12 +1021,31 @@ export class BillingService {
             }
 
             if (vsoIds.length > 0) {
-              await tx.visitServiceOrder.updateMany({
-                where: { id: { in: vsoIds } },
-                data: {
-                  status: LabOrderStatus.PAID,
-                },
-              });
+              // Assign queue numbers for specialist services
+              const startOfDay = new Date();
+              startOfDay.setHours(0, 0, 0, 0);
+
+              for (const vsoId of vsoIds) {
+                const lastOrder = await tx.visitServiceOrder.findFirst({
+                  where: {
+                    createdAt: { gte: startOfDay },
+                    queueNumber: { not: null },
+                  },
+                  orderBy: { queueNumber: 'desc' },
+                  select: { queueNumber: true },
+                });
+                const nextQueueNumber: number =
+                  (Number(lastOrder?.queueNumber) || 0) + 1;
+
+                await tx.visitServiceOrder.update({
+                  where: { id: vsoId },
+                  data: {
+                    status: ServiceOrderStatus.PAID,
+                    paidAt: new Date(),
+                    queueNumber: nextQueueNumber,
+                  },
+                });
+              }
             }
 
             // Assign daily queue numbers to each paid lab order
