@@ -271,7 +271,9 @@ model Service {
   maxSlotsPerHour    Int                 @default(2)
   categoryId         String?
   preparationNotes   String?
-  tags               Json
+  tags               Json                @default("[]")
+  performerType      PerformerType       @default(TECHNICIAN)
+  examFormType       ExamFormType        @default(GENERAL)
   isActive           Boolean             @default(true)
   deletedAt          DateTime?
   createdAt          DateTime            @default(now())
@@ -468,20 +470,24 @@ model VisitServiceOrder {
   @@index([bookingId])
   @@index([serviceId], map: "visit_service_orders_serviceId_fkey")
   @@map("visit_service_orders")
+  invoiceItem       InvoiceItem?
 }
 
 model Prescription {
-  id               String             @id @default(uuid())
-  medicalRecordId  String             @unique
-  patientProfileId String
-  doctorId         String
-  notes            String?
-  isPrinted        Boolean            @default(false)
-  printedAt        DateTime?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  items            PrescriptionItem[]
-  medicalRecord    MedicalRecord      @relation(fields: [medicalRecordId], references: [id])
+  id                    String             @id @default(uuid())
+  medicalRecordId       String             @unique
+  patientProfileId      String
+  doctorId              String
+  notes                 String?
+  isPrinted             Boolean            @default(false)
+  printedAt             DateTime?
+  isFulfilledInternally Boolean?           // true = bought at clinic, false = bought outside, null = not yet decided
+  fulfilledAt           DateTime?          // timestamp when patient received medicine at pharmacy counter
+  pharmacyInvoiceId     String?            // link to Invoice PHARMACY if bought at clinic
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  items                 PrescriptionItem[]
+  medicalRecord         MedicalRecord      @relation(fields: [medicalRecordId], references: [id])
 
   @@index([patientProfileId])
   @@index([medicalRecordId])
@@ -608,9 +614,11 @@ model InvoiceItem {
   totalPrice Decimal   @db.Decimal(12, 2)
   sortOrder  Int       @default(0)
   createdAt  DateTime  @default(now())
-  invoice    Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  labOrder   LabOrder? @relation(fields: [labOrderId], references: [id])
-  service    Service?  @relation(fields: [serviceId], references: [id])
+  invoice    Invoice            @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  labOrder   LabOrder?          @relation(fields: [labOrderId], references: [id])
+  service    Service?           @relation(fields: [serviceId], references: [id])
+  visitServiceOrderId String?   @unique
+  visitServiceOrder   VisitServiceOrder? @relation(fields: [visitServiceOrderId], references: [id])
 
   @@index([invoiceId])
   @@index([serviceId])
@@ -783,6 +791,7 @@ enum BookingStatus {
   CONFIRMED
   CHECKED_IN
   IN_PROGRESS
+  AWAITING_RESULTS // Patient is at the lab/procedure room, waiting for results
   COMPLETED
   CANCELLED
   NO_SHOW
@@ -828,6 +837,22 @@ enum LabOrderStatus {
 enum ServiceCategoryType {
   EXAMINATION
   LAB
+}
+
+enum PerformerType {
+  TECHNICIAN
+  DOCTOR
+}
+
+enum ExamFormType {
+  GENERAL
+  EYE
+  DENTAL
+  ENT
+  CARDIOLOGY
+  DERMATOLOGY
+  GYNECOLOGY
+  ORTHOPEDIC
 }
 
 enum VisitStep {

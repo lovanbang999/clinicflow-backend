@@ -206,6 +206,7 @@ export class BookingValidatorService {
             BookingStatus.CONFIRMED,
             BookingStatus.CHECKED_IN,
             BookingStatus.IN_PROGRESS,
+            BookingStatus.AWAITING_RESULTS,
           ],
         },
       },
@@ -263,7 +264,16 @@ export class BookingValidatorService {
         BookingStatus.IN_PROGRESS,
         BookingStatus.CANCELLED,
       ],
-      [BookingStatus.IN_PROGRESS]: [BookingStatus.COMPLETED],
+      [BookingStatus.IN_PROGRESS]: [
+        BookingStatus.AWAITING_RESULTS, // Patient goes to lab after doctor orders tests
+        BookingStatus.COMPLETED, // Doctor finishes without ordering tests
+        BookingStatus.CANCELLED,
+      ],
+      [BookingStatus.AWAITING_RESULTS]: [
+        BookingStatus.IN_PROGRESS, // Patient returns to doctor after lab results are ready
+        BookingStatus.COMPLETED, // Doctor completes visit after reviewing results
+        BookingStatus.CANCELLED,
+      ],
       [BookingStatus.COMPLETED]: [],
       [BookingStatus.CANCELLED]: [],
       [BookingStatus.NO_SHOW]: [],
