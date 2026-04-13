@@ -42,6 +42,15 @@ export class CreateInvoiceDto {
   labOrderIds?: string[];
 
   @ApiPropertyOptional({
+    type: [String],
+    description: 'Optional list of visit service order IDs to include',
+  })
+  @IsArray()
+  @IsUUID('4', { each: true })
+  @IsOptional()
+  visitServiceOrderIds?: string[];
+
+  @ApiPropertyOptional({
     type: () => [AddInvoiceItemDto],
     description: 'Optional extra items to add manually',
   })
@@ -62,6 +71,13 @@ export class AddInvoiceItemDto {
   @IsUUID()
   @IsOptional()
   labOrderId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Optional: link to a visit service order',
+  })
+  @IsUUID()
+  @IsOptional()
+  visitServiceOrderId?: string;
 
   @ApiProperty({ example: 'Khám tổng quát' })
   @IsString()
@@ -120,7 +136,9 @@ export class ConfirmPaymentDto {
   @IsOptional()
   transactionRef?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description: 'Insurance number',
+  })
   @IsString()
   @IsOptional()
   insuranceNumber?: string;

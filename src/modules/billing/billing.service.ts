@@ -28,6 +28,8 @@ import {
   InvoiceStatus,
   InvoiceType,
   LabOrderStatus,
+  BookingStatus,
+  VisitStep,
   Prisma,
 } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -147,14 +149,36 @@ export class BillingService {
     }
 
     const invoiceType = dto.invoiceType ?? InvoiceType.CONSULTATION;
-    // Mô hình A: bookings may not have a service yet — service fee defaults to 0
     const servicePrice = booking.service?.price ?? 0;
+
+    // Guard: PHARMACY invoice can only be created on the same day as the booking
+    if (invoiceType === InvoiceType.PHARMACY) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const bookingDay = new Date(booking.bookingDate);
+      bookingDay.setHours(0, 0, 0, 0);
+      if (bookingDay.getTime() !== today.getTime()) {
+        throw new ApiException(
+          'BILLING.PHARMACY_INVOICE_EXPIRED',
+          'Invoice PHARMACY can only be created on the same day as the booking. Please ask the patient to buy medicine outside.',
+          HttpStatus.CONFLICT,
+        );
+      }
+      // Guard: must have a COMPLETED booking to issue PHARMACY invoice
+      if (booking.status !== 'COMPLETED') {
+        throw new ApiException(
+          'BILLING.PHARMACY_REQUIRES_COMPLETED',
+          'Invoice PHARMACY can only be created after the doctor completes the examination (booking COMPLETED).',
+          HttpStatus.CONFLICT,
+        );
+      }
+    }
 
     // Generate invoice number: INV-YYYYMMDD-XXXX
     const count = await this.financeRepository.countInvoice({});
     const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
 
-    const invoice = await this.financeRepository.transaction(async (tx) => {
+    const result = await this.financeRepository.transaction(async (tx) => {
       const seedSubtotal =
         invoiceType === InvoiceType.CONSULTATION ? Number(servicePrice) : 0;
 
@@ -186,50 +210,84 @@ export class BillingService {
             quantity: 1,
             totalPrice: servicePrice,
             sortOrder: 0,
+          } as Prisma.InvoiceItemUncheckedCreateInput & {
+            visitServiceOrderId?: string | null;
           },
         });
       }
 
       let totalToUpdate = seedSubtotal;
 
-      // For LAB: auto-seed items from PENDING lab orders not yet assigned to any invoice
       if (invoiceType === InvoiceType.LAB) {
         const labOrderWhere: Prisma.LabOrderWhereInput = {
           bookingId: dto.bookingId,
           status: LabOrderStatus.PENDING,
-          invoiceItem: null, // not yet added to any invoice
+          invoiceItem: null,
         };
         if (dto.labOrderIds && dto.labOrderIds.length > 0) {
           labOrderWhere.id = { in: dto.labOrderIds };
         }
 
-        const pendingOrders = await tx.labOrder.findMany({
+        const pendingLabs = await tx.labOrder.findMany({
           where: labOrderWhere,
           orderBy: { createdAt: 'asc' },
-          include: { service: { select: { price: true } } }, // Fetch real service price
+          include: { service: { select: { price: true } } },
         });
 
-        for (let i = 0; i < pendingOrders.length; i++) {
-          const order = pendingOrders[i];
-          const price = order.service?.price ? Number(order.service.price) : 0;
-          const itemName = order.testName;
+        const vsoWhere = {
+          bookingId: dto.bookingId,
+          status: LabOrderStatus.PENDING,
+          invoiceItem: null,
+        } as Prisma.VisitServiceOrderWhereInput & { invoiceItem?: null };
+        if (dto.visitServiceOrderIds && dto.visitServiceOrderIds.length > 0) {
+          vsoWhere.id = { in: dto.visitServiceOrderIds };
+        }
 
+        const pendingVsos = await tx.visitServiceOrder.findMany({
+          where: vsoWhere,
+          orderBy: { createdAt: 'asc' },
+          include: { service: { select: { price: true, name: true } } },
+        });
+
+        let sortOrderValue = 0;
+
+        for (const order of pendingLabs) {
+          const price = order.service?.price ? Number(order.service.price) : 0;
           const item = await tx.invoiceItem.create({
             data: {
               invoiceId: inv.id,
               labOrderId: order.id,
-              itemName,
+              itemName: order.testName ?? 'Lab test',
               unitPrice: price,
               quantity: 1,
               totalPrice: price,
-              sortOrder: i,
+              sortOrder: sortOrderValue++,
+            } as Prisma.InvoiceItemUncheckedCreateInput & {
+              visitServiceOrderId?: string | null;
+            },
+          });
+          totalToUpdate += Number(item.totalPrice);
+        }
+
+        for (const vso of pendingVsos) {
+          const price = vso.service?.price ? Number(vso.service.price) : 0;
+          const item = await tx.invoiceItem.create({
+            data: {
+              invoiceId: inv.id,
+              visitServiceOrderId: vso.id,
+              itemName: vso.service?.name ?? 'Clinical service',
+              unitPrice: price,
+              quantity: 1,
+              totalPrice: price,
+              sortOrder: sortOrderValue++,
+            } as Prisma.InvoiceItemUncheckedCreateInput & {
+              visitServiceOrderId?: string | null;
             },
           });
           totalToUpdate += Number(item.totalPrice);
         }
       }
 
-      // Add manual items if provided
       if (dto.items && dto.items.length > 0) {
         for (let i = 0; i < dto.items.length; i++) {
           const mItem = dto.items[i];
@@ -240,61 +298,38 @@ export class BillingService {
             data: {
               invoiceId: inv.id,
               serviceId: mItem.serviceId,
-              labOrderId: mItem.labOrderId,
               itemName: mItem.itemName,
               unitPrice: mItem.unitPrice,
               quantity: qty,
               totalPrice: tPrice,
-              sortOrder: mItem.sortOrder ?? 100 + i,
+              sortOrder: mItem.sortOrder ?? 0,
+            } as Prisma.InvoiceItemUncheckedCreateInput & {
+              visitServiceOrderId?: string | null;
             },
           });
           totalToUpdate += Number(item.totalPrice);
         }
       }
 
-      // Recalculate totals
-      if (totalToUpdate !== seedSubtotal) {
-        await tx.invoice.update({
-          where: { id: inv.id },
-          data: { subtotal: totalToUpdate, totalAmount: totalToUpdate },
-        });
-      }
-
-      return tx.invoice.findUnique({
+      const updatedInv = await tx.invoice.update({
         where: { id: inv.id },
-        include: {
-          items: {
-            include: {
-              labOrder: true,
-            },
-          },
-          payments: true,
-          booking: {
-            include: {
-              patientProfile: true,
-              doctor: true,
-              room: true,
-            },
-          },
+        data: {
+          subtotal: totalToUpdate,
+          totalAmount: totalToUpdate,
         },
       });
+
+      return updatedInv;
     });
 
     return ResponseHelper.success(
-      invoice,
+      result,
       'BILLING.INVOICE_CREATED',
-      'Invoice created',
+      'Invoice created successfully',
       201,
     );
   }
 
-  /**
-   * Delete a DRAFT invoice. Used when a receptionist creates an invoice by mistake
-   * or wants to undo the creation of an invoice.
-   * This cascades and deletes the InvoiceItems.
-   * As a result, any linked LabOrders will be unlinked (invoiceItem becomes null)
-   * and they will reappear in the pending lab orders list.
-   */
   async deleteInvoice(id: string, currentUser?: Express.User) {
     if (
       currentUser &&
@@ -334,14 +369,7 @@ export class BillingService {
     );
   }
 
-  /**
-   * Automatically synchronizes PENDING lab orders into a DRAFT LAB invoice.
-   * If no draft LAB invoice exists, one is created.
-   * If one exists, it is updated with any new pending lab orders.
-   * If a lab order was removed, it should be removed from the draft invoice.
-   */
   async syncLabInvoice(bookingId: string) {
-    // 1. Find existing DRAFT LAB invoice
     const invoice = await this.financeRepository.findFirstInvoice({
       where: {
         bookingId,
@@ -350,7 +378,7 @@ export class BillingService {
       },
     });
 
-    const pendingOrders = await this.clinicalRepository.findManyLabOrder({
+    const pendingLabs = await this.clinicalRepository.findManyLabOrder({
       where: {
         bookingId,
         status: LabOrderStatus.PENDING,
@@ -358,17 +386,21 @@ export class BillingService {
       include: { service: { select: { price: true } } },
     });
 
-    // If no pending orders and no draft invoice, nothing to do
-    if (pendingOrders.length === 0 && !invoice) {
+    const pendingVsos = await this.clinicalRepository.findManyVisitServiceOrder(
+      {
+        where: {
+          bookingId,
+          status: LabOrderStatus.PENDING,
+        },
+        include: { service: { select: { price: true, name: true } } },
+      },
+    );
+
+    if (pendingLabs.length === 0 && pendingVsos.length === 0 && !invoice) {
       return null;
     }
 
-    // If pendingOrders.length === 0, we still proceed to the transaction to
-    // remove the obsolete items and then decide if we should delete the invoice.
-    // (We removed the early-deletion block to be more robust)
-
     if (!invoice) {
-      // Create new draft
       const result = await this.createInvoice({
         bookingId,
         invoiceType: InvoiceType.LAB,
@@ -377,41 +409,85 @@ export class BillingService {
       return result.data;
     }
 
-    // Update existing draft
     await this.financeRepository.transaction(async (tx) => {
-      // Get existing items on this invoice that are linked to lab orders
       const existingItems = await tx.invoiceItem.findMany({
-        where: { invoiceId: invoice.id, labOrderId: { not: null } },
+        where: { invoiceId: invoice.id },
       });
-      const existingLabOrderIds = existingItems.map((it) => it.labOrderId);
+      const existingLabOrderIds = existingItems
+        .filter((it) => it.labOrderId)
+        .map((it) => it.labOrderId);
+      const existingVsoIds = existingItems
+        .filter(
+          (it) =>
+            (it as typeof it & { visitServiceOrderId?: string | null })
+              .visitServiceOrderId,
+        )
+        .map(
+          (it) =>
+            (it as typeof it & { visitServiceOrderId?: string | null })
+              .visitServiceOrderId,
+        )
+        .filter(Boolean) as string[];
 
-      // 1. Add new items for new pending orders
-      for (const order of pendingOrders) {
+      for (const order of pendingLabs) {
         if (!existingLabOrderIds.includes(order.id)) {
           const price = order.service?.price ? Number(order.service.price) : 0;
           await tx.invoiceItem.create({
             data: {
               invoiceId: invoice.id,
               labOrderId: order.id,
-              itemName: order.testName,
+              itemName: order.testName ?? 'Lab test',
               unitPrice: price,
               quantity: 1,
               totalPrice: price,
               sortOrder: 0,
+            } as Prisma.InvoiceItemUncheckedCreateInput & {
+              visitServiceOrderId?: string | null;
             },
           });
         }
       }
 
-      // 2. Remove items that are no longer pending (e.g. doctor removed the order)
-      const currentPendingIds = pendingOrders.map((o) => o.id);
+      for (const vso of pendingVsos) {
+        if (!existingVsoIds.includes(vso.id)) {
+          const price = vso.service?.price ? Number(vso.service.price) : 0;
+          await tx.invoiceItem.create({
+            data: {
+              invoiceId: invoice.id,
+              visitServiceOrderId: vso.id,
+              itemName: vso.service?.name ?? 'Clinical service',
+              unitPrice: price,
+              quantity: 1,
+              totalPrice: price,
+              sortOrder: 0,
+            } as Prisma.InvoiceItemUncheckedCreateInput & {
+              visitServiceOrderId?: string | null;
+            },
+          });
+        }
+      }
+
+      const currentPendingLabIds = pendingLabs.map((o) => o.id);
+      const currentPendingVsoIds = pendingVsos.map((o) => o.id);
+
       for (const item of existingItems) {
-        if (!currentPendingIds.includes(item.labOrderId!)) {
+        if (
+          item.labOrderId &&
+          !currentPendingLabIds.includes(item.labOrderId)
+        ) {
+          await tx.invoiceItem.delete({ where: { id: item.id } });
+        } else if (
+          (item as { visitServiceOrderId?: string | null })
+            .visitServiceOrderId &&
+          !currentPendingVsoIds.includes(
+            (item as { visitServiceOrderId?: string | null })
+              .visitServiceOrderId!,
+          )
+        ) {
           await tx.invoiceItem.delete({ where: { id: item.id } });
         }
       }
 
-      // 3. RECAlCULATE TOTAL FROM ALL ITEMS (Most robust way)
       const allItems = await tx.invoiceItem.findMany({
         where: { invoiceId: invoice.id },
       });
@@ -423,7 +499,10 @@ export class BillingService {
 
       await tx.invoice.update({
         where: { id: invoice.id },
-        data: { subtotal: newTotal, totalAmount: newTotal },
+        data: {
+          subtotal: newTotal,
+          totalAmount: newTotal,
+        },
       });
     });
 
@@ -715,6 +794,9 @@ export class BillingService {
           totalPrice,
           sortOrder: dto.sortOrder ?? 0,
           labOrderId: dto.labOrderId,
+          visitServiceOrderId: dto.visitServiceOrderId,
+        } as Prisma.InvoiceItemUncheckedCreateInput & {
+          visitServiceOrderId?: string | null;
         },
       });
 
@@ -905,18 +987,46 @@ export class BillingService {
           },
         });
 
-        // If LAB invoice: mark ALL linked lab orders as PAID (READY TO PERFORM)
+        // If LAB invoice: mark ALL linked lab orders and visit service orders as PAID
         if (invoice.invoiceType === InvoiceType.LAB) {
-          const labItems = await tx.invoiceItem.findMany({
-            where: { invoiceId, labOrderId: { not: null } },
+          const paidItems = await tx.invoiceItem.findMany({
+            where: { invoiceId },
           });
-          if (labItems.length > 0) {
-            const labOrderIds = labItems.map((i) => i.labOrderId as string);
 
-            await tx.labOrder.updateMany({
-              where: { id: { in: labOrderIds } },
-              data: { status: LabOrderStatus.PAID },
-            });
+          const labOrderIds = paidItems
+            .filter((i) => i.labOrderId)
+            .map((i) => i.labOrderId as string);
+
+          const vsoIds = paidItems
+            .filter(
+              (i) =>
+                (i as typeof i & { visitServiceOrderId?: string | null })
+                  .visitServiceOrderId,
+            )
+            .map(
+              (i) =>
+                (i as typeof i & { visitServiceOrderId?: string | null })
+                  .visitServiceOrderId as string,
+            );
+
+          if (labOrderIds.length > 0 || vsoIds.length > 0) {
+            if (labOrderIds.length > 0) {
+              await tx.labOrder.updateMany({
+                where: { id: { in: labOrderIds } },
+                data: {
+                  status: LabOrderStatus.PAID,
+                },
+              });
+            }
+
+            if (vsoIds.length > 0) {
+              await tx.visitServiceOrder.updateMany({
+                where: { id: { in: vsoIds } },
+                data: {
+                  status: LabOrderStatus.PAID,
+                },
+              });
+            }
 
             // Assign daily queue numbers to each paid lab order
             const startOfDay = new Date();
@@ -936,7 +1046,9 @@ export class BillingService {
 
               await tx.labOrder.update({
                 where: { id: labOrderId },
-                data: { queueNumber: nextQueueNumber },
+                data: {
+                  queueNumber: nextQueueNumber,
+                },
               });
             }
 
@@ -949,6 +1061,33 @@ export class BillingService {
               patientName,
               invoiceId: invoice.id,
             };
+
+            // Step3 → After LAB payment: transition booking to AWAITING_RESULTS
+            // Patient is now heading to the lab/procedure room
+            await tx.booking.update({
+              where: { id: invoice.bookingId },
+              data: {
+                status: 'AWAITING_RESULTS' as BookingStatus,
+              },
+            });
+            await tx.bookingStatusHistory.create({
+              data: {
+                bookingId: invoice.bookingId,
+                oldStatus: 'IN_PROGRESS',
+                newStatus: 'AWAITING_RESULTS' as BookingStatus,
+                changedById: confirmedByUserId,
+                reason:
+                  'LAB invoice paid — patient heading to procedure/lab room',
+              },
+            });
+
+            // Also update MedicalRecord visitStep to AWAITING_RESULTS
+            await tx.medicalRecord.updateMany({
+              where: { bookingId: invoice.bookingId },
+              data: {
+                visitStep: 'AWAITING_RESULTS' as VisitStep,
+              },
+            });
 
             // Notify technicians that new lab orders are ready to be performed
             const technicians = await tx.user.findMany({
@@ -965,7 +1104,7 @@ export class BillingService {
                 metadata: {
                   invoiceId: invoice.id,
                   bookingId: invoice.bookingId,
-                },
+                } as Prisma.InputJsonValue,
               });
             }
           }
@@ -989,7 +1128,9 @@ export class BillingService {
         // First payment: DRAFT → OPEN
         await tx.invoice.update({
           where: { id: invoiceId },
-          data: { status: InvoiceStatus.OPEN },
+          data: {
+            status: InvoiceStatus.OPEN,
+          },
         });
       }
 
@@ -997,7 +1138,9 @@ export class BillingService {
       if (dto.labOrderId) {
         await tx.labOrder.update({
           where: { id: dto.labOrderId },
-          data: { status: LabOrderStatus.PAID },
+          data: {
+            status: LabOrderStatus.PAID,
+          },
         });
       }
     });
@@ -1158,8 +1301,8 @@ export class BillingService {
       } (${this.formatVNCurrency(Number(updatedInvoice.totalAmount))}).`,
       metadata: {
         invoiceId: updatedInvoice.id,
-        amount: updatedInvoice.totalAmount,
-      },
+        amount: Number(updatedInvoice.totalAmount),
+      } as Prisma.InputJsonValue,
     });
 
     return ResponseHelper.success(

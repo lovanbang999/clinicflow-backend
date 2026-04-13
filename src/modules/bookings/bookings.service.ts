@@ -708,10 +708,62 @@ export class BookingsService {
         }
 
         // If examination starts, broadcast real-time update
-        if (status === BookingStatus.IN_PROGRESS) {
+        if (
+          status === BookingStatus.IN_PROGRESS ||
+          status === BookingStatus.AWAITING_RESULTS
+        ) {
           this.queueGateway.broadcastQueueUpdate(updated.doctorId, 'UPDATE', {
             booking: updated,
           });
+        }
+
+        // B2: When doctor calls patient (IN_PROGRESS), auto-create CONSULTATION invoice
+        // if doctor has a consultationFee > 0. Patient will pay at B3 (reception counter).
+        if (status === BookingStatus.IN_PROGRESS) {
+          const doctorUser = await tx.user.findUnique({
+            where: { id: updated.doctorId },
+            include: { doctorProfile: { select: { consultationFee: true } } },
+          });
+          const fee = Number(doctorUser?.doctorProfile?.consultationFee ?? 0);
+
+          if (fee > 0) {
+            const existingConsultation = await tx.invoice.findFirst({
+              where: {
+                bookingId: id,
+                invoiceType: 'CONSULTATION',
+                status: { notIn: ['CANCELLED'] },
+              },
+            });
+            if (!existingConsultation) {
+              const count = await tx.invoice.count();
+              const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
+              await tx.invoice.create({
+                data: {
+                  bookingId: id,
+                  patientProfileId: updated.patientProfileId,
+                  invoiceType: 'CONSULTATION',
+                  invoiceNumber,
+                  subtotal: fee,
+                  discountAmount: 0,
+                  vatRate: 0,
+                  vatAmount: 0,
+                  taxAmount: 0,
+                  totalAmount: fee,
+                  status: 'DRAFT',
+                  notes: 'Phí tư vấn — thu tại bước B3 khi BN ra quầy lễ tân',
+                  items: {
+                    create: {
+                      itemName: 'Phí khám tư vấn',
+                      unitPrice: fee,
+                      quantity: 1,
+                      totalPrice: fee,
+                      sortOrder: 0,
+                    },
+                  },
+                },
+              });
+            }
+          }
         }
 
         return updated;

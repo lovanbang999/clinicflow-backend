@@ -13,6 +13,8 @@ import {
   Service,
   PatientProfile,
   Room,
+  PerformerType,
+  ExamFormType,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as fs from 'fs';
@@ -726,7 +728,16 @@ async function main() {
   // ============================================
   console.log('\n🏥 Creating services...');
 
-  const servicesData = [
+  const servicesData: {
+    name: string;
+    description: string;
+    categoryId: string;
+    durationMinutes: number;
+    price: number;
+    maxSlotsPerHour: number;
+    performerType: PerformerType;
+    examFormType: ExamFormType;
+  }[] = [
     {
       name: 'Khám tổng quát',
       description: 'Khám sức khỏe định kỳ, tư vấn các vấn đề sức khỏe chung',
@@ -734,6 +745,8 @@ async function main() {
       durationMinutes: 30,
       price: 200000,
       maxSlotsPerHour: 3,
+      performerType: PerformerType.DOCTOR,
+      examFormType: ExamFormType.GENERAL,
     },
     {
       name: 'Xét nghiệm máu tổng quát',
@@ -742,6 +755,8 @@ async function main() {
       durationMinutes: 15,
       price: 150000,
       maxSlotsPerHour: 4,
+      performerType: PerformerType.TECHNICIAN,
+      examFormType: ExamFormType.GENERAL,
     },
     {
       name: 'Xét nghiệm nước tiểu',
@@ -750,6 +765,8 @@ async function main() {
       durationMinutes: 15,
       price: 80000,
       maxSlotsPerHour: 4,
+      performerType: PerformerType.TECHNICIAN,
+      examFormType: ExamFormType.GENERAL,
     },
     {
       name: 'Xét nghiệm HbA1c',
@@ -758,6 +775,8 @@ async function main() {
       durationMinutes: 15,
       price: 160000,
       maxSlotsPerHour: 4,
+      performerType: PerformerType.TECHNICIAN,
+      examFormType: ExamFormType.GENERAL,
     },
     {
       name: 'Siêu âm tim',
@@ -766,6 +785,8 @@ async function main() {
       durationMinutes: 30,
       price: 350000,
       maxSlotsPerHour: 2,
+      performerType: PerformerType.TECHNICIAN,
+      examFormType: ExamFormType.GENERAL,
     },
     {
       name: 'Siêu âm tổng quát',
@@ -774,6 +795,8 @@ async function main() {
       durationMinutes: 30,
       price: 280000,
       maxSlotsPerHour: 2,
+      performerType: PerformerType.TECHNICIAN,
+      examFormType: ExamFormType.GENERAL,
     },
     {
       name: 'X-quang ngực thẳng',
@@ -782,6 +805,8 @@ async function main() {
       durationMinutes: 20,
       price: 200000,
       maxSlotsPerHour: 3,
+      performerType: PerformerType.TECHNICIAN,
+      examFormType: ExamFormType.GENERAL,
     },
     {
       name: 'Điện tâm đồ (ECG)',
@@ -790,6 +815,8 @@ async function main() {
       durationMinutes: 20,
       price: 120000,
       maxSlotsPerHour: 3,
+      performerType: PerformerType.TECHNICIAN,
+      examFormType: ExamFormType.GENERAL,
     },
     {
       name: 'Đo loãng xương',
@@ -798,6 +825,8 @@ async function main() {
       durationMinutes: 30,
       price: 250000,
       maxSlotsPerHour: 2,
+      performerType: PerformerType.TECHNICIAN,
+      examFormType: ExamFormType.GENERAL,
     },
     {
       name: 'Nội soi dạ dày',
@@ -806,6 +835,8 @@ async function main() {
       durationMinutes: 45,
       price: 600000,
       maxSlotsPerHour: 1,
+      performerType: PerformerType.TECHNICIAN,
+      examFormType: ExamFormType.GENERAL,
     },
     {
       name: 'Khám tim mạch',
@@ -814,6 +845,8 @@ async function main() {
       durationMinutes: 45,
       price: 300000,
       maxSlotsPerHour: 2,
+      performerType: PerformerType.DOCTOR,
+      examFormType: ExamFormType.CARDIOLOGY,
     },
     {
       name: 'Khám da liễu',
@@ -822,6 +855,8 @@ async function main() {
       durationMinutes: 30,
       price: 250000,
       maxSlotsPerHour: 2,
+      performerType: PerformerType.DOCTOR,
+      examFormType: ExamFormType.DERMATOLOGY,
     },
     {
       name: 'Khám răng hàm mặt',
@@ -830,6 +865,8 @@ async function main() {
       durationMinutes: 45,
       price: 350000,
       maxSlotsPerHour: 2,
+      performerType: PerformerType.DOCTOR,
+      examFormType: ExamFormType.DENTAL,
     },
     {
       name: 'Khám mắt',
@@ -838,6 +875,8 @@ async function main() {
       durationMinutes: 30,
       price: 200000,
       maxSlotsPerHour: 3,
+      performerType: PerformerType.DOCTOR,
+      examFormType: ExamFormType.EYE,
     },
     {
       name: 'Khám tai mũi họng',
@@ -846,6 +885,8 @@ async function main() {
       durationMinutes: 30,
       price: 220000,
       maxSlotsPerHour: 2,
+      performerType: PerformerType.DOCTOR,
+      examFormType: ExamFormType.ENT,
     },
     {
       name: 'Khám sản phụ khoa',
@@ -854,12 +895,19 @@ async function main() {
       durationMinutes: 45,
       price: 300000,
       maxSlotsPerHour: 2,
+      performerType: PerformerType.DOCTOR,
+      examFormType: ExamFormType.GYNECOLOGY,
     },
   ];
 
   const createdServices: Service[] = [];
   for (const service of servicesData) {
-    const created = await prisma.service.create({ data: service });
+    const created = await prisma.service.create({
+      data: {
+        ...service,
+        tags: '[]',
+      },
+    });
     createdServices.push(created);
     console.log(`  ✅ Service: ${created.name}`);
   }

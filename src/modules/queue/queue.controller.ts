@@ -72,6 +72,7 @@ export class QueueController {
   }
 
   @Get('booking/:bookingId')
+  @Roles(UserRole.DOCTOR, UserRole.RECEPTIONIST, UserRole.ADMIN)
   @ApiOperation({ summary: 'Get queue info by booking ID' })
   @ApiResponse({
     status: 200,

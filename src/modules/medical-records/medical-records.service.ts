@@ -30,7 +30,7 @@ import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { NotificationsService } from '../notifications/notifications.service';
-
+import { BillingService } from '../billing/billing.service';
 import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { OrderServicesDto } from './dto/order-services.dto';
@@ -70,6 +70,7 @@ export class MedicalRecordsService {
     @Inject(I_PROFILE_REPOSITORY)
     private readonly profileRepository: IProfileRepository,
     private readonly notificationsService: NotificationsService,
+    private readonly billingService: BillingService,
   ) {}
 
   // PRIVATE HELPERS
@@ -361,6 +362,9 @@ export class MedicalRecordsService {
       return { record: updated, orders };
     });
 
+    // Auto-sync to draft invoice
+    await this.billingService.syncLabInvoice(bookingId);
+
     return ResponseHelper.success(
       result,
       'EMR.SERVICES_ORDERED',
@@ -391,6 +395,10 @@ export class MedicalRecordsService {
     await this.clinicalRepository.deleteVisitServiceOrder({
       where: { id: orderId },
     });
+
+    // Auto-sync after removal
+    await this.billingService.syncLabInvoice(bookingId);
+
     return ResponseHelper.success(
       null,
       'EMR.ORDER_REMOVED',
@@ -516,6 +524,7 @@ export class MedicalRecordsService {
             patientProfileId: booking.patientProfileId,
             doctorId,
             notes: dto.notes,
+            isFulfilledInternally: null, // null = patient has not decided yet
           },
           update: { notes: dto.notes },
         });
@@ -568,40 +577,8 @@ export class MedicalRecordsService {
           },
         });
 
-        // Auto-create PHARMACY invoice if not exists
-        const existingInvoice = await tx.invoice.findFirst({
-          where: { bookingId, invoiceType: 'PHARMACY' },
-        });
-        if (!existingInvoice && dto.items.length > 0) {
-          const count = await tx.invoice.count();
-          const num = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
-          const inv = await tx.invoice.create({
-            data: {
-              bookingId,
-              patientProfileId: booking.patientProfileId,
-              invoiceType: 'PHARMACY',
-              invoiceNumber: num,
-              subtotal: 0,
-              discountAmount: 0,
-              vatRate: 0,
-              vatAmount: 0,
-              taxAmount: 0,
-              totalAmount: 0,
-              status: 'DRAFT',
-              notes: 'Auto-created on prescription',
-            },
-          });
-          await tx.invoiceItem.createMany({
-            data: dto.items.map((item, idx) => ({
-              invoiceId: inv.id,
-              itemName: `${item.medicineName} (${item.dosage}, ${item.quantity} ${item.unit ?? 'viên'})`,
-              unitPrice: 0,
-              quantity: item.quantity,
-              totalPrice: 0,
-              sortOrder: idx,
-            })),
-          });
-        }
+        // NOTE (v5.0): PHARMACY invoice is NOT auto-created here.
+        // Receptionist will create it manually if the patient chooses to buy medicine at the clinic (B8).
 
         return tx.medicalRecord.findUnique({
           where: { id: record.id },

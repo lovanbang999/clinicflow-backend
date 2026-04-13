@@ -206,7 +206,7 @@ export class AdminServicesService {
       isActive: true,
       categoryId: dto.categoryId,
       preparationNotes: dto.preparationNotes,
-      tags: dto.tags,
+      tags: dto.tags ?? [],
     });
 
     return ResponseHelper.success(

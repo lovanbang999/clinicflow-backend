@@ -84,6 +84,7 @@ export class ServicesService {
       maxSlotsPerHour,
       categoryId,
       isActive: true,
+      tags: [],
     });
 
     return ResponseHelper.success(
