@@ -167,6 +167,7 @@ export class PrismaUserRepository implements IUserRepository {
               qualifications: true,
               yearsOfExperience: true,
               bio: true,
+              consultationFee: true,
               rating: true,
               reviewCount: true,
               services: {
@@ -220,6 +221,7 @@ export class PrismaUserRepository implements IUserRepository {
             qualifications: true,
             yearsOfExperience: true,
             bio: true,
+            consultationFee: true,
             rating: true,
             reviewCount: true,
           },

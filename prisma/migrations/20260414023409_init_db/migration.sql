@@ -79,7 +79,7 @@ CREATE TABLE `doctor_profiles` (
     `yearsOfExperience` INTEGER NOT NULL DEFAULT 0,
     `bio` VARCHAR(191) NULL,
     `consultationFee` DECIMAL(12, 2) NULL,
-    `rating` DECIMAL(3, 2) NOT NULL DEFAULT 0,
+    `rating` DECIMAL(3, 2) NOT NULL DEFAULT 0.00,
     `reviewCount` INTEGER NOT NULL DEFAULT 0,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
@@ -129,6 +129,7 @@ CREATE TABLE `doctor_off_days` (
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     INDEX `doctor_off_days_doctorId_idx`(`doctorId`),
+    INDEX `doctor_off_days_approvedBy_fkey`(`approvedBy`),
     UNIQUE INDEX `doctor_off_days_doctorId_offDate_key`(`doctorId`, `offDate`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -156,6 +157,19 @@ CREATE TABLE `doctor_schedule_slots` (
 
     INDEX `doctor_schedule_slots_doctorId_date_idx`(`doctorId`, `date`),
     INDEX `doctor_schedule_slots_roomId_date_idx`(`roomId`, `date`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `doctor_services` (
+    `id` VARCHAR(191) NOT NULL,
+    `doctorProfileId` VARCHAR(191) NOT NULL,
+    `serviceId` VARCHAR(191) NOT NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `doctor_services_doctorProfileId_idx`(`doctorProfileId`),
+    INDEX `doctor_services_serviceId_idx`(`serviceId`),
+    UNIQUE INDEX `doctor_services_doctorProfileId_serviceId_key`(`doctorProfileId`, `serviceId`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -224,7 +238,7 @@ CREATE TABLE `categories` (
     `code` VARCHAR(191) NOT NULL,
     `name` VARCHAR(191) NOT NULL,
     `description` VARCHAR(191) NULL,
-    `type` ENUM('EXAMINATION', 'LAB') NOT NULL DEFAULT 'LAB',
+    `type` ENUM('EXAMINATION', 'LAB', 'IMAGING', 'PROCEDURE', 'SPECIALIST') NOT NULL DEFAULT 'LAB',
     `isActive` BOOLEAN NOT NULL DEFAULT true,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
@@ -248,6 +262,8 @@ CREATE TABLE `services` (
     `categoryId` VARCHAR(191) NULL,
     `preparationNotes` VARCHAR(191) NULL,
     `tags` JSON NOT NULL,
+    `performerType` ENUM('TECHNICIAN', 'DOCTOR') NOT NULL DEFAULT 'TECHNICIAN',
+    `examFormType` ENUM('GENERAL', 'EYE', 'DENTAL', 'ENT', 'CARDIOLOGY', 'DERMATOLOGY', 'GYNECOLOGY', 'ORTHOPEDIC', 'NEUROLOGY', 'GASTRO', 'ENDOCRINE', 'UROLOGY', 'RESPIRATORY') NOT NULL DEFAULT 'GENERAL',
     `isActive` BOOLEAN NOT NULL DEFAULT true,
     `deletedAt` DATETIME(3) NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -258,19 +274,7 @@ CREATE TABLE `services` (
     INDEX `services_isActive_idx`(`isActive`),
     INDEX `services_categoryId_idx`(`categoryId`),
     INDEX `services_serviceCode_idx`(`serviceCode`),
-    PRIMARY KEY (`id`)
-) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
--- CreateTable
-CREATE TABLE `doctor_services` (
-    `id` VARCHAR(191) NOT NULL,
-    `doctorProfileId` VARCHAR(191) NOT NULL,
-    `serviceId` VARCHAR(191) NOT NULL,
-    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-
-    INDEX `doctor_services_doctorProfileId_idx`(`doctorProfileId`),
-    INDEX `doctor_services_serviceId_idx`(`serviceId`),
-    UNIQUE INDEX `doctor_services_doctorProfileId_serviceId_key`(`doctorProfileId`, `serviceId`),
+    INDEX `services_performerType_idx`(`performerType`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -286,7 +290,7 @@ CREATE TABLE `bookings` (
     `endTime` VARCHAR(191) NULL,
     `isPreBooked` BOOLEAN NOT NULL DEFAULT true,
     `estimatedTime` DATETIME(3) NULL,
-    `status` ENUM('PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW', 'QUEUED') NOT NULL DEFAULT 'PENDING',
+    `status` ENUM('PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'AWAITING_RESULTS', 'COMPLETED', 'CANCELLED', 'NO_SHOW', 'QUEUED') NOT NULL DEFAULT 'PENDING',
     `source` ENUM('ONLINE', 'WALK_IN', 'PHONE', 'RECEPTIONIST') NOT NULL DEFAULT 'ONLINE',
     `priority` ENUM('NORMAL', 'URGENT', 'EMERGENCY') NOT NULL DEFAULT 'NORMAL',
     `bookedBy` VARCHAR(191) NULL,
@@ -311,6 +315,10 @@ CREATE TABLE `bookings` (
     INDEX `bookings_doctorId_bookingDate_isPreBooked_idx`(`doctorId`, `bookingDate`, `isPreBooked`),
     INDEX `bookings_doctorId_bookingDate_startTime_idx`(`doctorId`, `bookingDate`, `startTime`),
     INDEX `bookings_doctorId_bookingDate_status_idx`(`doctorId`, `bookingDate`, `status`),
+    INDEX `bookings_bookedBy_fkey`(`bookedBy`),
+    INDEX `bookings_cancelledBy_fkey`(`cancelledBy`),
+    INDEX `bookings_roomId_fkey`(`roomId`),
+    INDEX `bookings_serviceId_fkey`(`serviceId`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -340,15 +348,16 @@ CREATE TABLE `booking_queue` (
 CREATE TABLE `booking_status_history` (
     `id` VARCHAR(191) NOT NULL,
     `bookingId` VARCHAR(191) NOT NULL,
-    `oldStatus` ENUM('PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW', 'QUEUED') NULL,
-    `newStatus` ENUM('PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW', 'QUEUED') NOT NULL,
-    `changedById` VARCHAR(191) NOT NULL,
+    `oldStatus` ENUM('PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'AWAITING_RESULTS', 'COMPLETED', 'CANCELLED', 'NO_SHOW', 'QUEUED') NULL,
+    `newStatus` ENUM('PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'AWAITING_RESULTS', 'COMPLETED', 'CANCELLED', 'NO_SHOW', 'QUEUED') NOT NULL,
+    `changedById` VARCHAR(191) NULL,
     `reason` VARCHAR(191) NULL,
     `metadata` JSON NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     INDEX `booking_status_history_bookingId_idx`(`bookingId`),
     INDEX `booking_status_history_createdAt_idx`(`createdAt`),
+    INDEX `booking_status_history_changedById_fkey`(`changedById`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -360,9 +369,6 @@ CREATE TABLE `medical_records` (
     `doctorId` VARCHAR(191) NOT NULL,
     `visitStep` ENUM('SYMPTOMS_TAKEN', 'SERVICES_ORDERED', 'AWAITING_RESULTS', 'RESULTS_READY', 'DIAGNOSED', 'PRESCRIBED', 'COMPLETED') NOT NULL DEFAULT 'SYMPTOMS_TAKEN',
     `version` INTEGER NOT NULL DEFAULT 0,
-    `chiefComplaint` VARCHAR(191) NULL,
-    `clinicalFindings` VARCHAR(191) NULL,
-    `doctorNotes` VARCHAR(191) NULL,
     `bloodPressure` VARCHAR(191) NULL,
     `heartRate` INTEGER NULL,
     `temperature` DECIMAL(4, 1) NULL,
@@ -370,17 +376,20 @@ CREATE TABLE `medical_records` (
     `weightKg` DECIMAL(5, 2) NULL,
     `heightCm` DECIMAL(5, 1) NULL,
     `bmi` DECIMAL(4, 1) NULL,
+    `chiefComplaint` VARCHAR(191) NULL,
+    `additionalSymptoms` VARCHAR(191) NULL,
+    `clinicalFindings` VARCHAR(191) NULL,
+    `doctorNotes` VARCHAR(191) NULL,
     `medicalHistory` VARCHAR(191) NULL,
     `allergies` VARCHAR(191) NULL,
-    `additionalSymptoms` VARCHAR(191) NULL,
     `symptomsAt` DATETIME(3) NULL,
     `diagnosisCode` VARCHAR(191) NULL,
     `diagnosisName` VARCHAR(191) NULL,
     `treatmentPlan` VARCHAR(191) NULL,
     `followUpDate` DATE NULL,
     `followUpNote` VARCHAR(191) NULL,
-    `diagnosedAt` DATETIME(3) NULL,
     `orderedAt` DATETIME(3) NULL,
+    `diagnosedAt` DATETIME(3) NULL,
     `prescribedAt` DATETIME(3) NULL,
     `isFinalized` BOOLEAN NOT NULL DEFAULT false,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -404,21 +413,67 @@ CREATE TABLE `visit_service_orders` (
     `status` ENUM('PENDING', 'PAID', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED') NOT NULL DEFAULT 'PENDING',
     `orderedBy` VARCHAR(191) NOT NULL,
     `performedBy` VARCHAR(191) NULL,
-    `resultText` VARCHAR(191) NULL,
+    `queueNumber` INTEGER NULL,
+    `paidAt` DATETIME(3) NULL,
+    `resultText` TEXT NULL,
     `resultFileUrl` VARCHAR(191) NULL,
     `isAbnormal` BOOLEAN NULL,
     `abnormalNote` VARCHAR(191) NULL,
-    `labOrderId` VARCHAR(191) NULL,
+    `specialistNote` TEXT NULL,
     `startedAt` DATETIME(3) NULL,
     `completedAt` DATETIME(3) NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
-    UNIQUE INDEX `visit_service_orders_labOrderId_key`(`labOrderId`),
     INDEX `visit_service_orders_medicalRecordId_idx`(`medicalRecordId`),
     INDEX `visit_service_orders_patientProfileId_idx`(`patientProfileId`),
-    INDEX `visit_service_orders_status_idx`(`status`),
     INDEX `visit_service_orders_bookingId_idx`(`bookingId`),
+    INDEX `visit_service_orders_status_idx`(`status`),
+    INDEX `visit_service_orders_serviceId_fkey`(`serviceId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `lab_orders` (
+    `id` VARCHAR(191) NOT NULL,
+    `bookingId` VARCHAR(191) NOT NULL,
+    `medicalRecordId` VARCHAR(191) NOT NULL,
+    `patientProfileId` VARCHAR(191) NOT NULL,
+    `doctorId` VARCHAR(191) NOT NULL,
+    `testName` VARCHAR(191) NOT NULL,
+    `testDescription` VARCHAR(191) NULL,
+    `serviceId` VARCHAR(191) NULL,
+    `status` ENUM('PENDING', 'PAID', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED') NOT NULL DEFAULT 'PENDING',
+    `queueNumber` INTEGER NULL,
+    `orderedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    INDEX `lab_orders_patientProfileId_idx`(`patientProfileId`),
+    INDEX `lab_orders_medicalRecordId_idx`(`medicalRecordId`),
+    INDEX `lab_orders_bookingId_fkey`(`bookingId`),
+    INDEX `lab_orders_serviceId_fkey`(`serviceId`),
+    INDEX `lab_orders_doctorId_idx`(`doctorId`),
+    INDEX `lab_orders_status_idx`(`status`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `lab_results` (
+    `id` VARCHAR(191) NOT NULL,
+    `labOrderId` VARCHAR(191) NOT NULL,
+    `resultText` TEXT NULL,
+    `resultFileUrl` VARCHAR(191) NULL,
+    `isAbnormal` BOOLEAN NULL,
+    `abnormalNote` VARCHAR(191) NULL,
+    `recordedBy` VARCHAR(191) NOT NULL,
+    `resultDate` DATETIME(3) NOT NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `lab_results_labOrderId_key`(`labOrderId`),
+    INDEX `lab_results_labOrderId_idx`(`labOrderId`),
+    INDEX `lab_results_recordedBy_fkey`(`recordedBy`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -431,12 +486,17 @@ CREATE TABLE `prescriptions` (
     `notes` VARCHAR(191) NULL,
     `isPrinted` BOOLEAN NOT NULL DEFAULT false,
     `printedAt` DATETIME(3) NULL,
+    `isFulfilledInternally` BOOLEAN NULL,
+    `fulfilledAt` DATETIME(3) NULL,
+    `pharmacyInvoiceId` VARCHAR(191) NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
     UNIQUE INDEX `prescriptions_medicalRecordId_key`(`medicalRecordId`),
+    UNIQUE INDEX `prescriptions_pharmacyInvoiceId_key`(`pharmacyInvoiceId`),
     INDEX `prescriptions_patientProfileId_idx`(`patientProfileId`),
     INDEX `prescriptions_medicalRecordId_idx`(`medicalRecordId`),
+    INDEX `prescriptions_pharmacyInvoiceId_fkey`(`pharmacyInvoiceId`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -457,45 +517,8 @@ CREATE TABLE `prescription_items` (
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     INDEX `prescription_items_prescriptionId_idx`(`prescriptionId`),
-    PRIMARY KEY (`id`)
-) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
--- CreateTable
-CREATE TABLE `lab_orders` (
-    `id` VARCHAR(191) NOT NULL,
-    `bookingId` VARCHAR(191) NOT NULL,
-    `medicalRecordId` VARCHAR(191) NOT NULL,
-    `patientProfileId` VARCHAR(191) NOT NULL,
-    `doctorId` VARCHAR(191) NOT NULL,
-    `testName` VARCHAR(191) NOT NULL,
-    `testDescription` VARCHAR(191) NULL,
-    `serviceId` VARCHAR(191) NULL,
-    `status` ENUM('PENDING', 'PAID', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED') NOT NULL DEFAULT 'PENDING',
-    `orderedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    `updatedAt` DATETIME(3) NOT NULL,
-
-    INDEX `lab_orders_patientProfileId_idx`(`patientProfileId`),
-    INDEX `lab_orders_medicalRecordId_idx`(`medicalRecordId`),
-    INDEX `lab_orders_status_idx`(`status`),
-    PRIMARY KEY (`id`)
-) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
--- CreateTable
-CREATE TABLE `lab_results` (
-    `id` VARCHAR(191) NOT NULL,
-    `labOrderId` VARCHAR(191) NOT NULL,
-    `resultText` VARCHAR(191) NULL,
-    `resultFileUrl` VARCHAR(191) NULL,
-    `isAbnormal` BOOLEAN NULL,
-    `abnormalNote` VARCHAR(191) NULL,
-    `recordedBy` VARCHAR(191) NOT NULL,
-    `resultDate` DATETIME(3) NOT NULL,
-    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    `updatedAt` DATETIME(3) NOT NULL,
-
-    UNIQUE INDEX `lab_results_labOrderId_key`(`labOrderId`),
-    INDEX `lab_results_labOrderId_idx`(`labOrderId`),
+    INDEX `prescription_items_labOrderId_fkey`(`labOrderId`),
+    INDEX `prescription_items_visitServiceOrderId_fkey`(`visitServiceOrderId`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -507,16 +530,16 @@ CREATE TABLE `invoices` (
     `invoiceType` ENUM('CONSULTATION', 'LAB', 'PHARMACY') NOT NULL DEFAULT 'CONSULTATION',
     `invoiceNumber` VARCHAR(191) NOT NULL,
     `subtotal` DECIMAL(12, 2) NOT NULL,
-    `discountAmount` DECIMAL(12, 2) NOT NULL DEFAULT 0,
-    `vatRate` DECIMAL(5, 2) NOT NULL DEFAULT 0,
-    `vatAmount` DECIMAL(12, 2) NOT NULL DEFAULT 0,
-    `taxAmount` DECIMAL(12, 2) NOT NULL DEFAULT 0,
+    `discountAmount` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    `vatRate` DECIMAL(5, 2) NOT NULL DEFAULT 0.00,
+    `vatAmount` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    `taxAmount` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
     `totalAmount` DECIMAL(12, 2) NOT NULL,
     `status` ENUM('DRAFT', 'OPEN', 'ISSUED', 'PAID', 'CANCELLED', 'REFUNDED') NOT NULL DEFAULT 'DRAFT',
     `notes` VARCHAR(191) NULL,
     `insuranceClaimed` BOOLEAN NOT NULL DEFAULT false,
-    `insuranceAmount` DECIMAL(12, 2) NOT NULL DEFAULT 0,
-    `patientCoPayment` DECIMAL(12, 2) NOT NULL DEFAULT 0,
+    `insuranceAmount` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    `patientCoPayment` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
     `einvoiceCode` VARCHAR(191) NULL,
     `einvoiceStatus` ENUM('PENDING', 'ISSUED', 'CANCELLED') NOT NULL DEFAULT 'PENDING',
     `einvoiceUrl` VARCHAR(191) NULL,
@@ -529,6 +552,7 @@ CREATE TABLE `invoices` (
     UNIQUE INDEX `invoices_invoiceNumber_key`(`invoiceNumber`),
     INDEX `invoices_bookingId_idx`(`bookingId`),
     INDEX `invoices_patientProfileId_idx`(`patientProfileId`),
+    INDEX `invoices_invoiceType_idx`(`invoiceType`),
     INDEX `invoices_status_idx`(`status`),
     INDEX `invoices_paidAt_idx`(`paidAt`),
     INDEX `invoices_einvoiceStatus_idx`(`einvoiceStatus`),
@@ -540,15 +564,17 @@ CREATE TABLE `invoice_items` (
     `id` VARCHAR(191) NOT NULL,
     `invoiceId` VARCHAR(191) NOT NULL,
     `serviceId` VARCHAR(191) NULL,
-    `labOrderId` VARCHAR(191) NULL,
     `itemName` VARCHAR(191) NOT NULL,
     `unitPrice` DECIMAL(12, 2) NOT NULL,
     `quantity` INTEGER NOT NULL DEFAULT 1,
     `totalPrice` DECIMAL(12, 2) NOT NULL,
     `sortOrder` INTEGER NOT NULL DEFAULT 0,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `labOrderId` VARCHAR(191) NULL,
+    `visitServiceOrderId` VARCHAR(191) NULL,
 
     UNIQUE INDEX `invoice_items_labOrderId_key`(`labOrderId`),
+    UNIQUE INDEX `invoice_items_visitServiceOrderId_key`(`visitServiceOrderId`),
     INDEX `invoice_items_invoiceId_idx`(`invoiceId`),
     INDEX `invoice_items_serviceId_idx`(`serviceId`),
     PRIMARY KEY (`id`)
@@ -559,7 +585,7 @@ CREATE TABLE `payments` (
     `id` VARCHAR(191) NOT NULL,
     `invoiceId` VARCHAR(191) NOT NULL,
     `amountPaid` DECIMAL(12, 2) NOT NULL,
-    `insuranceCovered` DECIMAL(12, 2) NOT NULL DEFAULT 0,
+    `insuranceCovered` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
     `patientPaid` DECIMAL(12, 2) NOT NULL,
     `paymentMethod` ENUM('CASH', 'BANK_TRANSFER', 'INSURANCE', 'CARD') NOT NULL,
     `insuranceNumber` VARCHAR(191) NULL,
@@ -571,6 +597,7 @@ CREATE TABLE `payments` (
 
     INDEX `payments_invoiceId_idx`(`invoiceId`),
     INDEX `payments_paidAt_idx`(`paidAt`),
+    INDEX `payments_confirmedBy_fkey`(`confirmedBy`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -637,6 +664,7 @@ CREATE TABLE `system_configs` (
 
     UNIQUE INDEX `system_configs_key_key`(`key`),
     INDEX `system_configs_category_idx`(`category`),
+    INDEX `system_configs_updatedBy_fkey`(`updatedBy`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -660,6 +688,7 @@ CREATE TABLE `ai_chat_sessions` (
     INDEX `ai_chat_sessions_userId_startedAt_idx`(`userId`, `startedAt` DESC),
     INDEX `ai_chat_sessions_outcome_idx`(`outcome`),
     INDEX `ai_chat_sessions_startedAt_idx`(`startedAt`),
+    INDEX `ai_chat_sessions_bookingId_fkey`(`bookingId`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -668,11 +697,11 @@ CREATE TABLE `ai_chat_messages` (
     `id` VARCHAR(191) NOT NULL,
     `sessionId` VARCHAR(191) NOT NULL,
     `role` ENUM('USER', 'MODEL', 'TOOL') NOT NULL,
-    `content` VARCHAR(191) NOT NULL,
+    `content` TEXT NOT NULL,
     `toolName` VARCHAR(191) NULL,
     `toolInput` JSON NULL,
     `toolOutput` JSON NULL,
-    `toolError` VARCHAR(191) NULL,
+    `toolError` TEXT NULL,
     `tokenCount` INTEGER NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
@@ -697,10 +726,10 @@ ALTER TABLE `doctor_working_hours` ADD CONSTRAINT `doctor_working_hours_doctorId
 ALTER TABLE `doctor_break_times` ADD CONSTRAINT `doctor_break_times_doctorId_fkey` FOREIGN KEY (`doctorId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `doctor_off_days` ADD CONSTRAINT `doctor_off_days_doctorId_fkey` FOREIGN KEY (`doctorId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `doctor_off_days` ADD CONSTRAINT `doctor_off_days_approvedBy_fkey` FOREIGN KEY (`approvedBy`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `doctor_off_days` ADD CONSTRAINT `doctor_off_days_approvedBy_fkey` FOREIGN KEY (`approvedBy`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE `doctor_off_days` ADD CONSTRAINT `doctor_off_days_doctorId_fkey` FOREIGN KEY (`doctorId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `doctor_schedule_slots` ADD CONSTRAINT `doctor_schedule_slots_doctorId_fkey` FOREIGN KEY (`doctorId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
@@ -709,28 +738,16 @@ ALTER TABLE `doctor_schedule_slots` ADD CONSTRAINT `doctor_schedule_slots_doctor
 ALTER TABLE `doctor_schedule_slots` ADD CONSTRAINT `doctor_schedule_slots_roomId_fkey` FOREIGN KEY (`roomId`) REFERENCES `rooms`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `patient_profiles` ADD CONSTRAINT `patient_profiles_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `services` ADD CONSTRAINT `services_categoryId_fkey` FOREIGN KEY (`categoryId`) REFERENCES `categories`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE `doctor_services` ADD CONSTRAINT `doctor_services_doctorProfileId_fkey` FOREIGN KEY (`doctorProfileId`) REFERENCES `doctor_profiles`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `doctor_services` ADD CONSTRAINT `doctor_services_serviceId_fkey` FOREIGN KEY (`serviceId`) REFERENCES `services`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `bookings` ADD CONSTRAINT `bookings_patientProfileId_fkey` FOREIGN KEY (`patientProfileId`) REFERENCES `patient_profiles`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `patient_profiles` ADD CONSTRAINT `patient_profiles_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `bookings` ADD CONSTRAINT `bookings_doctorId_fkey` FOREIGN KEY (`doctorId`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `bookings` ADD CONSTRAINT `bookings_serviceId_fkey` FOREIGN KEY (`serviceId`) REFERENCES `services`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `bookings` ADD CONSTRAINT `bookings_roomId_fkey` FOREIGN KEY (`roomId`) REFERENCES `rooms`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE `services` ADD CONSTRAINT `services_categoryId_fkey` FOREIGN KEY (`categoryId`) REFERENCES `categories`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `bookings` ADD CONSTRAINT `bookings_bookedBy_fkey` FOREIGN KEY (`bookedBy`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
@@ -739,34 +756,37 @@ ALTER TABLE `bookings` ADD CONSTRAINT `bookings_bookedBy_fkey` FOREIGN KEY (`boo
 ALTER TABLE `bookings` ADD CONSTRAINT `bookings_cancelledBy_fkey` FOREIGN KEY (`cancelledBy`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE `bookings` ADD CONSTRAINT `bookings_doctorId_fkey` FOREIGN KEY (`doctorId`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `bookings` ADD CONSTRAINT `bookings_patientProfileId_fkey` FOREIGN KEY (`patientProfileId`) REFERENCES `patient_profiles`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `bookings` ADD CONSTRAINT `bookings_roomId_fkey` FOREIGN KEY (`roomId`) REFERENCES `rooms`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `bookings` ADD CONSTRAINT `bookings_serviceId_fkey` FOREIGN KEY (`serviceId`) REFERENCES `services`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE `booking_queue` ADD CONSTRAINT `booking_queue_bookingId_fkey` FOREIGN KEY (`bookingId`) REFERENCES `bookings`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `booking_status_history` ADD CONSTRAINT `booking_status_history_bookingId_fkey` FOREIGN KEY (`bookingId`) REFERENCES `bookings`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `booking_status_history` ADD CONSTRAINT `booking_status_history_changedById_fkey` FOREIGN KEY (`changedById`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `booking_status_history` ADD CONSTRAINT `booking_status_history_changedById_fkey` FOREIGN KEY (`changedById`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `medical_records` ADD CONSTRAINT `medical_records_bookingId_fkey` FOREIGN KEY (`bookingId`) REFERENCES `bookings`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `visit_service_orders` ADD CONSTRAINT `visit_service_orders_performedBy_fkey` FOREIGN KEY (`performedBy`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `visit_service_orders` ADD CONSTRAINT `visit_service_orders_medicalRecordId_fkey` FOREIGN KEY (`medicalRecordId`) REFERENCES `medical_records`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `visit_service_orders` ADD CONSTRAINT `visit_service_orders_serviceId_fkey` FOREIGN KEY (`serviceId`) REFERENCES `services`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `prescriptions` ADD CONSTRAINT `prescriptions_medicalRecordId_fkey` FOREIGN KEY (`medicalRecordId`) REFERENCES `medical_records`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `prescription_items` ADD CONSTRAINT `prescription_items_visitServiceOrderId_fkey` FOREIGN KEY (`visitServiceOrderId`) REFERENCES `visit_service_orders`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `prescription_items` ADD CONSTRAINT `prescription_items_labOrderId_fkey` FOREIGN KEY (`labOrderId`) REFERENCES `lab_orders`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `prescription_items` ADD CONSTRAINT `prescription_items_prescriptionId_fkey` FOREIGN KEY (`prescriptionId`) REFERENCES `prescriptions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `lab_orders` ADD CONSTRAINT `lab_orders_bookingId_fkey` FOREIGN KEY (`bookingId`) REFERENCES `bookings`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -784,7 +804,28 @@ ALTER TABLE `lab_results` ADD CONSTRAINT `lab_results_labOrderId_fkey` FOREIGN K
 ALTER TABLE `lab_results` ADD CONSTRAINT `lab_results_recordedBy_fkey` FOREIGN KEY (`recordedBy`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE `prescriptions` ADD CONSTRAINT `prescriptions_pharmacyInvoiceId_fkey` FOREIGN KEY (`pharmacyInvoiceId`) REFERENCES `invoices`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `prescriptions` ADD CONSTRAINT `prescriptions_medicalRecordId_fkey` FOREIGN KEY (`medicalRecordId`) REFERENCES `medical_records`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `prescription_items` ADD CONSTRAINT `prescription_items_labOrderId_fkey` FOREIGN KEY (`labOrderId`) REFERENCES `lab_orders`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `prescription_items` ADD CONSTRAINT `prescription_items_prescriptionId_fkey` FOREIGN KEY (`prescriptionId`) REFERENCES `prescriptions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `prescription_items` ADD CONSTRAINT `prescription_items_visitServiceOrderId_fkey` FOREIGN KEY (`visitServiceOrderId`) REFERENCES `visit_service_orders`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE `invoices` ADD CONSTRAINT `invoices_bookingId_fkey` FOREIGN KEY (`bookingId`) REFERENCES `bookings`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `invoice_items` ADD CONSTRAINT `invoice_items_labOrderId_fkey` FOREIGN KEY (`labOrderId`) REFERENCES `lab_orders`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `invoice_items` ADD CONSTRAINT `invoice_items_visitServiceOrderId_fkey` FOREIGN KEY (`visitServiceOrderId`) REFERENCES `visit_service_orders`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `invoice_items` ADD CONSTRAINT `invoice_items_invoiceId_fkey` FOREIGN KEY (`invoiceId`) REFERENCES `invoices`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
@@ -793,13 +834,10 @@ ALTER TABLE `invoice_items` ADD CONSTRAINT `invoice_items_invoiceId_fkey` FOREIG
 ALTER TABLE `invoice_items` ADD CONSTRAINT `invoice_items_serviceId_fkey` FOREIGN KEY (`serviceId`) REFERENCES `services`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `invoice_items` ADD CONSTRAINT `invoice_items_labOrderId_fkey` FOREIGN KEY (`labOrderId`) REFERENCES `lab_orders`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE `payments` ADD CONSTRAINT `payments_confirmedBy_fkey` FOREIGN KEY (`confirmedBy`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `payments` ADD CONSTRAINT `payments_invoiceId_fkey` FOREIGN KEY (`invoiceId`) REFERENCES `invoices`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `payments` ADD CONSTRAINT `payments_confirmedBy_fkey` FOREIGN KEY (`confirmedBy`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `notifications` ADD CONSTRAINT `notifications_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
@@ -811,11 +849,10 @@ ALTER TABLE `audit_logs` ADD CONSTRAINT `audit_logs_actorId_fkey` FOREIGN KEY (`
 ALTER TABLE `system_configs` ADD CONSTRAINT `system_configs_updatedBy_fkey` FOREIGN KEY (`updatedBy`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `ai_chat_sessions` ADD CONSTRAINT `ai_chat_sessions_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE `ai_chat_sessions` ADD CONSTRAINT `ai_chat_sessions_bookingId_fkey` FOREIGN KEY (`bookingId`) REFERENCES `bookings`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `ai_chat_messages` ADD CONSTRAINT `ai_chat_messages_sessionId_fkey` FOREIGN KEY (`sessionId`) REFERENCES `ai_chat_sessions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `ai_chat_sessions` ADD CONSTRAINT `ai_chat_sessions_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
+-- AddForeignKey
+ALTER TABLE `ai_chat_messages` ADD CONSTRAINT `ai_chat_messages_sessionId_fkey` FOREIGN KEY (`sessionId`) REFERENCES `ai_chat_sessions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;

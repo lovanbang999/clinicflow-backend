@@ -150,7 +150,7 @@ export class ServicesService {
         doctorServices: {
           include: {
             doctorProfile: {
-              include: { user: { select: { fullName: true } } },
+              include: { user: { select: { id: true, fullName: true } } },
             },
           },
         },

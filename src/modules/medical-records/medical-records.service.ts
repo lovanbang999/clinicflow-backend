@@ -23,8 +23,7 @@ import {
   NotFoundException,
   Inject,
 } from '@nestjs/common';
-import { Prisma, VisitStep } from '@prisma/client';
-import { ServiceOrderStatus } from '../../common/constants/enums';
+import { Prisma, ServiceOrderStatus, VisitStep } from '@prisma/client';
 import { format } from 'date-fns';
 import { vi } from 'date-fns/locale';
 import { MessageCodes } from '../../common/constants/message-codes.const';
@@ -32,11 +31,13 @@ import { ApiException } from '../../common/exceptions/api.exception';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { BillingService } from '../billing/billing.service';
+import { SaveSymptomsDto } from './dto/save-symptoms.dto';
+import { CompleteSpecialistExamDto } from './dto/complete-specialist-exam.dto';
+import { BookingStatus } from '@prisma/client';
 import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { OrderServicesDto } from './dto/order-services.dto';
 import { SaveDiagnosisDto } from './dto/save-diagnosis.dto';
-import { SaveSymptomsDto } from './dto/save-symptoms.dto';
 
 @Injectable()
 export class MedicalRecordsService {
@@ -277,13 +278,26 @@ export class MedicalRecordsService {
       currentUser,
     );
 
-    // Validate services exist
-    const services = await this.clinicalRepository.transaction(async (tx) => {
-      return tx.service.findMany({
-        where: { id: { in: dto.serviceIds }, isActive: true },
-      });
-    });
-    if (services.length !== dto.serviceIds.length) {
+    const serviceIds = dto.items.map((i) => i.serviceId);
+
+    // Validate services exist and load doctorServices associations
+    const servicesWithDoctors = await this.clinicalRepository.transaction(
+      async (tx) =>
+        tx.service.findMany({
+          where: { id: { in: serviceIds }, isActive: true },
+          include: {
+            doctorServices: {
+              include: {
+                doctorProfile: {
+                  include: { user: { select: { id: true } } },
+                },
+              },
+              take: 1, // Take the first assigned specialist
+            },
+          },
+        }),
+    );
+    if (servicesWithDoctors.length !== serviceIds.length) {
       throw new BadRequestException(
         'One or more service IDs are invalid or inactive',
       );
@@ -323,19 +337,32 @@ export class MedicalRecordsService {
         select: { serviceId: true },
       });
       const existingIds = new Set(existing.map((o) => o.serviceId));
-      const newServiceIds = dto.serviceIds.filter((id) => !existingIds.has(id));
+      const newItems = dto.items.filter((i) => !existingIds.has(i.serviceId));
 
-      if (newServiceIds.length > 0) {
-        await tx.visitServiceOrder.createMany({
-          data: newServiceIds.map((serviceId) => ({
-            medicalRecordId: record.id,
-            serviceId,
-            patientProfileId: booking.patientProfileId,
-            bookingId,
-            orderedBy: doctorId,
-            status: ServiceOrderStatus.PENDING,
-          })),
-        });
+      if (newItems.length > 0) {
+        // Create one VSO per service, setting performedBy from the provided ID or auto-pick
+        for (const item of newItems) {
+          const serviceId = item.serviceId;
+          const svc = servicesWithDoctors.find((s) => s.id === serviceId);
+
+          // Priority: 1. Directly assigned in DTO -> 2. First specialist in association -> 3. Null
+          const specialistUserId =
+            item.performedBy ??
+            svc?.doctorServices?.[0]?.doctorProfile?.user?.id ??
+            null;
+
+          await tx.visitServiceOrder.create({
+            data: {
+              medicalRecordId: record.id,
+              serviceId,
+              patientProfileId: booking.patientProfileId,
+              bookingId,
+              orderedBy: doctorId,
+              performedBy: specialistUserId, // ← assign specialist doctor upfront
+              status: ServiceOrderStatus.PENDING,
+            },
+          });
+        }
       }
 
       // Advance step
@@ -926,6 +953,149 @@ export class MedicalRecordsService {
       },
       'DOCTOR.STATS_RETRIEVED',
       'Doctor stats retrieved',
+      200,
+    );
+  }
+
+  // B8 — Fulfill Prescription (BN mua thuốc tại phòng khám)
+  async fulfillPrescription(bookingId: string, pharmacyInvoiceId?: string) {
+    const record = await this.clinicalRepository.findUniqueMedicalRecord({
+      where: { bookingId },
+      include: { prescription: true },
+    });
+    if (!record) {
+      throw new NotFoundException('Medical record not found');
+    }
+    const prescription = record.prescription;
+    if (!prescription) {
+      throw new NotFoundException(
+        'Prescription not found. Doctor has not issued a prescription yet.',
+      );
+    }
+    if (prescription.isFulfilledInternally === true) {
+      throw new BadRequestException(
+        'Prescription is already fulfilled internally.',
+      );
+    }
+
+    const updated = await this.clinicalRepository.transaction(async (tx) => {
+      return tx.prescription.update({
+        where: { id: prescription.id },
+        data: {
+          isFulfilledInternally: true,
+          fulfilledAt: new Date(),
+          ...(pharmacyInvoiceId ? { pharmacyInvoiceId } : {}),
+        },
+      });
+    });
+
+    return ResponseHelper.success(
+      updated,
+      'PRESCRIPTION.FULFILLED',
+      'Prescription marked as fulfilled internally',
+      200,
+    );
+  }
+
+  // Specialist Examination Actions
+  async startSpecialistExamination(vsoId: string, doctorId: string) {
+    const vso = await this.clinicalRepository.findUniqueVisitServiceOrder({
+      where: { id: vsoId },
+    });
+    if (!vso) throw new NotFoundException('Service order not found');
+
+    if (vso.performedBy !== doctorId) {
+      throw new ForbiddenException(
+        'You are not assigned to perform this service',
+      );
+    }
+
+    if (vso.status !== ServiceOrderStatus.PAID) {
+      throw new BadRequestException(
+        'Service must be paid before starting examination',
+      );
+    }
+
+    const updated = await this.clinicalRepository.transaction(async (tx) => {
+      // 1. Update VSO to IN_PROGRESS
+      const updatedVso = await tx.visitServiceOrder.update({
+        where: { id: vsoId },
+        data: { status: ServiceOrderStatus.IN_PROGRESS },
+      });
+
+      // 2. Update Booking to AWAITING_RESULTS (Consultation doctor knows patient is being seen)
+      if (vso.bookingId) {
+        await tx.booking.update({
+          where: { id: vso.bookingId },
+          data: { status: BookingStatus.AWAITING_RESULTS },
+        });
+
+        await tx.bookingStatusHistory.create({
+          data: {
+            bookingId: vso.bookingId,
+            oldStatus: BookingStatus.CHECKED_IN, // Assuming they were checked-in/waiting
+            newStatus: BookingStatus.AWAITING_RESULTS,
+            changedById: doctorId,
+            reason: 'Specialist examination started',
+          },
+        });
+      }
+
+      return updatedVso;
+    });
+
+    return ResponseHelper.success(
+      updated,
+      'VSO.STARTED',
+      'Specialist examination started',
+      200,
+    );
+  }
+
+  async completeSpecialistExamination(
+    vsoId: string,
+    doctorId: string,
+    dto: CompleteSpecialistExamDto,
+  ) {
+    const vso = await this.clinicalRepository.findUniqueVisitServiceOrder({
+      where: { id: vsoId },
+    });
+    if (!vso) throw new NotFoundException('Service order not found');
+
+    if (vso.performedBy !== doctorId) {
+      throw new ForbiddenException(
+        'You are not assigned to perform this service',
+      );
+    }
+
+    const validStatuses: string[] = [
+      ServiceOrderStatus.PAID,
+      ServiceOrderStatus.IN_PROGRESS,
+    ];
+    if (!validStatuses.includes(vso.status)) {
+      throw new BadRequestException(
+        'Invalid order status for recording results',
+      );
+    }
+
+    const updated = await this.clinicalRepository.transaction(async (tx) => {
+      return tx.visitServiceOrder.update({
+        where: { id: vsoId },
+        data: {
+          status: ServiceOrderStatus.COMPLETED,
+          resultText: dto.resultText,
+          specialistNote: dto.doctorNotes,
+          isAbnormal: dto.isAbnormal,
+          abnormalNote: dto.abnormalNote,
+          completedAt: new Date(),
+        },
+      });
+    });
+
+    return ResponseHelper.success(
+      updated,
+      'VSO.COMPLETED',
+      'Specialist examination result recorded successfully',
       200,
     );
   }
