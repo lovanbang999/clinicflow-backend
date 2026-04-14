@@ -27,6 +27,7 @@ import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { OrderServicesDto } from './dto/order-services.dto';
 import { SaveDiagnosisDto } from './dto/save-diagnosis.dto';
 import { SaveSymptomsDto } from './dto/save-symptoms.dto';
+import { CompleteSpecialistExamDto } from './dto/complete-specialist-exam.dto';
 import { MedicalRecordsService } from './medical-records.service';
 
 @ApiTags('Medical Records')
@@ -146,6 +147,20 @@ export class MedicalRecordsController {
     );
   }
 
+  // B8 — Fulfill Prescription (BN mua thuốc tại phòng khám)
+  @Patch(':bookingId/prescriptions/fulfill')
+  @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Mark prescription as fulfilled internally (B8)' })
+  fulfillPrescription(
+    @Param('bookingId') bookingId: string,
+    @Body('pharmacyInvoiceId') pharmacyInvoiceId?: string,
+  ) {
+    return this.medicalRecordsService.fulfillPrescription(
+      bookingId,
+      pharmacyInvoiceId,
+    );
+  }
+
   // ICD-10 Search
   @Get('icd10')
   @Roles(UserRole.DOCTOR, UserRole.ADMIN)
@@ -207,5 +222,38 @@ export class MedicalRecordsController {
   @ApiOperation({ summary: 'Doctor stats for their dashboard panel' })
   getDoctorStats(@CurrentUser() user: User) {
     return this.medicalRecordsService.getDoctorStats(user.id);
+  }
+
+  // B4' — Specialist Workflow
+  @Patch('specialist-orders/:vsoId/start')
+  @Roles(UserRole.DOCTOR)
+  @ApiOperation({
+    summary: 'Specialist calls patient and starts examination',
+  })
+  startSpecialistExamination(
+    @Param('vsoId') vsoId: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.medicalRecordsService.startSpecialistExamination(
+      vsoId,
+      user.id,
+    );
+  }
+
+  @Patch('specialist-orders/:vsoId/complete')
+  @Roles(UserRole.DOCTOR)
+  @ApiOperation({
+    summary: 'Specialist records result and completes examination',
+  })
+  completeSpecialistExamination(
+    @Param('vsoId') vsoId: string,
+    @Body() dto: CompleteSpecialistExamDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.medicalRecordsService.completeSpecialistExamination(
+      vsoId,
+      user.id,
+      dto,
+    );
   }
 }

@@ -7,11 +7,15 @@ import {
   IBookingRepository,
   I_BOOKING_REPOSITORY,
 } from '../database/interfaces/booking.repository.interface';
+import {
+  IClinicalRepository,
+  I_CLINICAL_REPOSITORY,
+} from '../database/interfaces/clinical.repository.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PromoteQueueDto } from './dto/promote-queue.dto';
 import { QueueFilterDto } from './dto/queue-filter.dto';
 import { QueueGateway } from './queue.gateway';
-import { BookingStatus, Prisma } from '@prisma/client';
+import { BookingStatus, Prisma, ServiceOrderStatus } from '@prisma/client';
 import {
   BookingInclude,
   BookingWithRelations,
@@ -19,12 +23,15 @@ import {
 } from '../database/types/prisma-payload.types';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
+import { startOfDay, endOfDay, parseISO } from 'date-fns';
 
 @Injectable()
 export class QueueService {
   constructor(
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
+    @Inject(I_CLINICAL_REPOSITORY)
+    private readonly clinicalRepository: IClinicalRepository,
     private readonly notificationsService: NotificationsService,
     private readonly queueGateway: QueueGateway,
   ) {}
@@ -242,13 +249,117 @@ export class QueueService {
       this.bookingRepository.countQueue({ where }),
     ]);
 
+    // ──────────────────────────────────────────────────────────────────
+    // MIX IN: VisitServiceOrders assigned to this doctor (Nhóm 2)
+    // When a receptionist pays the LAB invoice, VSO.status → PAID and
+    // queueNumber is assigned. These should surface in the doctor's queue
+    // alongside their own CHECKED_IN / IN_PROGRESS bookings.
+    // ──────────────────────────────────────────────────────────────────
+    type QueueRecordMixed = (typeof queueRecords)[0] & {
+      isVisitServiceOrder?: boolean;
+      visitServiceOrderId?: string;
+    };
+
+    let mixedRecords: QueueRecordMixed[] = [...queueRecords];
+
+    if (doctorId) {
+      const vsoStatusFilter = ['PAID', 'IN_PROGRESS'];
+      const vsoOrders = await this.clinicalRepository.findManyVisitServiceOrder(
+        {
+          where: {
+            performedBy: doctorId,
+            status: { in: vsoStatusFilter as ('PAID' | 'IN_PROGRESS')[] },
+            ...(date
+              ? {
+                  createdAt: {
+                    gte: startOfDay(parseISO(date)),
+                    lte: endOfDay(parseISO(date)),
+                  },
+                }
+              : {}),
+          },
+          include: {
+            service: { select: { id: true, name: true } },
+            medicalRecord: {
+              include: {
+                booking: {
+                  include: {
+                    ...BookingInclude,
+                    medicalRecord: {
+                      select: {
+                        id: true,
+                        isFinalized: true,
+                        chiefComplaint: true,
+                        clinicalFindings: true,
+                        diagnosisCode: true,
+                        diagnosisName: true,
+                        treatmentPlan: true,
+                        doctorNotes: true,
+                        followUpDate: true,
+                        followUpNote: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: { queueNumber: 'asc' },
+        },
+      );
+
+      // Map each VSO into the same shape as a QueueRecord
+      const vsoAsQueueRecords: QueueRecordMixed[] = vsoOrders
+        .filter((vso) => !!vso.medicalRecord?.booking)
+        .map((vso) => {
+          const booking = vso.medicalRecord.booking;
+
+          // Override booking status for specialist view to match VSO lifecycle
+          let overriddenStatus: BookingStatus = booking.status;
+          const status = vso.status as string;
+          if (status === ServiceOrderStatus.PAID) {
+            overriddenStatus = BookingStatus.CHECKED_IN;
+          } else if (status === ServiceOrderStatus.IN_PROGRESS) {
+            overriddenStatus = BookingStatus.IN_PROGRESS;
+          } else if (status === ServiceOrderStatus.COMPLETED) {
+            overriddenStatus = BookingStatus.COMPLETED;
+          }
+
+          return {
+            id: `vso-${vso.id}`, // synthetic id
+            bookingId: booking.id,
+            doctorId: doctorId,
+            queueDate: booking.bookingDate, // keep as Date to satisfy Prisma type
+            queuePosition: vso.queueNumber ?? 99999,
+            estimatedWaitMinutes: 0,
+            isPreBooked: false,
+            scheduledTime: null,
+            createdAt: vso.createdAt,
+            updatedAt: vso.updatedAt,
+            calledAt: null,
+            completedAt: null, // required by BookingQueue Prisma type
+            booking: {
+              ...booking,
+              status: overriddenStatus,
+              service: vso.service, // Use the specific specialist service
+            },
+            // Custom flags for Frontend routing
+            isVisitServiceOrder: true,
+            visitServiceOrderId: vso.id,
+          } as unknown as QueueRecordMixed;
+        });
+
+      mixedRecords = [...queueRecords, ...vsoAsQueueRecords];
+    }
+
     // Priority sort (application layer):
     // 1. Pre-booking with scheduledTime <= now → highest (patient is due)
     // 2. Walk-in (no fixed time) → medium
     // 3. Future pre-bookings → lowest
     const nowTimeStr = new Date().toTimeString().slice(0, 5); // 'HH:MM'
-    const sortedRecords = [...queueRecords].sort((a, b) => {
-      const priorityOf = (r: (typeof queueRecords)[0]): number => {
+    const sortedRecords = [...mixedRecords].sort((a, b) => {
+      const priorityOf = (r: QueueRecordMixed): number => {
+        if (r.isVisitServiceOrder) return 1; // Same priority as walk-in
         if (r.isPreBooked && r.scheduledTime && r.scheduledTime <= nowTimeStr)
           return 0;
         if (!r.isPreBooked) return 1;

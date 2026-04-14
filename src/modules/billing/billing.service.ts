@@ -31,10 +31,11 @@ import {
   BookingStatus,
   VisitStep,
   Prisma,
+  ServiceOrderStatus,
 } from '@prisma/client';
-import { ServiceOrderStatus } from '../../common/constants/enums';
 import { NotificationsService } from '../notifications/notifications.service';
 import { LabOrdersGateway } from '../lab-orders/lab-orders.gateway';
+import { QueueGateway } from '../queue/queue.gateway';
 import { format } from 'date-fns';
 import { QueueService } from '../queue/queue.service';
 
@@ -52,6 +53,7 @@ export class BillingService {
     private readonly notificationsService: NotificationsService,
     @Inject(forwardRef(() => LabOrdersGateway))
     private readonly labOrdersGateway: LabOrdersGateway,
+    private readonly queueGateway: QueueGateway,
     private readonly queueService: QueueService,
   ) {}
 
@@ -572,6 +574,7 @@ export class BillingService {
             },
             service: { select: { id: true, name: true } },
             queueRecord: true,
+            medicalRecord: true,
           },
         },
       },
@@ -593,7 +596,12 @@ export class BillingService {
       include: {
         items: {
           orderBy: { sortOrder: 'asc' },
-          include: { labOrder: true },
+          include: {
+            labOrder: true,
+            visitServiceOrder: {
+              include: { performer: true, service: true },
+            },
+          },
         },
         payments: { orderBy: { paidAt: 'desc' } },
         booking: {
@@ -608,6 +616,7 @@ export class BillingService {
               },
             },
             service: { select: { id: true, name: true } },
+            medicalRecord: true,
           },
         },
       },
@@ -900,6 +909,7 @@ export class BillingService {
         booking: {
           include: {
             patientProfile: { select: { fullName: true } },
+            medicalRecord: true,
           },
         },
       },
@@ -932,6 +942,37 @@ export class BillingService {
       );
     }
 
+    if (invoice.invoiceType === InvoiceType.CONSULTATION) {
+      const isAwaitingResults = invoice.booking?.status === 'AWAITING_RESULTS';
+      const isCompleted = invoice.booking?.status === 'COMPLETED';
+      const visitStep = (
+        invoice.booking as typeof invoice.booking & {
+          medicalRecord?: { visitStep: VisitStep };
+        }
+      )?.medicalRecord?.visitStep;
+
+      const allowedSteps: VisitStep[] = [
+        VisitStep.SERVICES_ORDERED,
+        VisitStep.AWAITING_RESULTS,
+        VisitStep.RESULTS_READY,
+        VisitStep.DIAGNOSED,
+        VisitStep.PRESCRIBED,
+        VisitStep.COMPLETED,
+      ];
+
+      if (
+        !isAwaitingResults &&
+        !isCompleted &&
+        !(visitStep && allowedSteps.includes(visitStep))
+      ) {
+        throw new ApiException(
+          'BILLING.CONSULTATION_NOT_COMPLETED',
+          'Only consultation fees can be paid after the consultation (Phase 1) is completed or advanced.',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
     const insuranceCovered = dto.insuranceCovered ?? 0;
     const patientPaid = dto.amountPaid - insuranceCovered;
 
@@ -949,6 +990,9 @@ export class BillingService {
       patientName: string;
       invoiceId: string;
     } | null = null;
+
+    // Track VSO IDs paid in this transaction for post-commit broadcast
+    let paidVsoIds: string[] = [];
 
     await this.financeRepository.transaction(async (tx) => {
       await tx.payment.create({
@@ -1009,6 +1053,9 @@ export class BillingService {
                 (i as typeof i & { visitServiceOrderId?: string | null })
                   .visitServiceOrderId as string,
             );
+
+          // Save VSO ids outside transaction scope for post-commit broadcast
+          paidVsoIds = vsoIds;
 
           if (labOrderIds.length > 0 || vsoIds.length > 0) {
             if (labOrderIds.length > 0) {
@@ -1170,10 +1217,40 @@ export class BillingService {
       this.labOrdersGateway.broadcastNewLabOrder(broadcastPayload);
     }
 
+    // Broadcast queue updates to each specialist doctor who has a PAID VSO
+    if (paidVsoIds.length > 0) {
+      const paidVsos = await this.clinicalRepository.findManyVisitServiceOrder({
+        where: { id: { in: paidVsoIds }, performedBy: { not: null } },
+        select: { performedBy: true },
+      });
+
+      const uniqueDoctorIds = [
+        ...new Set(
+          paidVsos
+            .map((v) => v.performedBy)
+            .filter((id): id is string => id !== null),
+        ),
+      ];
+
+      for (const docId of uniqueDoctorIds) {
+        this.queueGateway.broadcastQueueUpdate(docId, 'CHECK_IN', {
+          source: 'specialist_referral',
+          invoiceId,
+        });
+      }
+    }
+
     const updated = await this.financeRepository.findUniqueInvoice({
       where: { id: invoiceId },
       include: {
-        items: { include: { labOrder: true } },
+        items: {
+          include: {
+            labOrder: true,
+            visitServiceOrder: {
+              include: { performer: true, service: true },
+            },
+          },
+        },
         payments: true,
         booking: {
           include: {

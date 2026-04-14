@@ -1,13 +1,32 @@
-import { IsArray, IsUUID } from 'class-validator';
+import { IsArray, IsUUID, IsOptional, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
+
+export class OrderServiceItem {
+  @ApiProperty({
+    description: 'Service ID to order',
+    example: 'uuid-service-1',
+  })
+  @IsUUID()
+  serviceId: string;
+
+  @ApiProperty({
+    description: 'Specific doctor UserId to perform this service (optional)',
+    example: 'uuid-doctor-1',
+    required: false,
+  })
+  @IsUUID()
+  @IsOptional()
+  performedBy?: string;
+}
 
 export class OrderServicesDto {
   @ApiProperty({
-    type: [String],
-    description: 'Array of Service IDs to order for this visit (B2)',
-    example: ['uuid-service-1', 'uuid-service-2'],
+    type: [OrderServiceItem],
+    description: 'List of services with optional assigned doctors',
   })
   @IsArray()
-  @IsUUID('4', { each: true })
-  serviceIds: string[];
+  @ValidateNested({ each: true })
+  @Type(() => OrderServiceItem)
+  items: OrderServiceItem[];
 }

@@ -56,6 +56,7 @@ model User {
   offDays              DoctorOffDay[]         @relation("DoctorOffDays")
   doctorProfile        DoctorProfile?
   scheduleSlots        DoctorScheduleSlot[]   @relation("DoctorScheduleSlots")
+  visitServiceOrdersAsPerformer VisitServiceOrder[] @relation("PerformedBy")
   workingHours         DoctorWorkingHours[]
   labResultsRecorded   LabResult[]            @relation("RecordedByUser")
   notifications        Notification[]
@@ -509,6 +510,7 @@ model VisitServiceOrder {
   status           ServiceOrderStatus @default(PENDING)
   orderedBy        String          // userId của BS tư vấn ra chỉ định
   performedBy      String?         // userId của BS chuyên khoa thực hiện
+  performer        User?           @relation("PerformedBy", fields: [performedBy], references: [id])
 
   // STT tại phòng chuyên khoa (tương tự LabOrder.queueNumber)
   // Được gán sau khi BN thanh toán (B3)

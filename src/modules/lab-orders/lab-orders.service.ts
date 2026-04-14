@@ -156,17 +156,31 @@ export class LabOrdersService {
       });
     }
 
-    const labOrder = await this.clinicalRepository.createLabOrder({
-      data: {
-        bookingId: dto.bookingId,
-        medicalRecordId: medicalRecord.id,
-        patientProfileId: booking.patientProfileId,
-        doctorId: booking.doctorId,
-        testName: dto.testName,
-        testDescription: dto.testDescription,
-        serviceId: dto.serviceId, // Added serviceId to keep track for billing
-        status: LabOrderStatus.PENDING, // isPaid = false — receptionist will create a LAB invoice to collect payment
-      },
+    const labOrder = await this.clinicalRepository.transaction(async (tx) => {
+      // Advance step to SERVICES_ORDERED if it's currently at SYMPTOMS_TAKEN or less
+      const currentStep = medicalRecord?.visitStep;
+      if (currentStep === 'SYMPTOMS_TAKEN') {
+        await tx.medicalRecord.update({
+          where: { id: medicalRecord?.id },
+          data: {
+            visitStep: 'SERVICES_ORDERED',
+            orderedAt: new Date(),
+          },
+        });
+      }
+
+      return tx.labOrder.create({
+        data: {
+          bookingId: dto.bookingId,
+          medicalRecordId: medicalRecord.id,
+          patientProfileId: booking.patientProfileId,
+          doctorId: booking.doctorId,
+          testName: dto.testName,
+          testDescription: dto.testDescription,
+          serviceId: dto.serviceId,
+          status: LabOrderStatus.PENDING,
+        },
+      });
     });
 
     // Automatically sync to draft invoice

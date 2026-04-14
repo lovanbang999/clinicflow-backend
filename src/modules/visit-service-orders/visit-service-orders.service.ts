@@ -9,8 +9,12 @@ import {
   NotFoundException,
   Inject,
 } from '@nestjs/common';
-import { Prisma, VisitStep, NotificationType } from '@prisma/client';
-import { ServiceOrderStatus } from '../../common/constants/enums';
+import {
+  Prisma,
+  VisitStep,
+  NotificationType,
+  ServiceOrderStatus,
+} from '@prisma/client';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { CompleteServiceOrderDto } from './dto/complete-service-order.dto';
 import { NotificationsService } from '../notifications/notifications.service';

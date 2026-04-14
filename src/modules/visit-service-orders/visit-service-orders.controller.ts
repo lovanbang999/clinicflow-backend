@@ -14,8 +14,7 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
-import { ServiceOrderStatus } from '../../common/constants/enums';
+import { UserRole, ServiceOrderStatus } from '@prisma/client';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
