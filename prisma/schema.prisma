@@ -521,6 +521,7 @@ model VisitServiceOrder {
 
   // Kết quả khám chuyên khoa (B4')
   resultText       String?   @db.Text
+  findings         Json?     // Structured specialist examination data
   resultFileUrl    String?
   isAbnormal       Boolean?
   abnormalNote     String?

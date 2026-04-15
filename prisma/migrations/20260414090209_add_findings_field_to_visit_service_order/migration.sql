@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `visit_service_orders` ADD COLUMN `findings` JSON NULL;
