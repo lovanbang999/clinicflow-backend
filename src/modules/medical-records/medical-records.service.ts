@@ -135,8 +135,10 @@ export class MedicalRecordsService {
               'CONFIRMED',
               'CHECKED_IN',
               'IN_PROGRESS',
+              'AWAITING_RESULTS',
               'COMPLETED',
               'PENDING',
+              'CANCELLED', // Allow viewing history even if cancelled later
             ],
           },
         },
@@ -171,29 +173,68 @@ export class MedicalRecordsService {
     });
   }
 
-  /** Auto-check if all VisitServiceOrders for a record are COMPLETED → advance step */
+  /** Auto-check if all VisitServiceOrders and LabOrders for a record are COMPLETED → advance step */
   private async maybeAdvanceToResultsReady(
     tx: Prisma.TransactionClient,
     medicalRecordId: string,
   ) {
-    const allOrders = await tx.visitServiceOrder.findMany({
+    const allVso = await tx.visitServiceOrder.findMany({
       where: { medicalRecordId },
       select: { status: true },
     });
 
-    if (allOrders.length === 0) return;
+    const allLabs = await tx.labOrder.findMany({
+      where: { medicalRecordId },
+      select: { status: true },
+    });
 
-    const allDone = allOrders.every(
-      (o) => o.status === ServiceOrderStatus.COMPLETED,
+    if (allVso.length === 0 && allLabs.length === 0) return;
+
+    const allVsoDone = allVso.every(
+      (o) =>
+        o.status === ServiceOrderStatus.COMPLETED ||
+        o.status === ServiceOrderStatus.CANCELLED,
     );
-    if (allDone) {
-      await tx.medicalRecord.update({
+    const allLabsDone = allLabs.every(
+      (o) => o.status === 'COMPLETED' || o.status === 'CANCELLED',
+    );
+
+    if (allVsoDone && allLabsDone) {
+      const record = await tx.medicalRecord.findUnique({
         where: { id: medicalRecordId },
-        data: {
-          visitStep: VisitStep.RESULTS_READY,
-          version: { increment: 1 },
+        include: {
+          booking: {
+            include: { patientProfile: true },
+          },
         },
       });
+
+      // ONLY advance if we are in AWAITING_RESULTS phase
+      if (record && record.visitStep === VisitStep.AWAITING_RESULTS) {
+        await tx.medicalRecord.update({
+          where: { id: medicalRecordId },
+          data: {
+            visitStep: VisitStep.RESULTS_READY,
+            version: { increment: 1 },
+          },
+        });
+
+        // Notify doctor if possible
+        if (record.booking?.doctorId) {
+          this.notificationsService
+            .createInAppNotification({
+              userId: record.booking.doctorId,
+              title: 'Kết quả khám/CLS đã có',
+              content: `Bệnh nhân ${record.booking.patientProfile?.fullName ?? '...'} đã hoàn tất các chỉ định. Bạn có thể chẩn đoán.`,
+              type: 'LAB_RESULT_READY',
+              metadata: {
+                bookingId: record.bookingId,
+                recordId: record.id,
+              },
+            })
+            .catch(console.error);
+        }
+      }
     }
   }
 
@@ -1079,7 +1120,7 @@ export class MedicalRecordsService {
     }
 
     const updated = await this.clinicalRepository.transaction(async (tx) => {
-      return tx.visitServiceOrder.update({
+      const updatedVso = await tx.visitServiceOrder.update({
         where: { id: vsoId },
         data: {
           status: ServiceOrderStatus.COMPLETED,
@@ -1091,6 +1132,10 @@ export class MedicalRecordsService {
           completedAt: new Date(),
         },
       });
+
+      await this.maybeAdvanceToResultsReady(tx, vso.medicalRecordId);
+
+      return updatedVso;
     });
 
     return ResponseHelper.success(
