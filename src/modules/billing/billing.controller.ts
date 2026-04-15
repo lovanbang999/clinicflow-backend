@@ -21,7 +21,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole, InvoiceStatus, InvoiceType } from '@prisma/client';
+import { UserRole, InvoiceStatus, InvoiceType, User } from '@prisma/client';
 import { BillingService } from './billing.service';
 import {
   CreateInvoiceDto,
@@ -37,6 +37,23 @@ import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 export class BillingController {
   constructor(private readonly billingService: BillingService) {}
 
+  @Get('workspace-kpis')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ApiOperation({
+    summary: "Get today's financial KPIs for receptionist workspace",
+  })
+  getWorkspaceKpis() {
+    return this.billingService.getWorkspaceKpis();
+  }
+
+  @Get('workspace-queue')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ApiOperation({ summary: 'Get patient billing queue for workspace' })
+  @ApiQuery({ name: 'search', required: false })
+  getWorkspaceQueue(@Query('search') search?: string) {
+    return this.billingService.getWorkspaceQueue({ search });
+  }
+
   // Invoice CRUD
 
   @Post('invoices')
@@ -45,7 +62,7 @@ export class BillingController {
     summary:
       'Create DRAFT invoice for a booking (Phương án B: nhiều invoice/booking)',
   })
-  createInvoice(@Body() dto: CreateInvoiceDto, @CurrentUser() user: any) {
+  createInvoice(@Body() dto: CreateInvoiceDto, @CurrentUser() user: User) {
     return this.billingService.createInvoice(dto, user);
   }
 
@@ -55,7 +72,7 @@ export class BillingController {
   @ApiOperation({ summary: 'Delete a DRAFT invoice' })
   deleteInvoice(
     @Param('id', ParseUUIDPipe) id: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: User,
   ) {
     return this.billingService.deleteInvoice(id, user);
   }
@@ -68,6 +85,7 @@ export class BillingController {
   @ApiQuery({ name: 'patientProfileId', required: false })
   @ApiQuery({ name: 'startDate', required: false })
   @ApiQuery({ name: 'endDate', required: false })
+  @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   listInvoices(
@@ -76,6 +94,7 @@ export class BillingController {
     @Query('patientProfileId') patientProfileId?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @CurrentUser() user?: any,
@@ -86,9 +105,10 @@ export class BillingController {
       patientProfileId,
       startDate,
       endDate,
+      search,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 20,
-      currentUser: user,
+      currentUser: user as User,
     });
   }
 
@@ -104,7 +124,7 @@ export class BillingController {
   })
   listInvoicesByBooking(
     @Param('bookingId', ParseUUIDPipe) bookingId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: User,
   ) {
     return this.billingService.listInvoicesByBooking(bookingId, user);
   }
@@ -129,7 +149,10 @@ export class BillingController {
     UserRole.PATIENT,
   )
   @ApiOperation({ summary: 'Get invoice by invoice ID' })
-  getInvoice(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
+  getInvoice(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: User,
+  ) {
     return this.billingService.getInvoiceById(id, user);
   }
 
@@ -141,7 +164,7 @@ export class BillingController {
   addItem(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AddInvoiceItemDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: User,
   ) {
     return this.billingService.addInvoiceItem(id, dto, user);
   }
@@ -153,7 +176,7 @@ export class BillingController {
   removeItem(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('itemId', ParseUUIDPipe) itemId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: User,
   ) {
     return this.billingService.removeInvoiceItem(id, itemId, user);
   }
@@ -168,7 +191,7 @@ export class BillingController {
   addPayment(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ConfirmPaymentDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: User,
   ) {
     return this.billingService.addPayment(id, dto, user.id, user);
   }

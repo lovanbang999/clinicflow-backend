@@ -42,6 +42,10 @@ import {
   IProfileRepository,
   I_PROFILE_REPOSITORY,
 } from '../database/interfaces/profile.repository.interface';
+import {
+  IClinicalRepository,
+  I_CLINICAL_REPOSITORY,
+} from '../database/interfaces/clinical.repository.interface';
 
 // Reusable select for patientProfile in booking includes
 const patientProfileSelect = {
@@ -69,6 +73,8 @@ export class BookingsService {
     private readonly queueGateway: QueueGateway,
     private readonly queueService: QueueService,
     private readonly billingService: BillingService,
+    @Inject(I_CLINICAL_REPOSITORY)
+    private readonly clinicalRepository: IClinicalRepository,
   ) {}
 
   /**
@@ -144,7 +150,7 @@ export class BookingsService {
           doctorId,
           serviceId: serviceId,
           bookingCode,
-          bookingDate: new Date(bookingDate),
+          bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
           startTime,
           endTime,
           isPreBooked: true,
@@ -237,7 +243,7 @@ export class BookingsService {
     // Fetch doctor's schedule slot for the day to get room assignment and capacity
     const slot = await this.bookingRepository.findDoctorScheduleSlot(
       doctorId,
-      new Date(bookingDate),
+      new Date(`${bookingDate}T00:00:00.000Z`),
     );
 
     if (isPreBooked) {
@@ -262,7 +268,7 @@ export class BookingsService {
       // Walk-in: verify queue capacity for this doctor+date
       const walkInCount = await this.bookingRepository.countBookingsByFilters({
         doctorId,
-        bookingDate: new Date(bookingDate),
+        bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
         isPreBooked: false,
         status: {
           notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW],
@@ -289,7 +295,7 @@ export class BookingsService {
           doctorId,
           serviceId: serviceId || undefined,
           bookingCode,
-          bookingDate: new Date(bookingDate),
+          bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
           startTime: isPreBooked ? startTime : undefined,
           endTime: isPreBooked ? endTime : undefined,
           isPreBooked,
@@ -600,8 +606,23 @@ export class BookingsService {
           );
         }
       } else if (isDoctor) {
-        // Doctor can only see their assigned bookings (or if clinic policy allows all, we can modify this)
-        if (booking.doctorId !== currentUser.id && !isStaff) {
+        // Doctor can only see their assigned bookings
+        const isAssignedDoctor = booking.doctorId === currentUser.id;
+
+        // If not the main doctor, check if they are assigned to any PAID clinical service order for this booking
+        let isSpecialistDoctor = false;
+        if (!isAssignedDoctor) {
+          const vso = await this.clinicalRepository.findFirstVisitServiceOrder({
+            where: {
+              medicalRecord: { bookingId: booking.id },
+              performedBy: currentUser.id,
+              status: { in: ['PAID', 'IN_PROGRESS'] }, // Allow if paid or already started
+            },
+          });
+          isSpecialistDoctor = !!vso;
+        }
+
+        if (!isAssignedDoctor && !isSpecialistDoctor && !isStaff) {
           throw new ApiException(
             MessageCodes.UNAUTHORIZED,
             'You are not authorized to view this booking',
@@ -912,7 +933,7 @@ export class BookingsService {
         status: BookingStatus.IN_PROGRESS,
         reason: 'Examination started by doctor',
       },
-      userId,
+      userId, // This is the currentUser.id passed from controller
       currentUser,
     );
   }
