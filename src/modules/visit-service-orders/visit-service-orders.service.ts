@@ -136,11 +136,22 @@ export class VisitServiceOrdersService {
           select: { id: true, status: true },
         });
 
-        const allDone = allSiblings.every(
-          (o) => o.id === orderId || o.status === ServiceOrderStatus.COMPLETED,
+        const allLabs = await tx.labOrder.findMany({
+          where: { medicalRecordId: order.medicalRecordId },
+          select: { status: true },
+        });
+
+        const allVsoDone = allSiblings.every(
+          (o) =>
+            o.id === orderId ||
+            o.status === ServiceOrderStatus.COMPLETED ||
+            o.status === ServiceOrderStatus.CANCELLED,
+        );
+        const allLabsDone = allLabs.every(
+          (o) => o.status === 'COMPLETED' || o.status === 'CANCELLED',
         );
 
-        if (allDone) {
+        if (allVsoDone && allLabsDone) {
           const record = await tx.medicalRecord.findUnique({
             where: { id: order.medicalRecordId },
             include: {
