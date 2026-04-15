@@ -1,5 +1,6 @@
 import { IsBoolean, IsOptional, IsString } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { SpecialistFindings } from '../types/specialist-findings.types';
 
 export class CompleteServiceOrderDto {
   @ApiPropertyOptional({
@@ -23,4 +24,10 @@ export class CompleteServiceOrderDto {
   @IsOptional()
   @IsString()
   abnormalNote?: string;
+
+  @ApiPropertyOptional({
+    description: 'Structured specialist examination findings',
+  })
+  @IsOptional()
+  findings?: SpecialistFindings;
 }

@@ -1087,6 +1087,7 @@ export class MedicalRecordsService {
           specialistNote: dto.doctorNotes,
           isAbnormal: dto.isAbnormal,
           abnormalNote: dto.abnormalNote,
+          findings: dto.findings as Prisma.InputJsonValue,
           completedAt: new Date(),
         },
       });

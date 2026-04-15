@@ -122,6 +122,7 @@ export class VisitServiceOrdersService {
             status: ServiceOrderStatus.COMPLETED,
             performedBy: technicianId,
             resultText: dto.resultText,
+            findings: dto.findings as Prisma.InputJsonValue,
             resultFileUrl: dto.resultFileUrl,
             isAbnormal: dto.isAbnormal,
             abnormalNote: dto.abnormalNote,
