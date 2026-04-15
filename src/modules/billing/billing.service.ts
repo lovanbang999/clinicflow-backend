@@ -32,6 +32,7 @@ import {
   VisitStep,
   Prisma,
   ServiceOrderStatus,
+  BookingPriority,
 } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { LabOrdersGateway } from '../lab-orders/lab-orders.gateway';
@@ -649,6 +650,7 @@ export class BillingService {
     invoiceType?: InvoiceType;
     startDate?: string;
     endDate?: string;
+    search?: string;
     page?: number;
     limit?: number;
     currentUser?: Express.User;
@@ -670,6 +672,7 @@ export class BillingService {
       invoiceType,
       startDate,
       endDate,
+      search,
       page = 1,
       limit = 20,
     } = params;
@@ -679,6 +682,25 @@ export class BillingService {
     if (status) where.status = status;
     if (patientProfileId) where.patientProfileId = patientProfileId;
     if (invoiceType) where.invoiceType = invoiceType;
+    if (search) {
+      where.OR = [
+        { invoiceNumber: { contains: search } },
+        {
+          booking: {
+            patientProfile: {
+              fullName: { contains: search },
+            },
+          },
+        },
+        {
+          booking: {
+            patientProfile: {
+              patientCode: { contains: search },
+            },
+          },
+        },
+      ];
+    }
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate)
@@ -1477,5 +1499,213 @@ export class BillingService {
         totalAmount: totalAmount < 0 ? 0 : totalAmount,
       },
     });
+  }
+
+  // Workspace Endpoints
+
+  async getWorkspaceQueue(params: { search?: string }) {
+    // All bookingDates are stored as UTC midnight (e.g. 2026-04-15T00:00:00.000Z).
+    // We must compute date boundaries in UTC explicitly, not via setHours() which
+    // is timezone-sensitive and would produce wrong boundaries on a UTC+7 server.
+    const now = new Date();
+    const todayStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
+    const tomorrowStart = new Date(todayStart.getTime() + 86400_000);
+    const thirtyDaysAgo = new Date(todayStart.getTime() - 30 * 86400_000);
+
+    // Date window: today's bookings OR past-30-day in-flight bookings (Option A)
+    const dateFilter: Prisma.BookingWhereInput = {
+      OR: [
+        // Branch 1: Today — all statuses visible (gives receptionist full-day picture)
+        { bookingDate: { gte: todayStart, lt: tomorrowStart } },
+        // Branch 2: Past 30 days — only bookings still in-flight (not finished)
+        {
+          bookingDate: { gte: thirtyDaysAgo, lt: todayStart },
+          status: {
+            notIn: [
+              BookingStatus.CANCELLED,
+              BookingStatus.NO_SHOW,
+              BookingStatus.COMPLETED,
+            ],
+          },
+        },
+      ],
+    };
+
+    // Search filter (optional)
+    const searchFilter: Prisma.BookingWhereInput | undefined = params.search
+      ? {
+          OR: [
+            { bookingCode: { contains: params.search } },
+            {
+              patientProfile: {
+                OR: [
+                  { fullName: { contains: params.search } },
+                  { phone: { contains: params.search } },
+                  { patientCode: { contains: params.search } },
+                ],
+              },
+            },
+          ],
+        }
+      : undefined;
+
+    // Compose final where clause
+    const where: Prisma.BookingWhereInput = {
+      AND: [
+        // Global exclusions
+        { status: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] } },
+        // Date + in-flight filter
+        dateFilter,
+        // Search (only when provided)
+        ...(searchFilter ? [searchFilter] : []),
+      ],
+    };
+
+    const bookings = await this.bookingRepository.findMany({
+      where,
+      include: {
+        patientProfile: true,
+        doctor: { select: { fullName: true } },
+        medicalRecord: true,
+        invoices: {
+          include: { items: true },
+        },
+      },
+      orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    const queueItems = bookings.map((booking) => {
+      const invoices = booking.invoices || [];
+      const totalAmount = invoices.reduce(
+        (sum, inv) => sum + Number(inv.totalAmount),
+        0,
+      );
+      const paidAmount = invoices
+        .filter((inv) => inv.status === InvoiceStatus.PAID)
+        .reduce((sum, inv) => sum + Number(inv.totalAmount), 0);
+      const pendingAmount = totalAmount - paidAmount;
+
+      // Logic to determine workflow step (B1, B3, B8)
+      let currentStepCode = 'B1';
+      const visitStep = booking.medicalRecord?.visitStep;
+
+      const isConsultationPaid = invoices
+        .filter((i) => i.invoiceType === InvoiceType.CONSULTATION)
+        .every((i) => i.status === InvoiceStatus.PAID);
+
+      if (booking.status === BookingStatus.COMPLETED) {
+        currentStepCode = 'B8';
+      } else if (
+        visitStep === VisitStep.SERVICES_ORDERED ||
+        booking.status === BookingStatus.AWAITING_RESULTS ||
+        visitStep === VisitStep.AWAITING_RESULTS ||
+        visitStep === VisitStep.RESULTS_READY
+      ) {
+        currentStepCode = 'B3';
+      } else if (
+        booking.status === BookingStatus.CHECKED_IN ||
+        booking.status === BookingStatus.IN_PROGRESS ||
+        visitStep === VisitStep.SYMPTOMS_TAKEN
+      ) {
+        // Already in progress but might still need B1 if not paid
+        currentStepCode = !isConsultationPaid ? 'B1' : 'B3';
+      } else if (
+        booking.status === BookingStatus.QUEUED &&
+        !isConsultationPaid
+      ) {
+        currentStepCode = 'B1';
+      }
+
+      return {
+        bookingId: booking.id,
+        patientName: booking.patientProfile.fullName,
+        patientCode: booking.patientProfile.patientCode,
+        doctorName: booking.doctor?.fullName || 'N/A',
+        patientGender: booking.patientProfile.gender,
+        patientDob: booking.patientProfile.dateOfBirth,
+        bookingCode: booking.bookingCode,
+        totalAmount,
+        paidAmount,
+        pendingAmount,
+        status: booking.status,
+        visitStep: visitStep,
+        currentStepCode,
+        isUrgent: booking.priority === BookingPriority.URGENT,
+        createdAt: booking.createdAt,
+        invoiceTypes: invoices.map((i) => i.invoiceType),
+      };
+    });
+
+    return ResponseHelper.success(
+      queueItems,
+      'BILLING.WORKSPACE_QUEUE_FETCHED',
+      'Workspace queue retrieved',
+      200,
+    );
+  }
+
+  async getWorkspaceKpis() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+
+    const invoices = await this.financeRepository.findManyInvoice({
+      where: {
+        createdAt: {
+          gte: today,
+          lt: tomorrow,
+        },
+      },
+    });
+
+    // We also need to count bookings that have pending invoices
+    const bookingsWithInvoices = await this.bookingRepository.findMany({
+      where: {
+        bookingDate: {
+          gte: today,
+          lt: tomorrow,
+        },
+        status: {
+          notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW],
+        },
+      },
+      include: {
+        invoices: true,
+      },
+    });
+
+    const awaitingPaymentCount = bookingsWithInvoices.filter((b) =>
+      b.invoices.some((inv) => inv.status !== InvoiceStatus.PAID),
+    ).length;
+
+    const completedPaymentCount = bookingsWithInvoices.filter(
+      (b) =>
+        b.invoices.length > 0 &&
+        b.invoices.every((inv) => inv.status === InvoiceStatus.PAID),
+    ).length;
+
+    const totalRevenue = invoices
+      .filter((inv) => inv.status === InvoiceStatus.PAID)
+      .reduce((sum, inv) => sum + Number(inv.totalAmount), 0);
+
+    const totalInvoicesValue = invoices.reduce(
+      (sum, inv) => sum + Number(inv.totalAmount),
+      0,
+    );
+
+    return ResponseHelper.success(
+      {
+        awaitingPaymentCount,
+        completedPaymentCount,
+        totalRevenue,
+        totalInvoicesValue,
+      },
+      'BILLING.WORKSPACE_KPIS_FETCHED',
+      'Workspace KPIs retrieved',
+      200,
+    );
   }
 }
