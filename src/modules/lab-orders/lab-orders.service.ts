@@ -13,18 +13,60 @@ import {
 import { Injectable, HttpStatus, Inject } from '@nestjs/common';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { MessageCodes } from '../../common/constants/message-codes.const';
-
 import { CreateLabOrderDto } from './dto/create-lab-order.dto';
 import { UploadLabResultDto } from './dto/upload-lab-result.dto';
 import {
   ResponseHelper,
   ApiResponse,
 } from '../../common/interfaces/api-response.interface';
-import { LabOrderStatus, InvoiceStatus, User } from '@prisma/client';
+import {
+  LabOrderStatus,
+  InvoiceStatus,
+  User,
+  LabResult,
+  Prisma,
+  LabOrder,
+} from '@prisma/client';
 import { LabOrdersGateway } from './lab-orders.gateway';
 import { BillingService } from '../billing/billing.service';
 import { forwardRef } from '@nestjs/common';
 import { LabOrderDeleteInclude } from '../database/types/prisma-payload.types';
+import { Gender } from '@prisma/client';
+
+export interface InternalService {
+  id: string;
+  name: string;
+  labFormType: string;
+}
+
+export interface InternalPatientProfile {
+  fullName: string;
+  patientCode: string | null;
+  gender: Gender;
+  dateOfBirth: Date | null;
+}
+
+export interface InternalBooking {
+  id: string;
+  bookingCode: string;
+  doctorId: string;
+  patientProfileId: string;
+  doctor: { fullName: string };
+  patientProfile: InternalPatientProfile;
+}
+
+export interface InternalLabOrder extends LabOrder {
+  result?: LabResult | null;
+  service?: InternalService;
+  booking?: InternalBooking;
+  invoiceItem?: {
+    invoice: {
+      id: string;
+      invoiceNumber: string;
+      status: InvoiceStatus;
+    };
+  } | null;
+}
 
 @Injectable()
 export class LabOrdersService {
@@ -211,10 +253,17 @@ export class LabOrdersService {
       booking.doctorId,
       currentUser,
     );
-    const orders = await this.clinicalRepository.findManyLabOrder({
+    const orders = (await this.clinicalRepository.findManyLabOrder({
       where: { bookingId },
       include: {
         result: true,
+        service: {
+          select: {
+            id: true,
+            name: true,
+            labFormType: true,
+          } as unknown as Prisma.ServiceSelect,
+        },
         invoiceItem: {
           include: {
             invoice: {
@@ -224,7 +273,7 @@ export class LabOrdersService {
         },
       },
       orderBy: { createdAt: 'desc' },
-    });
+    })) as unknown as InternalLabOrder[];
 
     return ResponseHelper.success(orders, 'LAB.FETCHED', '', 200);
   }
@@ -264,7 +313,7 @@ export class LabOrdersService {
   }
 
   async getPendingOrders() {
-    const rawOrders = await this.clinicalRepository.findManyLabOrder({
+    const rawOrders = (await this.clinicalRepository.findManyLabOrder({
       where: {
         status: {
           in: [LabOrderStatus.PENDING, LabOrderStatus.IN_PROGRESS],
@@ -289,7 +338,7 @@ export class LabOrdersService {
         },
       },
       orderBy: { createdAt: 'desc' },
-    });
+    })) as unknown as InternalLabOrder[];
 
     const orders = rawOrders.map((order) => {
       const { booking, ...rest } = order;
@@ -308,10 +357,17 @@ export class LabOrdersService {
   }
 
   async getOrderById(id: string, currentUser?: Express.User) {
-    const rawOrder = await this.clinicalRepository.findUniqueLabOrder({
+    const rawOrder = (await this.clinicalRepository.findUniqueLabOrder({
       where: { id },
       include: {
         result: true,
+        service: {
+          select: {
+            id: true,
+            name: true,
+            labFormType: true,
+          } as unknown as Prisma.ServiceSelect,
+        },
         booking: {
           select: {
             id: true,
@@ -330,7 +386,7 @@ export class LabOrdersService {
           },
         },
       },
-    });
+    })) as unknown as InternalLabOrder;
 
     if (!rawOrder) {
       throw new ApiException(
@@ -370,11 +426,18 @@ export class LabOrdersService {
    * Technician view list of lab orders that have been paid (PAID) and are ready to perform.
    */
   async getReadyToPerformOrders() {
-    const rawOrders = await this.clinicalRepository.findManyLabOrder({
+    const rawOrders = (await this.clinicalRepository.findManyLabOrder({
       where: {
         status: { in: [LabOrderStatus.PAID, LabOrderStatus.IN_PROGRESS] },
       },
       include: {
+        service: {
+          select: {
+            id: true,
+            name: true,
+            labFormType: true,
+          } as unknown as Prisma.ServiceSelect,
+        },
         booking: {
           select: {
             bookingCode: true,
@@ -391,7 +454,7 @@ export class LabOrdersService {
         },
       },
       orderBy: { createdAt: 'desc' },
-    });
+    })) as unknown as InternalLabOrder[];
 
     const orders = rawOrders.map((order) => {
       const { booking, ...rest } = order;
