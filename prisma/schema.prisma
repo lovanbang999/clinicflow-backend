@@ -323,6 +323,9 @@ model Service {
   // Xác định form kết quả đặc thù khi BS chuyên khoa nhập kết quả (chỉ áp dụng khi performerType = DOCTOR)
   examFormType    ExamFormType  @default(GENERAL)
 
+  // Xác định form nhập kết quả cho KTV (chỉ áp dụng khi performerType = TECHNICIAN)
+  labFormType     LabFormType   @default(GENERAL)
+
   isActive        Boolean       @default(true)
   deletedAt       DateTime?
   createdAt       DateTime      @default(now())
@@ -996,6 +999,18 @@ enum ExamFormType {
   ENDOCRINE    // Nội tiết & chuyển hóa
   UROLOGY      // Tiết niệu
   RESPIRATORY  // Hô hấp
+}
+
+// Form nhập kết quả cho KTV (chỉ dùng khi performerType = TECHNICIAN)
+enum LabFormType {
+  BLOOD_LAB    // Xét nghiệm máu - bảng nhập từng chỉ số (CBC, Lipid, Gan, Thận...)
+  URINE_LAB    // Xét nghiệm nước tiểu / phân - nhập từng chỉ số
+  IMAGING      // Chẩn đoán hình ảnh (siêu âm, X-quang, CT, MRI) - upload + kết luận
+  ECG          // Điện tâm đồ - nhịp tim, ST-T, kết luận dropdown
+  ENDOSCOPY    // Nội soi - vị trí tổn thương, CLO test, sinh thiết
+  SPIROMETRY   // Đo chức năng hô hấp - FEV1, FVC, FEV1/FVC
+  BONE_DENSITY // Đo loãng xương - T-score, Z-score theo vùng
+  GENERAL      // Chung/Khác - chỉ textarea + upload
 }
 
 enum VisitStep {
