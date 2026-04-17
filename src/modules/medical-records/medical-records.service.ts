@@ -947,50 +947,62 @@ export class MedicalRecordsService {
       now.getMonth(),
       now.getDate(),
     );
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const [todayPatients, monthPatients, totalRecords, pendingVisits] =
-      await Promise.all([
-        this.bookingRepository.count({
-          where: {
-            doctorId,
-            bookingDate: {
-              gte: startOfToday,
-              lt: new Date(
-                now.getFullYear(),
-                now.getMonth(),
-                now.getDate() + 1,
-              ),
-            },
-            status: {
-              in: ['CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'COMPLETED'],
-            },
+    const [
+      patientsSeenToday,
+      totalPatientsSeen,
+      pendingActive,
+      abnormalLabs,
+      abnormalVso,
+    ] = await Promise.all([
+      this.bookingRepository.count({
+        where: {
+          doctorId,
+          bookingDate: {
+            gte: startOfToday,
+            lt: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1),
           },
-        }),
-        this.bookingRepository.count({
-          where: {
-            doctorId,
-            bookingDate: { gte: startOfMonth },
-            status: {
-              in: ['CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'COMPLETED'],
-            },
+          status: 'COMPLETED',
+        },
+      }),
+      this.bookingRepository.count({
+        where: {
+          doctorId,
+          status: 'COMPLETED',
+        },
+      }),
+      this.bookingRepository.count({
+        where: {
+          doctorId,
+          status: {
+            in: ['CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'AWAITING_RESULTS'],
           },
-        }),
-        this.clinicalRepository.countMedicalRecord({ where: { doctorId } }),
-        this.bookingRepository.count({
-          where: {
-            doctorId,
-            status: { in: ['CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS'] },
+        },
+      }),
+      this.clinicalRepository.countLabOrder({
+        where: {
+          doctorId,
+          result: {
+            isAbnormal: true,
+            createdAt: { gte: startOfToday },
           },
-        }),
-      ]);
+        },
+      }),
+      this.clinicalRepository.countVisitServiceOrder({
+        where: {
+          orderedBy: doctorId,
+          isAbnormal: true,
+          completedAt: { gte: startOfToday },
+        },
+      }),
+    ]);
 
     return ResponseHelper.success(
       {
-        todayPatients,
-        monthPatients,
-        totalRecords,
-        pendingVisits,
+        patientsSeenToday,
+        totalPatientsSeen,
+        pendingActive,
+        abnormalResultsToday: abnormalLabs + abnormalVso,
       },
       'DOCTOR.STATS_RETRIEVED',
       'Doctor stats retrieved',
