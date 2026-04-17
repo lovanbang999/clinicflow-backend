@@ -22,8 +22,14 @@ import {
   Logger,
   NotFoundException,
   Inject,
+  forwardRef,
 } from '@nestjs/common';
-import { Prisma, ServiceOrderStatus, VisitStep } from '@prisma/client';
+import {
+  LabOrderStatus,
+  Prisma,
+  ServiceOrderStatus,
+  VisitStep,
+} from '@prisma/client';
 import { format } from 'date-fns';
 import { vi } from 'date-fns/locale';
 import { MessageCodes } from '../../common/constants/message-codes.const';
@@ -38,6 +44,7 @@ import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { OrderServicesDto } from './dto/order-services.dto';
 import { SaveDiagnosisDto } from './dto/save-diagnosis.dto';
+import { QueueGateway } from '../queue/queue.gateway';
 
 @Injectable()
 export class MedicalRecordsService {
@@ -72,7 +79,9 @@ export class MedicalRecordsService {
     @Inject(I_PROFILE_REPOSITORY)
     private readonly profileRepository: IProfileRepository,
     private readonly notificationsService: NotificationsService,
+    @Inject(forwardRef(() => BillingService))
     private readonly billingService: BillingService,
+    private readonly queueGateway: QueueGateway,
   ) {}
 
   // PRIVATE HELPERS
@@ -196,21 +205,33 @@ export class MedicalRecordsService {
         o.status === ServiceOrderStatus.CANCELLED,
     );
     const allLabsDone = allLabs.every(
-      (o) => o.status === 'COMPLETED' || o.status === 'CANCELLED',
+      (o) =>
+        o.status === LabOrderStatus.COMPLETED ||
+        o.status === LabOrderStatus.CANCELLED,
+    );
+
+    const record = await tx.medicalRecord.findUnique({
+      where: { id: medicalRecordId },
+      include: {
+        booking: {
+          include: { patientProfile: true },
+        },
+      },
+    });
+
+    this.logger.log(
+      `Checking advancement for record ${medicalRecordId}: allVsoDone=${allVsoDone}, allLabsDone=${allLabsDone}, currentStep=${record?.visitStep}`,
     );
 
     if (allVsoDone && allLabsDone) {
-      const record = await tx.medicalRecord.findUnique({
-        where: { id: medicalRecordId },
-        include: {
-          booking: {
-            include: { patientProfile: true },
-          },
-        },
-      });
+      // Advance step if we are in SERVICES_ORDERED or AWAITING_RESULTS phase
+      const allowedSteps: VisitStep[] = [
+        VisitStep.SERVICES_ORDERED,
+        VisitStep.AWAITING_RESULTS,
+      ];
 
-      // ONLY advance if we are in AWAITING_RESULTS phase
-      if (record && record.visitStep === VisitStep.AWAITING_RESULTS) {
+      if (record && allowedSteps.includes(record.visitStep)) {
+        this.logger.log(`Advancing record ${medicalRecordId} to RESULTS_READY`);
         await tx.medicalRecord.update({
           where: { id: medicalRecordId },
           data: {
@@ -233,6 +254,12 @@ export class MedicalRecordsService {
               },
             })
             .catch(console.error);
+
+          // Broadcast queue update so doctor's dashboard refreshes
+          this.queueGateway.broadcastQueueUpdate(record.doctorId, 'UPDATE', {
+            bookingId: record.bookingId,
+            visitStep: VisitStep.RESULTS_READY,
+          });
         }
       }
     }
