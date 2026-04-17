@@ -1,27 +1,23 @@
 import 'dotenv/config';
-
 import {
   PrismaClient,
   UserRole,
   Gender,
   DayOfWeek,
-  BookingSource,
-  BookingPriority,
   RoomType,
   ServiceCategoryType,
-  User,
-  Service,
-  PatientProfile,
-  Room,
   PerformerType,
   ExamFormType,
   LabFormType,
+  Service,
+  Category,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import * as fs from 'fs';
-import * as path from 'path';
 import { PrismaMariaDb } from '@prisma/adapter-mariadb';
 
+// ============================================
+// CONFIG & CLIENT
+// ============================================
 const databaseUrl = process.env.DATABASE_URL!;
 const url = new URL(databaseUrl);
 const adapter = new PrismaMariaDb({
@@ -34,436 +30,849 @@ const adapter = new PrismaMariaDb({
 });
 const prisma = new PrismaClient({ adapter });
 
-// Shared counter for patient codes & booking codes
+// ============================================
+// SHARED HELPERS
+// ============================================
 let patientCodeCounter = 1;
-let bookingCodeCounter = 1;
-
 function generatePatientCode(): string {
   const code = `BN-2026-${String(patientCodeCounter).padStart(4, '0')}`;
   patientCodeCounter++;
   return code;
 }
 
-function generateBookingCode(dateStr: string): string {
-  // dateStr format: YYYY-MM-DD
-  const compact = dateStr.replace(/-/g, '');
-  const code = `BK-${compact}-${String(bookingCodeCounter).padStart(4, '0')}`;
-  bookingCodeCounter++;
-  return code;
-}
+const hashPassword = async (password: string) => {
+  return await bcrypt.hash(password, 10);
+};
 
+// ============================================
+// SEED DATA CONSTANTS
+// ============================================
+
+const ROOMS = [
+  {
+    name: 'Phòng khám 101',
+    type: RoomType.CONSULTATION,
+    floor: '1',
+    capacity: 1,
+  },
+  {
+    name: 'Phòng khám 102',
+    type: RoomType.CONSULTATION,
+    floor: '1',
+    capacity: 1,
+  },
+  {
+    name: 'Phòng khám 103',
+    type: RoomType.CONSULTATION,
+    floor: '1',
+    capacity: 1,
+  },
+  {
+    name: 'Phòng khám 201',
+    type: RoomType.CONSULTATION,
+    floor: '2',
+    capacity: 1,
+  },
+  {
+    name: 'Phòng khám 202',
+    type: RoomType.CONSULTATION,
+    floor: '2',
+    capacity: 1,
+  },
+  {
+    name: 'Phòng khám 203',
+    type: RoomType.CONSULTATION,
+    floor: '2',
+    capacity: 1,
+  },
+  {
+    name: 'Phòng siêu âm 1',
+    type: RoomType.ULTRASOUND,
+    floor: '1',
+    capacity: 2,
+  },
+  {
+    name: 'Phòng siêu âm 2',
+    type: RoomType.ULTRASOUND,
+    floor: '2',
+    capacity: 2,
+  },
+  { name: 'Phòng xét nghiệm', type: RoomType.LAB, floor: '1', capacity: 5 },
+  {
+    name: 'Phòng thủ thuật',
+    type: RoomType.PROCEDURE,
+    floor: '2',
+    capacity: 2,
+  },
+  {
+    name: 'Phòng chờ tầng 1',
+    type: RoomType.WAITING,
+    floor: '1',
+    capacity: 20,
+  },
+  {
+    name: 'Phòng chờ tầng 2',
+    type: RoomType.WAITING,
+    floor: '2',
+    capacity: 20,
+  },
+];
+
+const CATEGORIES = [
+  {
+    code: 'CAT_NOIKHOA',
+    name: 'Nội khoa',
+    description: 'Khám nội khoa chung',
+    type: ServiceCategoryType.EXAMINATION,
+  },
+  {
+    code: 'CAT_XETNGHIEM',
+    name: 'Xét nghiệm (Lab)',
+    description: 'Xét nghiệm cận lâm sàng',
+    type: ServiceCategoryType.LAB,
+  },
+  {
+    code: 'CAT_CDHA',
+    name: 'Chẩn đoán hình ảnh',
+    description: 'Siêu âm, X-Quang',
+    type: ServiceCategoryType.LAB,
+  },
+  {
+    code: 'CAT_NHIKHOA',
+    name: 'Nhi khoa',
+    description: 'Khám và điều trị cho trẻ em',
+    type: ServiceCategoryType.EXAMINATION,
+  },
+  {
+    code: 'CAT_SANPHUKHOA',
+    name: 'Sản phụ khoa',
+    description: 'Chăm sóc sức khỏe phụ nữ và thai sản',
+    type: ServiceCategoryType.EXAMINATION,
+  },
+  {
+    code: 'CAT_CHINHHINH',
+    name: 'Chấn thương chỉnh hình',
+    description: 'Cơ xương khớp',
+    type: ServiceCategoryType.EXAMINATION,
+  },
+  {
+    code: 'CAT_TAMLY',
+    name: 'Tâm lý',
+    description: 'Tư vấn sức khỏe tâm thần',
+    type: ServiceCategoryType.EXAMINATION,
+  },
+  {
+    code: 'CAT_TMH',
+    name: 'Tai Mũi Họng',
+    description: 'Khám chuyên khoa TMH',
+    type: ServiceCategoryType.EXAMINATION,
+  },
+  {
+    code: 'CAT_DALIEU',
+    name: 'Da liễu',
+    description: 'Khám và điều trị bệnh ngoài da',
+    type: ServiceCategoryType.EXAMINATION,
+  },
+  {
+    code: 'CAT_NHAKHOA',
+    name: 'Nha khoa',
+    description: 'Răng Hàm Mặt',
+    type: ServiceCategoryType.EXAMINATION,
+  },
+  {
+    code: 'CAT_NHANKHOA',
+    name: 'Nhãn khoa',
+    description: 'Khám mắt',
+    type: ServiceCategoryType.EXAMINATION,
+  },
+];
+
+const DOCTORS = [
+  {
+    email: 'bs.nguyenvana@clinic.com',
+    fullName: 'BS. Nguyễn Văn An',
+    phone: '0901111111',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Nội khoa', 'Khám sức khỏe tổng quát'],
+    qualifications: ['Bác sĩ CK1', 'Thạc sĩ Y khoa'],
+    experience: 15,
+    consultationFee: 200000,
+    bio: 'Bác sĩ có 15 năm kinh nghiệm trong lĩnh vực nội tổng quát, tận tâm với bệnh nhân.',
+  },
+  {
+    email: 'bs.lethib@clinic.com',
+    fullName: 'BS. Lê Thị Bình',
+    phone: '0902222222',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Nội khoa', 'Tim mạch'],
+    qualifications: ['Bác sĩ CK2', 'Tiến sĩ Y khoa'],
+    experience: 12,
+    consultationFee: 300000,
+    bio: 'Chuyên gia tim mạch với 12 năm kinh nghiệm, từng tu nghiệp tại Nhật Bản.',
+  },
+  {
+    email: 'bs.hoangquy@clinic.com',
+    fullName: 'BS. Hoàng Quý',
+    phone: '0903333444',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Chấn thương chỉnh hình', 'Cơ xương khớp'],
+    qualifications: ['Bác sĩ CK2'],
+    experience: 20,
+    consultationFee: 400000,
+    bio: 'Chuyên gia đầu ngành về chấn thương chỉnh hình với hơn 20 năm kinh nghiệm phẫu thuật.',
+  },
+  {
+    email: 'bs.minhthu@clinic.com',
+    fullName: 'BS. Đặng Minh Thư',
+    phone: '0904444555',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Nhi khoa'],
+    qualifications: ['Thạc sĩ Nhi khoa'],
+    experience: 8,
+    consultationFee: 250000,
+    bio: 'Bác sĩ Nhi khoa tận tâm, yêu trẻ, có kinh nghiệm xử lý các bệnh lý nhi khoa phổ biến.',
+  },
+  {
+    email: 'bs.quanghuy@clinic.com',
+    fullName: 'BS. Trần Quang Huy',
+    phone: '0905555666',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Tâm lý lâm sàng', 'Sức khỏe tâm thần'],
+    qualifications: ['Tiến sĩ Tâm lý'],
+    experience: 15,
+    consultationFee: 500000,
+    bio: 'Chuyên gia tư vấn tâm lý, hỗ trợ điều trị trầm cảm, lo âu và các rối loạn tâm thần.',
+  },
+  {
+    email: 'bs.tuyetmai@clinic.com',
+    fullName: 'BS. Vương Tuyết Mai',
+    phone: '0906666777',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Sản phụ khoa'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 10,
+    consultationFee: 300000,
+    bio: 'Chuyên khám thai định kỳ, tư vấn sức khỏe sinh sản và điều trị phụ khoa.',
+  },
+  {
+    email: 'bs.giabao@clinic.com',
+    fullName: 'BS. Phạm Gia Bảo',
+    phone: '0907777888',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Tiêu hóa', 'Gan mật'],
+    qualifications: ['Thạc sĩ Y khoa'],
+    experience: 12,
+    consultationFee: 250000,
+    bio: 'Chuyên gia nội soi tiêu hóa, điều trị các bệnh lý dạ dày, đại tràng và gan mật.',
+  },
+  {
+    email: 'bs.thanhha@clinic.com',
+    fullName: 'BS. Nguyễn Thanh Hà',
+    phone: '0908888999',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Nội tiết', 'Tiểu đường'],
+    qualifications: ['Bác sĩ CK2'],
+    experience: 18,
+    consultationFee: 350000,
+    bio: 'Chuyên điều trị tiểu đường, cường giáp và các rối loạn nội tiết phức tạp.',
+  },
+  {
+    email: 'bs.huuphuoc@clinic.com',
+    fullName: 'BS. Lê Hữu Phước',
+    phone: '0909999000',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Tai Mũi Họng'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 9,
+    consultationFee: 200000,
+    bio: 'Bác sĩ chuyên khoa Tai Mũi Họng, giàu kinh nghiệm điều trị viêm xoang, viêm họng mãn tính.',
+  },
+  {
+    email: 'bs.lananh@clinic.com',
+    fullName: 'BS. Đỗ Lan Anh',
+    phone: '0901112223',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Dị ứng', 'Miễn dịch lâm sàng'],
+    qualifications: ['Thạc sĩ Y khoa'],
+    experience: 7,
+    consultationFee: 250000,
+    bio: 'Chuyên điều trị các bệnh dị ứng, hen suyễn và các vấn đề miễn dịch hệ thống.',
+  },
+  {
+    email: 'bs.minhquan@clinic.com',
+    fullName: 'BS. Ngô Minh Quân',
+    phone: '0902223334',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Thần kinh'],
+    qualifications: ['Bác sĩ CK2'],
+    experience: 22,
+    consultationFee: 450000,
+    bio: 'Chuyên gia thần kinh, điều trị đau đầu, mất ngủ, tiền đình và các bệnh lý não bộ.',
+  },
+  {
+    email: 'bs.thuhuong@clinic.com',
+    fullName: 'BS. Trịnh Thu Hương',
+    phone: '0903334445',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Dinh dưỡng'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 6,
+    consultationFee: 200000,
+    bio: 'Tư vấn chế độ dinh dưỡng cho người bệnh, trẻ em và người muốn giảm cân khoa học.',
+  },
+  {
+    email: 'bs.tiendung@clinic.com',
+    fullName: 'BS. Bùi Tiến Dũng',
+    phone: '0904445556',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Phục hồi chức năng'],
+    qualifications: ['Thạc sĩ Phục hồi chức năng'],
+    experience: 11,
+    consultationFee: 250000,
+    bio: 'Hỗ trợ bệnh nhân hồi phục sau phẫu thuật hoặc sau tai biến mạch máu não.',
+  },
+  {
+    email: 'bs.thaonguyen@clinic.com',
+    fullName: 'BS. Lê Thảo Nguyên',
+    phone: '0905556667',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Hô hấp'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 13,
+    consultationFee: 300000,
+    bio: 'Chuyên điều trị các bệnh lý phổi, viêm phế quản và tắc nghẽn phổi mãn tính COPD.',
+  },
+  {
+    email: 'bs.ngocmai@clinic.com',
+    fullName: 'BS. Phan Ngọc Mai',
+    phone: '0906667778',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Da liễu', 'Thẩm mỹ'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 9,
+    consultationFee: 350000,
+    bio: 'Chuyên da liễu và thẩm mỹ nội khoa, điều trị mụn, nám và trẻ hóa làn da.',
+  },
+  {
+    email: 'bs.mylinh@clinic.com',
+    fullName: 'BS. Trương Mỹ Linh',
+    phone: '0907778889',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Nhãn khoa'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 11,
+    consultationFee: 250000,
+    bio: 'Chuyên gia nhãn khoa, chuyên khám và điều trị các bệnh lý về mắt và tật khúc xạ.',
+  },
+  {
+    email: 'bs.hoangnam@clinic.com',
+    fullName: 'BS. Nguyễn Hoàng Nam',
+    phone: '0908889990',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Nha khoa'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 10,
+    consultationFee: 300000,
+    bio: 'Bác sĩ nha khoa giỏi, chuyên về phục hình răng và nha khoa thẩm mỹ.',
+  },
+];
+
+const TECHNICIANS = [
+  {
+    email: 'ktv.phuong@clinic.com',
+    fullName: 'KTV. Trần Thị Phương',
+    phone: '0981111111',
+    role: UserRole.TECHNICIAN,
+    gender: Gender.FEMALE,
+    specialties: ['Xét nghiệm'],
+    qualifications: ['Cử nhân Xét nghiệm'],
+    experience: 6,
+    consultationFee: 0,
+    bio: 'Kỹ thuật viên xét nghiệm tận tâm, chính xác.',
+  },
+  {
+    email: 'ktv.tuan@clinic.com',
+    fullName: 'KTV. Lê Anh Tuấn',
+    phone: '0982222222',
+    role: UserRole.TECHNICIAN,
+    gender: Gender.MALE,
+    specialties: ['Chẩn đoán hình ảnh'],
+    qualifications: ['Cử nhân Chẩn đoán hình ảnh'],
+    experience: 5,
+    consultationFee: 0,
+    bio: 'Kỹ thuật viên chuyên về Siêu âm và X-quang.',
+  },
+];
+
+const RECEPTIONISTS = [
+  {
+    email: 'letan.huong@clinic.com',
+    fullName: 'Nguyễn Thị Hương',
+    phone: '0906666666',
+    gender: Gender.FEMALE,
+  },
+  {
+    email: 'letan.lan@clinic.com',
+    fullName: 'Trần Thị Lan',
+    phone: '0907777777',
+    gender: Gender.FEMALE,
+  },
+];
+
+const PATIENTS = [
+  {
+    email: 'patient.nam@gmail.com',
+    fullName: 'Nguyễn Văn Nam',
+    phone: '0988888888',
+    gender: Gender.MALE,
+    bloodType: 'O+',
+  },
+  {
+    email: 'patient.linh@gmail.com',
+    fullName: 'Lê Thị Linh',
+    phone: '0989999999',
+    gender: Gender.FEMALE,
+    bloodType: 'A+',
+  },
+  {
+    email: 'patient.tuan@gmail.com',
+    fullName: 'Trần Anh Tuấn',
+    phone: '0981111111',
+    gender: Gender.MALE,
+    bloodType: 'B+',
+  },
+  {
+    email: 'patient.mai@gmail.com',
+    fullName: 'Phạm Thị Mai',
+    phone: '0982222222',
+    gender: Gender.FEMALE,
+    bloodType: 'AB+',
+  },
+];
+
+// ============================================
+// MAIN SEED FUNCTION
+// ============================================
 async function main() {
-  console.log('🌱 Starting database seed v3.0...');
+  console.log('🌱 Starting database seed v4.0 (Modular & Expanded)...');
 
-  const hashPassword = async (password: string) => {
-    return await bcrypt.hash(password, 10);
-  };
-
-  // ============================================
-  // 0. CLEAR ALL DATA (fresh seed)
-  // ============================================
+  // 1. DELETE ALL DATA
   console.log('\n🗑️  Clearing existing data...');
 
-  await prisma.aiChatMessage.deleteMany();
-  await prisma.aiChatSession.deleteMany();
-  await prisma.payment.deleteMany();
-  await prisma.invoiceItem.deleteMany();
-  await prisma.invoice.deleteMany();
-  await prisma.labResult.deleteMany();
-  await prisma.labOrder.deleteMany();
-  await prisma.prescriptionItem.deleteMany();
-  await prisma.prescription.deleteMany();
-  await prisma.visitServiceOrder.deleteMany();
-  await prisma.medicalRecord.deleteMany();
-  await prisma.bookingStatusHistory.deleteMany();
-  await prisma.bookingQueue.deleteMany();
-  await prisma.booking.deleteMany();
-  await prisma.doctorService.deleteMany();
-  await prisma.doctorBreakTime.deleteMany();
-  await prisma.doctorOffDay.deleteMany();
-  await prisma.doctorScheduleSlot.deleteMany();
-  await prisma.doctorWorkingHours.deleteMany();
-  await prisma.doctorProfile.deleteMany();
-  await prisma.patientProfile.deleteMany();
-  await prisma.notification.deleteMany();
-  await prisma.auditLog.deleteMany();
-  await prisma.systemConfig.deleteMany();
-  await prisma.refreshToken.deleteMany();
-  await prisma.verificationCode.deleteMany();
-  await prisma.icd10Code.deleteMany();
-  await prisma.service.deleteMany();
-  await prisma.category.deleteMany();
-  await prisma.room.deleteMany();
-  await prisma.user.deleteMany();
+  // List of functions to delete data in order
+  const deleteActions = [
+    () => prisma.aiChatMessage.deleteMany(),
+    () => prisma.aiChatSession.deleteMany(),
+    () => prisma.payment.deleteMany(),
+    () => prisma.invoiceItem.deleteMany(),
+    () => prisma.invoice.deleteMany(),
+    () => prisma.labResult.deleteMany(),
+    () => prisma.labOrder.deleteMany(),
+    () => prisma.prescriptionItem.deleteMany(),
+    () => prisma.prescription.deleteMany(),
+    () => prisma.visitServiceOrder.deleteMany(),
+    () => prisma.medicalRecord.deleteMany(),
+    () => prisma.bookingStatusHistory.deleteMany(),
+    () => prisma.bookingQueue.deleteMany(),
+    () => prisma.booking.deleteMany(),
+    () => prisma.doctorService.deleteMany(),
+    () => prisma.doctorBreakTime.deleteMany(),
+    () => prisma.doctorOffDay.deleteMany(),
+    () => prisma.doctorScheduleSlot.deleteMany(),
+    () => prisma.doctorWorkingHours.deleteMany(),
+    () => prisma.doctorProfile.deleteMany(),
+    () => prisma.patientProfile.deleteMany(),
+    () => prisma.notification.deleteMany(),
+    () => prisma.auditLog.deleteMany(),
+    () => prisma.systemConfig.deleteMany(),
+    () => prisma.refreshToken.deleteMany(),
+    () => prisma.verificationCode.deleteMany(),
+    () => prisma.icd10Code.deleteMany(),
+    () => prisma.service.deleteMany(),
+    () => prisma.category.deleteMany(),
+    () => prisma.room.deleteMany(),
+    () => prisma.user.deleteMany(),
+  ];
 
+  for (const action of deleteActions) {
+    try {
+      await action();
+    } catch {
+      // Ignore if table doesn't exist or other minor issues
+    }
+  }
   console.log('  ✅ All data cleared');
 
-  // ============================================
-  // 1. CREATE ROOMS
-  // ============================================
+  // 2. SEED ROOMS
   console.log('\n🏠 Creating rooms...');
+  for (const room of ROOMS) {
+    await prisma.room.create({ data: room });
+  }
+  console.log(`  ✅ Created ${ROOMS.length} rooms`);
 
-  const roomsData = [
+  // 3. SEED CATEGORIES
+  console.log('\n📁 Creating categories...');
+  const categoryMap = new Map<string, string>();
+  for (const cat of CATEGORIES) {
+    const created = await prisma.category.create({ data: cat });
+    categoryMap.set(cat.name, created.id);
+  }
+  console.log(`  ✅ Created ${CATEGORIES.length} categories`);
+
+  // 4. SEED SERVICES
+  console.log('\n🏥 Creating services...');
+  const servicesData = [
     {
-      name: 'Phòng khám 101',
-      type: RoomType.CONSULTATION,
-      floor: '1',
-      capacity: 1,
+      name: 'Khám nội tổng quát',
+      description: 'Khám sức khỏe định kỳ, tầm soát bệnh lý nội khoa',
+      category: 'Nội khoa',
+      price: 200000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.GENERAL,
     },
     {
-      name: 'Phòng khám 102',
-      type: RoomType.CONSULTATION,
-      floor: '1',
-      capacity: 1,
+      name: 'Khám tim mạch',
+      description: 'Chuyên khoa tim mạch, huyết áp',
+      category: 'Nội khoa',
+      price: 300000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.CARDIOLOGY,
     },
     {
-      name: 'Phòng khám 201',
-      type: RoomType.CONSULTATION,
-      floor: '2',
-      capacity: 1,
+      name: 'Khám nhi khoa',
+      description: 'Khám và tư vấn sức khỏe cho trẻ em',
+      category: 'Nhi khoa',
+      price: 250000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.GENERAL,
     },
     {
-      name: 'Phòng khám 202',
-      type: RoomType.CONSULTATION,
-      floor: '2',
-      capacity: 1,
+      name: 'Khám xương khớp',
+      description: 'Chẩn đoán các bệnh lý cơ xương khớp',
+      category: 'Chấn thương chỉnh hình',
+      price: 400000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.ORTHOPEDIC,
     },
     {
-      name: 'Phòng siêu âm 1',
-      type: RoomType.ULTRASOUND,
-      floor: '1',
-      capacity: 2,
+      name: 'Khám sản phụ khoa',
+      description: 'Khám thai, phụ khoa và tư vấn sức khỏe sinh sản',
+      category: 'Sản phụ khoa',
+      price: 300000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.GYNECOLOGY,
     },
     {
-      name: 'Phòng siêu âm 2',
-      type: RoomType.ULTRASOUND,
-      floor: '2',
-      capacity: 2,
-    },
-    { name: 'Phòng xét nghiệm', type: RoomType.LAB, floor: '1', capacity: 5 },
-    {
-      name: 'Phòng thủ thuật',
-      type: RoomType.PROCEDURE,
-      floor: '2',
-      capacity: 2,
+      name: 'Khám tâm lý',
+      description: 'Tư vấn và trị liệu tâm lý',
+      category: 'Tâm lý',
+      price: 500000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.GENERAL,
     },
     {
-      name: 'Phòng chờ tầng 1',
-      type: RoomType.WAITING,
-      floor: '1',
-      capacity: 20,
+      name: 'Khám mắt',
+      description: 'Khám tật khúc xạ và các bệnh lý về mắt',
+      category: 'Nhãn khoa',
+      price: 200000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.EYE,
     },
     {
-      name: 'Phòng chờ tầng 2',
-      type: RoomType.WAITING,
-      floor: '2',
-      capacity: 20,
+      name: 'Khám tai mũi họng',
+      description: 'Nội soi và khám các bệnh lý TMH',
+      category: 'Tai Mũi Họng',
+      price: 200000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.ENT,
+    },
+    {
+      name: 'Khám da liễu',
+      description: 'Điều trị bệnh ngoài da và thẩm mỹ da',
+      category: 'Da liễu',
+      price: 350000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.DERMATOLOGY,
+    },
+    {
+      name: 'Khám răng hàm mặt',
+      description: 'Khám và điều trị các bệnh lý răng miệng',
+      category: 'Nha khoa',
+      price: 200000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.DENTAL,
+    },
+    {
+      name: 'Khám tiêu hóa',
+      description: 'Chuyên khoa tiêu hóa, gan mật',
+      category: 'Nội khoa',
+      price: 250000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.GASTRO,
+    },
+    {
+      name: 'Khám nội tiết',
+      description: 'Điều trị tiểu đường, bệnh lý tuyến giáp',
+      category: 'Nội khoa',
+      price: 350000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.ENDOCRINE,
+    },
+
+    // Lab Services (Nhóm 1 - KTV thực hiện)
+    {
+      name: 'Tổng phân tích tế bào máu (CBC)',
+      description: 'Kiểm tra các thành phần tế bào máu',
+      category: 'Xét nghiệm (Lab)',
+      price: 150000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.BLOOD_LAB,
+    },
+    {
+      name: 'Đường huyết đói (FBS)',
+      description: 'Kiểm tra nồng độ đường trong máu',
+      category: 'Xét nghiệm (Lab)',
+      price: 80000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.BLOOD_LAB,
+    },
+    {
+      name: 'Chức năng gan (AST, ALT, GGT)',
+      description: 'Đánh giá tình trạng viêm gan, tổn thương gan',
+      category: 'Xét nghiệm (Lab)',
+      price: 240000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.BLOOD_LAB,
+    },
+    {
+      name: 'Chức năng thận (Ure, Creatinin)',
+      description: 'Đánh giá khả năng lọc của thận',
+      category: 'Xét nghiệm (Lab)',
+      price: 160000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.BLOOD_LAB,
+    },
+    {
+      name: 'Tổng phân tích nước tiểu (10 chỉ số)',
+      description: 'Kiểm tra các bệnh lý về tiết niệu, thận',
+      category: 'Xét nghiệm (Lab)',
+      price: 100000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.URINE_LAB,
+    },
+    {
+      name: 'Siêu âm ổ bụng tổng quát',
+      description: 'Quan sát các cơ quan nội tạng trong bụng',
+      category: 'Chẩn đoán hình ảnh',
+      price: 250000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.IMAGING,
+    },
+    {
+      name: 'Siêu âm tim Doppler',
+      description: 'Kiểm tra cấu trúc và chức năng tim',
+      category: 'Chẩn đoán hình ảnh',
+      price: 500000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.IMAGING,
+    },
+    {
+      name: 'X-quang ngực thẳng',
+      description: 'Kiểm tra tim, phổi và khung xương sườn',
+      category: 'Chẩn đoán hình ảnh',
+      price: 150000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.IMAGING,
+    },
+    {
+      name: 'Chụp CT-Scanner đầu',
+      description: 'Tầm soát chấn thương hoặc bệnh lý não',
+      category: 'Chẩn đoán hình ảnh',
+      price: 1200000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.IMAGING,
+    },
+    {
+      name: 'Điện tâm đồ (ECG)',
+      description: 'Ghi lại hoạt động điện của tim',
+      category: 'Chẩn đoán hình ảnh',
+      price: 120000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.ECG,
+    },
+    {
+      name: 'Nội soi dạ dày (không gây mê)',
+      description: 'Quan sát trực tiếp thực quản và dạ dày',
+      category: 'Chẩn đoán hình ảnh',
+      price: 600000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.ENDOSCOPY,
+    },
+    {
+      name: 'Đo chức năng hô hấp',
+      description: 'Tầm soát bệnh lý phổi tắc nghẽn',
+      category: 'Chẩn đoán hình ảnh',
+      price: 200000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.SPIROMETRY,
+    },
+    {
+      name: 'Đo loãng xương (DEXA)',
+      description: 'Kiểm tra mật độ xương',
+      category: 'Chẩn đoán hình ảnh',
+      price: 350000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.BONE_DENSITY,
+    },
+    {
+      name: 'Dịch vụ kỹ thuật khác',
+      description: 'Các thủ thuật kỹ thuật chung',
+      category: 'Chẩn đoán hình ảnh',
+      price: 100000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.GENERAL,
     },
   ];
 
-  const createdRooms: Room[] = [];
-  for (const roomData of roomsData) {
-    const room = await prisma.room.create({ data: roomData });
-    createdRooms.push(room);
+  const createdServices: (Service & { category: Category | null })[] = [];
+  for (const s of servicesData) {
+    const created = await prisma.service.create({
+      data: {
+        name: s.name,
+        description: s.description,
+        price: s.price,
+        durationMinutes: 30,
+        categoryId: categoryMap.get(s.category)!,
+        performerType: s.pType,
+        examFormType: s.eType || ExamFormType.GENERAL,
+        labFormType: s.lType || LabFormType.GENERAL,
+      },
+      include: { category: true },
+    });
+    createdServices.push(created);
   }
-  console.log(`  ✅ Created ${roomsData.length} rooms`);
+  console.log(`  ✅ Created ${servicesData.length} services`);
 
-  // ============================================
-  // 2. CREATE USERS
-  // ============================================
+  // 5. SEED ADMIN
   console.log('\n👥 Creating users...');
-
-  // ADMIN
-  const admin = await prisma.user.create({
+  await prisma.user.create({
     data: {
       email: 'admin@clinic.com',
       password: await hashPassword('admin123'),
       role: UserRole.ADMIN,
       fullName: 'Quản Trị Viên Hệ Thống',
-      phone: '0900000000',
-      dateOfBirth: new Date('1985-01-15'),
-      gender: Gender.MALE,
-      address: '100 Nguyễn Huệ, Quận 1, TP.HCM',
       isActive: true,
       isVerified: true,
     },
   });
-  console.log('  ✅ Admin created:', admin.email);
+  console.log('  ✅ Admin created');
 
-  // PROVIDERS (Doctors & Technicians with profiles)
-  const providersData = [
-    {
-      user: {
-        email: 'bs.nguyenvana@clinic.com',
-        fullName: 'BS. Nguyễn Văn An',
-        phone: '0901111111',
-        dateOfBirth: new Date('1975-03-20'),
-        gender: Gender.MALE,
-        address: '456 Lê Lợi, Quận 3, TP.HCM',
-        role: UserRole.DOCTOR,
-      },
-      profile: {
-        specialties: ['Nội khoa', 'Khám sức khỏe tổng quát'],
-        qualifications: ['Bác sĩ CK1', 'Thạc sĩ Y khoa'],
-        yearsOfExperience: 15,
-        rating: 4.8,
-        reviewCount: 120,
-        bio: 'Bác sĩ có 15 năm kinh nghiệm trong lĩnh vực nội tổng quát, tận tâm với bệnh nhân',
-        consultationFee: 200000,
-      },
-      serviceNames: ['Khám nội tổng quát'],
-    },
-    {
-      user: {
-        email: 'bs.lethib@clinic.com',
-        fullName: 'BS. Lê Thị Bình',
-        phone: '0902222222',
-        dateOfBirth: new Date('1980-07-10'),
-        gender: Gender.FEMALE,
-        address: '789 Trần Hưng Đạo, Quận 5, TP.HCM',
-        role: UserRole.DOCTOR,
-      },
-      profile: {
-        specialties: ['Nội khoa', 'Tim mạch'],
-        qualifications: ['Bác sĩ CK2', 'Tiến sĩ Y khoa'],
-        yearsOfExperience: 12,
-        rating: 4.9,
-        reviewCount: 89,
-        bio: 'Chuyên gia tim mạch với 12 năm kinh nghiệm, từng tu nghiệp tại Nhật Bản',
-        consultationFee: 300000,
-      },
-      serviceNames: ['Khám tim mạch'],
-    },
-    {
-      user: {
-        email: 'bs.tranthic@clinic.com',
-        fullName: 'BS. Trần Thị Cẩm',
-        phone: '0903333333',
-        dateOfBirth: new Date('1982-11-25'),
-        gender: Gender.FEMALE,
-        address: '321 Hai Bà Trưng, Quận 1, TP.HCM',
-        role: UserRole.DOCTOR,
-      },
-      profile: {
-        specialties: ['Da liễu', 'Thẩm mỹ da'],
-        qualifications: ['Bác sĩ CK1', 'Chứng chỉ Thẩm mỹ Da'],
-        yearsOfExperience: 10,
-        rating: 4.7,
-        reviewCount: 156,
-        bio: 'Bác sĩ da liễu với chuyên môn sâu về điều trị mụn và thẩm mỹ da',
-        consultationFee: 250000,
-      },
-      serviceNames: ['Khám da liễu'],
-    },
-    {
-      user: {
-        email: 'bs.phamvand@clinic.com',
-        fullName: 'BS. Phạm Văn Dũng',
-        phone: '0904444444',
-        dateOfBirth: new Date('1986-04-08'),
-        gender: Gender.MALE,
-        address: '555 Võ Văn Tần, Quận 3, TP.HCM',
-        role: UserRole.DOCTOR,
-      },
-      profile: {
-        specialties: ['Răng Hàm Mặt', 'Nha khoa thẩm mỹ'],
-        qualifications: ['Bác sĩ CK1', 'Bác sĩ nội trú'],
-        yearsOfExperience: 8,
-        rating: 4.6,
-        reviewCount: 95,
-        bio: 'Chuyên gia răng hàm mặt, tập trung vào nha khoa thẩm mỹ và implant',
-        consultationFee: 350000,
-      },
-      serviceNames: ['Khám răng hàm mặt'],
-    },
-    {
-      user: {
-        email: 'bs.hoangthie@clinic.com',
-        fullName: 'BS. Hoàng Thị Em',
-        phone: '0905555555',
-        dateOfBirth: new Date('1978-09-15'),
-        gender: Gender.FEMALE,
-        address: '888 Pasteur, Quận 1, TP.HCM',
-        role: UserRole.DOCTOR,
-      },
-      profile: {
-        specialties: ['Mắt', 'Phẫu thuật khúc xạ'],
-        qualifications: ['Bác sĩ CK2', 'Thạc sĩ Nhãn khoa'],
-        yearsOfExperience: 14,
-        rating: 4.9,
-        reviewCount: 203,
-        bio: 'Bác sĩ mắt giàu kinh nghiệm, chuyên về phẫu thuật khúc xạ và điều trị bệnh lý võng mạc',
-        consultationFee: 200000,
-      },
-      serviceNames: ['Khám mắt, đo thị lực'],
-    },
-    {
-      user: {
-        email: 'bs.nguyenvantai@clinic.com',
-        fullName: 'BS. Nguyễn Văn Tài',
-        phone: '0908111111',
-        dateOfBirth: new Date('1977-06-12'),
-        gender: Gender.MALE,
-        address: '200 Nam Kỳ Khởi Nghĩa, Quận 3, TP.HCM',
-        role: UserRole.DOCTOR,
-      },
-      profile: {
-        specialties: ['Tai Mũi Họng'],
-        qualifications: ['Bác sĩ CK2', 'Thạc sĩ Y khoa'],
-        yearsOfExperience: 16,
-        rating: 4.8,
-        reviewCount: 175,
-        bio: 'Chuyên gia tai mũi họng với hơn 16 năm kinh nghiệm điều trị các bệnh lý tai mũi họng phức tạp',
-        consultationFee: 220000,
-      },
-      serviceNames: ['Khám tai mũi họng'],
-    },
-    {
-      user: {
-        email: 'bs.tranthimylinh@clinic.com',
-        fullName: 'BS. Trần Thị Mỹ Linh',
-        phone: '0908222222',
-        dateOfBirth: new Date('1983-02-28'),
-        gender: Gender.FEMALE,
-        address: '300 Cộng Hòa, Tân Bình, TP.HCM',
-        role: UserRole.DOCTOR,
-      },
-      profile: {
-        specialties: ['Sản phụ khoa'],
-        qualifications: ['Bác sĩ CK1', 'Chứng chỉ Siêu âm sản khoa'],
-        yearsOfExperience: 11,
-        rating: 4.85,
-        reviewCount: 210,
-        bio: 'Bác sĩ sản phụ khoa tận tâm, có kinh nghiệm chăm sóc sức khỏe phụ nữ và theo dõi thai kỳ',
-        consultationFee: 300000,
-      },
-      serviceNames: ['Khám sản phụ khoa'],
-    },
-    // TECHNICIANS as providers for booking
-    {
-      user: {
-        email: 'ktv.phuong@clinic.com',
-        fullName: 'KTV. Trần Thị Phương',
-        phone: '0981111111',
-        dateOfBirth: new Date('1990-05-15'),
-        gender: Gender.FEMALE,
-        address: '111 Nguyễn Trãi, Quận 1, TP.HCM',
-        role: UserRole.TECHNICIAN,
-      },
-      profile: {
-        specialties: ['Xét nghiệm'],
-        qualifications: ['Cử nhân Xét nghiệm'],
-        yearsOfExperience: 6,
-        rating: 4.5,
-        reviewCount: 45,
-        bio: 'Kỹ thuật viên xét nghiệm tận tâm, chính xác trong các chỉ số bệnh lý',
-        consultationFee: 0,
-      },
-      serviceNames: [
-        'Tổng phân tích tế bào máu (CBC)',
-        'Đường huyết đói (FBS)',
-        'Lipid máu toàn phần',
-        'Bộ chức năng gan (AST, ALT, GGT)',
-        'Bộ chức năng thận',
-        'Chức năng tuyến giáp (TSH, FT4)',
-        'Xét nghiệm HbA1c',
-        'Tổng phân tích nước tiểu',
-        'Xét nghiệm phân ký sinh trùng',
-        'Test nhanh COVID-19 (Ag)',
-      ],
-    },
-    {
-      user: {
-        email: 'ktv.tuan@clinic.com',
-        fullName: 'KTV. Lê Anh Tuấn',
-        phone: '0982222222',
-        dateOfBirth: new Date('1992-08-22'),
-        gender: Gender.MALE,
-        address: '222 Lê Lợi, Quận 1, TP.HCM',
-        role: UserRole.TECHNICIAN,
-      },
-      profile: {
-        specialties: ['Chẩn đoán hình ảnh'],
-        qualifications: ['Cử nhân Chẩn đoán hình ảnh'],
-        yearsOfExperience: 5,
-        rating: 4.6,
-        reviewCount: 38,
-        bio: 'Kỹ thuật viên chẩn đoán hình ảnh chuyên về Siêu âm và X-quang',
-        consultationFee: 0,
-      },
-      serviceNames: [
-        'Siêu âm tim (Echo)',
-        'Siêu âm ổ bụng tổng quát',
-        'Siêu âm tuyến giáp',
-        'X-quang ngực thẳng',
-        'X-quang cột sống thắt lưng',
-        'Điện tâm đồ (ECG)',
-        'Đo chức năng hô hấp (Spirometry)',
-        'Đo loãng xương (DEXA)',
-        'Nội soi dạ dày (EGD)',
-        'Nội soi tai mũi họng',
-      ],
-    },
-  ];
-
-  const createdProviders: User[] = [];
-  for (const providerData of providersData) {
+  // 6. SEED DOCTORS & TECHNICIANS
+  const allProviders = [...DOCTORS, ...TECHNICIANS];
+  for (const p of allProviders) {
     const user = await prisma.user.create({
       data: {
-        email: providerData.user.email,
+        email: p.email,
         password: await hashPassword(
-          providerData.user.role === UserRole.DOCTOR
-            ? 'doctor123'
-            : 'technician123',
+          p.role === UserRole.DOCTOR ? 'doctor123' : 'technician123',
         ),
-        role: providerData.user.role,
-        fullName: providerData.user.fullName,
-        phone: providerData.user.phone,
-        dateOfBirth: providerData.user.dateOfBirth,
-        gender: providerData.user.gender,
-        address: providerData.user.address,
+        role: p.role,
+        fullName: p.fullName,
+        phone: p.phone,
+        gender: p.gender,
         isActive: true,
         isVerified: true,
         doctorProfile: {
-          create: providerData.profile,
+          create: {
+            specialties: p.specialties,
+            qualifications: p.qualifications,
+            yearsOfExperience: p.experience,
+            bio: p.bio,
+            consultationFee: p.consultationFee,
+            rating: 4.5 + Math.random() * 0.5,
+            reviewCount: Math.floor(Math.random() * 200),
+          },
         },
       },
     });
-    createdProviders.push(user);
-    console.log(`  ✅ ${providerData.user.role} created: ${user.fullName}`);
+
+    // Link doctor to services matching their specialties
+    if (p.role === UserRole.DOCTOR) {
+      const doctorProfile = await prisma.doctorProfile.findUnique({
+        where: { userId: user.id },
+      });
+
+      if (doctorProfile) {
+        for (const service of createdServices) {
+          // Check if doctor specialty matches service category or service name
+          const isMatch = p.specialties.some(
+            (spec) =>
+              spec.toLowerCase() === service.category?.name.toLowerCase() ||
+              service.name.toLowerCase().includes(spec.toLowerCase()),
+          );
+
+          if (isMatch) {
+            await prisma.doctorService.create({
+              data: {
+                doctorProfileId: doctorProfile.id,
+                serviceId: service.id,
+              },
+            });
+          }
+        }
+      }
+    }
+
+    // Create Working Hours (T2-T7, 08:00 - 17:00)
+    for (const day of [
+      DayOfWeek.MONDAY,
+      DayOfWeek.TUESDAY,
+      DayOfWeek.WEDNESDAY,
+      DayOfWeek.THURSDAY,
+      DayOfWeek.FRIDAY,
+      DayOfWeek.SATURDAY,
+    ]) {
+      await prisma.doctorWorkingHours.create({
+        data: {
+          doctorId: user.id,
+          dayOfWeek: day,
+          startTime: '08:00',
+          endTime: '17:00',
+        },
+      });
+    }
   }
+  console.log(
+    `  ✅ Created ${allProviders.length} providers with profiles and working hours`,
+  );
 
-  // RECEPTIONISTS
-  const receptionistsData = [
-    {
-      email: 'letan.huong@clinic.com',
-      fullName: 'Nguyễn Thị Hương',
-      phone: '0906666666',
-      dateOfBirth: new Date('1992-06-10'),
-      gender: Gender.FEMALE,
-      address: '234 Lý Thái Tổ, Quận 10, TP.HCM',
-    },
-    {
-      email: 'letan.lan@clinic.com',
-      fullName: 'Trần Thị Lan',
-      phone: '0907777777',
-      dateOfBirth: new Date('1994-03-22'),
-      gender: Gender.FEMALE,
-      address: '567 Nguyễn Thị Minh Khai, Quận 3, TP.HCM',
-    },
-  ];
-
-  for (const receptionist of receptionistsData) {
+  // 7. SEED RECEPTIONISTS
+  for (const r of RECEPTIONISTS) {
     await prisma.user.create({
       data: {
-        email: receptionist.email,
+        email: r.email,
         password: await hashPassword('receptionist123'),
         role: UserRole.RECEPTIONIST,
-        fullName: receptionist.fullName,
-        phone: receptionist.phone,
-        dateOfBirth: receptionist.dateOfBirth,
-        gender: receptionist.gender,
-        address: receptionist.address,
+        fullName: r.fullName,
+        phone: r.phone,
+        gender: r.gender,
         isActive: true,
         isVerified: true,
       },
@@ -471,1367 +880,38 @@ async function main() {
   }
   console.log('  ✅ Receptionists created');
 
-  console.log(
-    '  ✅ Technicians represent clinical providers (Labs/Imaging) with schedules',
-  );
-
-  // ============================================
-  // 3. CREATE REGISTERED PATIENTS (User + PatientProfile)
-  // ============================================
-  console.log('\n🧑‍⚕️ Creating registered patients...');
-
-  const patientsData = [
-    {
-      email: 'patient.nam@gmail.com',
-      fullName: 'Nguyễn Văn Nam',
-      phone: '0908888888',
-      dateOfBirth: new Date('1988-12-05'),
-      gender: Gender.MALE,
-      address: '111 Cách Mạng Tháng 8, Quận 10, TP.HCM',
-      bloodType: 'O+',
-      allergies: 'Penicillin',
-    },
-    {
-      email: 'patient.linh@gmail.com',
-      fullName: 'Lê Thị Linh',
-      phone: '0909999999',
-      dateOfBirth: new Date('1995-08-20'),
-      gender: Gender.FEMALE,
-      address: '222 Phan Xích Long, Phú Nhuận, TP.HCM',
-      bloodType: 'A+',
-      allergies: null,
-    },
-    {
-      email: 'patient.tuan@gmail.com',
-      fullName: 'Trần Anh Tuấn',
-      phone: '0911111111',
-      dateOfBirth: new Date('1990-02-14'),
-      gender: Gender.MALE,
-      address: '333 Hoàng Văn Thụ, Tân Bình, TP.HCM',
-      bloodType: 'B+',
-      allergies: null,
-    },
-    {
-      email: 'patient.mai@gmail.com',
-      fullName: 'Phạm Thị Mai',
-      phone: '0912222222',
-      dateOfBirth: new Date('1993-05-18'),
-      gender: Gender.FEMALE,
-      address: '444 Điện Biên Phủ, Bình Thạnh, TP.HCM',
-      bloodType: 'AB+',
-      allergies: 'Sulfa drugs',
-    },
-    {
-      email: 'patient.hung@gmail.com',
-      fullName: 'Hoàng Văn Hùng',
-      phone: '0913333333',
-      dateOfBirth: new Date('1987-11-30'),
-      gender: Gender.MALE,
-      address: '555 Lý Thường Kiệt, Quận 11, TP.HCM',
-      bloodType: 'O-',
-      allergies: null,
-    },
-    {
-      email: 'patient.thu@gmail.com',
-      fullName: 'Võ Thị Thu',
-      phone: '0914444444',
-      dateOfBirth: new Date('1991-07-25'),
-      gender: Gender.FEMALE,
-      address: '666 Trường Chinh, Tân Bình, TP.HCM',
-      bloodType: 'A-',
-      allergies: null,
-    },
-    {
-      email: 'patient.dat@gmail.com',
-      fullName: 'Đặng Minh Đạt',
-      phone: '0915555555',
-      dateOfBirth: new Date('1989-04-12'),
-      gender: Gender.MALE,
-      address: '777 Xô Viết Nghệ Tĩnh, Bình Thạnh, TP.HCM',
-      bloodType: 'B-',
-      allergies: null,
-    },
-    {
-      email: 'patient.nhi@gmail.com',
-      fullName: 'Bùi Thị Nhi',
-      phone: '0916666666',
-      dateOfBirth: new Date('1996-09-08'),
-      gender: Gender.FEMALE,
-      address: '888 Ba Tháng Hai, Quận 10, TP.HCM',
-      bloodType: 'AB-',
-      allergies: 'Aspirin',
-    },
-  ];
-
-  const createdPatientProfiles: PatientProfile[] = [];
-  for (const patient of patientsData) {
-    const user = await prisma.user.create({
+  // 8. SEED PATIENTS
+  for (const p of PATIENTS) {
+    await prisma.user.create({
       data: {
-        email: patient.email,
+        email: p.email,
         password: await hashPassword('patient123'),
         role: UserRole.PATIENT,
-        fullName: patient.fullName,
-        phone: patient.phone,
-        dateOfBirth: patient.dateOfBirth,
-        gender: patient.gender,
-        address: patient.address,
+        fullName: p.fullName,
+        phone: p.phone,
+        gender: p.gender,
         isActive: true,
         isVerified: true,
-      },
-    });
-
-    const profile = await prisma.patientProfile.create({
-      data: {
-        userId: user.id,
-        fullName: patient.fullName,
-        phone: patient.phone,
-        email: patient.email,
-        dateOfBirth: patient.dateOfBirth,
-        gender: patient.gender,
-        address: patient.address,
-        patientCode: generatePatientCode(),
-        isGuest: false,
-        bloodType: patient.bloodType || null,
-        allergies: patient.allergies || null,
-      },
-    });
-
-    createdPatientProfiles.push(profile);
-    console.log(
-      `  ✅ Patient created: ${patient.fullName} (${profile.patientCode})`,
-    );
-  }
-
-  // ============================================
-  // 4. CREATE GUEST PATIENTS (walk-in, no account)
-  // ============================================
-  console.log('\n👤 Creating guest patients (walk-in)...');
-
-  const guestPatientsData = [
-    {
-      fullName: 'Trần Văn Khách',
-      phone: '0917777777',
-      email: 'tranvankhach@gmail.com',
-      dateOfBirth: new Date('1985-06-20'),
-      gender: Gender.MALE,
-      address: '123 Nguyễn Trãi, Quận 5, TP.HCM',
-      bloodType: 'O+',
-    },
-    {
-      fullName: 'Nguyễn Thị Vãng Lai',
-      phone: '0918888888',
-      email: null,
-      dateOfBirth: new Date('2000-03-15'),
-      gender: Gender.FEMALE,
-      address: null,
-      bloodType: null,
-    },
-  ];
-
-  const createdGuestProfiles: PatientProfile[] = [];
-  for (const guest of guestPatientsData) {
-    const profile = await prisma.patientProfile.create({
-      data: {
-        userId: null, // No account
-        fullName: guest.fullName,
-        phone: guest.phone,
-        email: guest.email,
-        dateOfBirth: guest.dateOfBirth,
-        gender: guest.gender,
-        address: guest.address,
-        patientCode: generatePatientCode(),
-        isGuest: true,
-        bloodType: guest.bloodType || null,
-      },
-    });
-    createdGuestProfiles.push(profile);
-    console.log(
-      `  ✅ Guest patient created: ${guest.fullName} (${profile.patientCode}) — isGuest=true`,
-    );
-  }
-
-  // ============================================
-  // 4.5 CREATE CATEGORIES
-  // ============================================
-  console.log('\n📁 Creating categories...');
-
-  const categoriesData: {
-    code: string;
-    name: string;
-    description: string;
-    type: ServiceCategoryType;
-  }[] = [
-    {
-      code: 'CAT_NOIKHOA',
-      name: 'Nội khoa',
-      description: 'Các dịch vụ khám nội khoa chung',
-      type: 'EXAMINATION' as ServiceCategoryType,
-    },
-    {
-      code: 'CAT_XETNGHIEM',
-      name: 'Xét nghiệm (Lab)',
-      description: 'Các dịch vụ xét nghiệm cận lâm sàng',
-      type: 'LAB' as ServiceCategoryType,
-    },
-    {
-      code: 'CAT_CDHA',
-      name: 'Chẩn đoán hình ảnh',
-      description: 'Siêu âm, X-Quang, MRI, CT',
-      type: 'LAB' as ServiceCategoryType, // IMAGING after db push
-    },
-    {
-      code: 'CAT_TDDN',
-      name: 'Thăm dò chức năng',
-      description: 'Điện tâm đồ, đo loãng xương...',
-      type: 'LAB' as ServiceCategoryType,
-    },
-    {
-      code: 'CAT_THUTHUAT',
-      name: 'Thủ thuật',
-      description: 'Nội soi, tiểu phẫu...',
-      type: 'LAB' as ServiceCategoryType, // PROCEDURE after db push
-    },
-    {
-      code: 'CAT_NGOAIKHOA',
-      name: 'Ngoại khoa',
-      description: 'Các dịch vụ khám ngoại khoa',
-      type: 'EXAMINATION' as ServiceCategoryType,
-    },
-    {
-      code: 'CAT_DALIEU',
-      name: 'Da liễu',
-      description: 'Các dịch vụ khám da liễu',
-      type: 'EXAMINATION' as ServiceCategoryType, // SPECIALIST after db push
-    },
-    {
-      code: 'CAT_NHAKHOA',
-      name: 'Nha khoa',
-      description: 'Các dịch vụ khám răng hàm mặt',
-      type: 'EXAMINATION' as ServiceCategoryType, // SPECIALIST after db push
-    },
-    {
-      code: 'CAT_NHANKHOA',
-      name: 'Nhãn khoa',
-      description: 'Các dịch vụ khám mắt',
-      type: 'EXAMINATION' as ServiceCategoryType, // SPECIALIST after db push
-    },
-    {
-      code: 'CAT_TMH',
-      name: 'Tai mũi họng',
-      description: 'Các dịch vụ khám chuyên khoa TMH',
-      type: 'EXAMINATION' as ServiceCategoryType, // SPECIALIST after db push
-    },
-    {
-      code: 'CAT_SANPHUKHOA',
-      name: 'Sản phụ khoa',
-      description: 'Các dịch vụ khám sản khoa và phụ khoa',
-      type: 'EXAMINATION' as ServiceCategoryType, // SPECIALIST after db push
-    },
-  ];
-
-  const categoryMap = new Map<string, string>();
-  for (const cat of categoriesData) {
-    const created = await prisma.category.create({ data: cat });
-    categoryMap.set(cat.name, created.id);
-  }
-  console.log(`  ✅ Created ${categoriesData.length} categories`);
-
-  // ============================================
-  // 5. CREATE SERVICES
-  // ============================================
-  console.log('\n🏥 Creating services...');
-
-  interface ServiceSeedInput {
-    name: string;
-    description: string;
-    categoryId: string;
-    durationMinutes: number;
-    price: number;
-    maxSlotsPerHour: number;
-    performerType: PerformerType;
-    examFormType: ExamFormType;
-    labFormType: LabFormType;
-  }
-
-  const servicesData: ServiceSeedInput[] = [
-    // === NHÓM NỘI KHOA (EXAMINATION) ===
-    {
-      name: 'Khám nội tổng quát',
-      description: 'Khám sức khỏe định kỳ, tư vấn các vấn đề sức khỏe chung',
-      categoryId: categoryMap.get('Nội khoa')!,
-      durationMinutes: 30,
-      price: 200000,
-      maxSlotsPerHour: 3,
-      performerType: 'DOCTOR' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'GENERAL',
-    },
-    {
-      name: 'Khám tim mạch',
-      description: 'Tư vấn điều trị bệnh tim mạch',
-      categoryId: categoryMap.get('Nội khoa')!,
-      durationMinutes: 45,
-      price: 300000,
-      maxSlotsPerHour: 2,
-      performerType: 'DOCTOR' as PerformerType,
-      examFormType: 'CARDIOLOGY' as ExamFormType,
-      labFormType: 'GENERAL',
-    },
-
-    // === NHÓM XÉT NGHIỆM máu (BLOOD_LAB) ===
-    {
-      name: 'Tổng phân tích tế bào máu (CBC)',
-      description: 'Kiểm tra hồng cầu, bạch cầu, tiểu cầu',
-      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
-      durationMinutes: 15,
-      price: 150000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'BLOOD_LAB',
-    },
-    {
-      name: 'Đường huyết đói (FBS)',
-      description: 'Đánh giá đường huyết hiện tại',
-      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
-      durationMinutes: 10,
-      price: 80000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'BLOOD_LAB',
-    },
-    {
-      name: 'Lipid máu toàn phần',
-      description: 'Kiểm tra mỡ máu (TC, LDL, HDL, TG)',
-      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
-      durationMinutes: 10,
-      price: 120000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'BLOOD_LAB',
-    },
-    {
-      name: 'Bộ chức năng gan (AST, ALT, GGT)',
-      description: 'Kiểm tra mem gan',
-      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
-      durationMinutes: 10,
-      price: 150000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'BLOOD_LAB',
-    },
-    {
-      name: 'Bộ chức năng thận',
-      description: 'Chỉ số Creatinine, Urea, Acid uric',
-      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
-      durationMinutes: 10,
-      price: 150000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'BLOOD_LAB',
-    },
-    {
-      name: 'Chức năng tuyến giáp (TSH, FT4)',
-      description: 'Đánh giá chức năng tuyến giáp',
-      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
-      durationMinutes: 15,
-      price: 200000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'BLOOD_LAB',
-    },
-    {
-      name: 'Xét nghiệm HbA1c',
-      description: 'Đánh giá trung bình đường huyết 3 tháng',
-      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
-      durationMinutes: 15,
-      price: 160000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'BLOOD_LAB',
-    },
-
-    // === NHÓM XÉT NGHIỆM nước tiểu/phân (URINE_LAB) ===
-    {
-      name: 'Tổng phân tích nước tiểu',
-      description: 'Kiểm tra đường tiết niệu và thận',
-      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
-      durationMinutes: 15,
-      price: 80000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'URINE_LAB',
-    },
-    {
-      name: 'Xét nghiệm phân ký sinh trùng',
-      description: 'Kiểm tra giun, sán trong phân',
-      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
-      durationMinutes: 20,
-      price: 100000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'URINE_LAB',
-    },
-
-    // === NHÓM CHẨN ĐOÁN HÌNH ẢNH (IMAGING) ===
-    {
-      name: 'Siêu âm ổ bụng tổng quát',
-      description: 'Siêu âm gan, thận, lách, tụy, bàng quang',
-      categoryId: categoryMap.get('Chẩn đoán hình ảnh')!,
-      durationMinutes: 20,
-      price: 250000,
-      maxSlotsPerHour: 3,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'IMAGING',
-    },
-    {
-      name: 'Siêu âm tuyến giáp',
-      description: 'Siêu âm đánh giá tuyến giáp cổ',
-      categoryId: categoryMap.get('Chẩn đoán hình ảnh')!,
-      durationMinutes: 15,
-      price: 200000,
-      maxSlotsPerHour: 3,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'IMAGING',
-    },
-    {
-      name: 'Siêu âm tim (Echo)',
-      description: 'Đánh giá cấu trúc và chức năng tim',
-      categoryId: categoryMap.get('Chẩn đoán hình ảnh')!,
-      durationMinutes: 30,
-      price: 350000,
-      maxSlotsPerHour: 2,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'IMAGING',
-    },
-    {
-      name: 'X-quang ngực thẳng',
-      description: 'Hình ảnh tim, phổi cơ bản',
-      categoryId: categoryMap.get('Chẩn đoán hình ảnh')!,
-      durationMinutes: 15,
-      price: 150000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'IMAGING',
-    },
-    {
-      name: 'X-quang cột sống thắt lưng',
-      description: 'Đánh giá thoái hóa cột sống',
-      categoryId: categoryMap.get('Chẩn đoán hình ảnh')!,
-      durationMinutes: 15,
-      price: 180000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'IMAGING',
-    },
-
-    // === NHÓM THĂM DÒ CHỨC NĂNG ===
-    {
-      name: 'Điện tâm đồ (ECG)',
-      description: 'Ghi lại hoạt động điện của tim',
-      categoryId: categoryMap.get('Thăm dò chức năng')!,
-      durationMinutes: 15,
-      price: 120000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'ECG',
-    },
-    {
-      name: 'Đo chức năng hô hấp (Spirometry)',
-      description: 'Đo FEV1, FVC tầm soát hen, COPD',
-      categoryId: categoryMap.get('Thăm dò chức năng')!,
-      durationMinutes: 20,
-      price: 150000,
-      maxSlotsPerHour: 3,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'SPIROMETRY',
-    },
-    {
-      name: 'Đo loãng xương (DEXA)',
-      description: 'Đánh giá mật độ xương (T-score, Z-score)',
-      categoryId: categoryMap.get('Thăm dò chức năng')!,
-      durationMinutes: 25,
-      price: 300000,
-      maxSlotsPerHour: 2,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'BONE_DENSITY',
-    },
-
-    // === NHÓM THỦ THUẬT (ENDOSCOPY) ===
-    {
-      name: 'Nội soi dạ dày (EGD)',
-      description: 'Khảo sát thực quản, dạ dày, tá tràng có test HP',
-      categoryId: categoryMap.get('Thủ thuật')!,
-      durationMinutes: 45,
-      price: 650000,
-      maxSlotsPerHour: 1,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'ENDOSCOPY',
-    },
-    {
-      name: 'Nội soi tai mũi họng',
-      description: 'Khảo sát ống tai, hốc mũi, vòm họng',
-      categoryId: categoryMap.get('Thủ thuật')!,
-      durationMinutes: 20,
-      price: 250000,
-      maxSlotsPerHour: 3,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'ENDOSCOPY',
-    },
-
-    // === XÉT NGHIỆM TEST NHANH (GENERAL) ===
-    {
-      name: 'Test nhanh COVID-19 (Ag)',
-      description: 'Kiểm tra kháng nguyên SARS-CoV-2',
-      categoryId: categoryMap.get('Xét nghiệm (Lab)')!,
-      durationMinutes: 10,
-      price: 100000,
-      maxSlotsPerHour: 4,
-      performerType: 'TECHNICIAN' as PerformerType,
-      examFormType: 'GENERAL' as ExamFormType,
-      labFormType: 'GENERAL',
-    },
-
-    // === NHÓM KHÁM CHUYÊN KHOA (DOCTOR) ===
-    {
-      name: 'Khám mắt, đo thị lực',
-      description: 'Khám các bệnh lý về mắt và đo khúc xạ',
-      categoryId: categoryMap.get('Nhãn khoa')!,
-      durationMinutes: 30,
-      price: 200000,
-      maxSlotsPerHour: 3,
-      performerType: 'DOCTOR' as PerformerType,
-      examFormType: 'EYE' as ExamFormType,
-      labFormType: 'GENERAL',
-    },
-    {
-      name: 'Khám răng hàm mặt',
-      description: 'Khám tổng quát, tầm soát bệnh lý răng miệng',
-      categoryId: categoryMap.get('Nha khoa')!,
-      durationMinutes: 45,
-      price: 350000,
-      maxSlotsPerHour: 2,
-      performerType: 'DOCTOR' as PerformerType,
-      examFormType: 'DENTAL' as ExamFormType,
-      labFormType: 'GENERAL',
-    },
-    {
-      name: 'Khám tai mũi họng',
-      description: 'Khám và tư vấn chuyên sâu bệnh lý tai mũi họng',
-      categoryId: categoryMap.get('Tai mũi họng')!,
-      durationMinutes: 30,
-      price: 220000,
-      maxSlotsPerHour: 2,
-      performerType: 'DOCTOR' as PerformerType,
-      examFormType: 'ENT' as ExamFormType,
-      labFormType: 'GENERAL',
-    },
-    {
-      name: 'Khám sản phụ khoa',
-      description: 'Khám thai, tầm soát bệnh lý phụ khoa',
-      categoryId: categoryMap.get('Sản phụ khoa')!,
-      durationMinutes: 40,
-      price: 300000,
-      maxSlotsPerHour: 2,
-      performerType: 'DOCTOR' as PerformerType,
-      examFormType: 'GYNECOLOGY' as ExamFormType,
-      labFormType: 'GENERAL',
-    },
-    {
-      name: 'Khám da liễu',
-      description: 'Khám và điều trị các bệnh lý về da',
-      categoryId: categoryMap.get('Da liễu')!,
-      durationMinutes: 30,
-      price: 250000,
-      maxSlotsPerHour: 2,
-      performerType: 'DOCTOR' as PerformerType,
-      examFormType: 'DERMATOLOGY' as ExamFormType,
-      labFormType: 'GENERAL',
-    },
-  ];
-
-  const createdServices: Service[] = [];
-  for (const service of servicesData) {
-    const created = await prisma.service.create({
-      data: {
-        ...service,
-        tags: '[]',
-      },
-    });
-    createdServices.push(created);
-    console.log(`  ✅ Service: ${created.name}`);
-  }
-
-  const serviceMap = new Map<string, Service>();
-  for (const s of createdServices) {
-    serviceMap.set(s.name, s);
-  }
-
-  // ============================================
-  // 6. LINK PROVIDERS ↔ SERVICES
-  // ============================================
-  console.log('\n🔗 Linking providers to services...');
-
-  let doctorServiceCount = 0;
-  for (let i = 0; i < providersData.length; i++) {
-    const providerData = providersData[i];
-    const provider = createdProviders[i];
-
-    const profile = await prisma.doctorProfile.findUnique({
-      where: { userId: provider.id },
-      select: { id: true },
-    });
-
-    if (!profile) continue;
-
-    for (const serviceName of providerData.serviceNames) {
-      const service = serviceMap.get(serviceName);
-      if (!service) continue;
-      await prisma.doctorService.create({
-        data: {
-          doctorProfileId: profile.id,
-          serviceId: service.id,
-        },
-      });
-      doctorServiceCount++;
-    }
-    console.log(
-      `  ✅ ${provider.role} ${provider.fullName} → [${providerData.serviceNames.join(', ')}]`,
-    );
-  }
-  console.log(`  ✅ Total Provider-Service records: ${doctorServiceCount}`);
-
-  // ============================================
-  // 7. CREATE PROVIDER WORKING HOURS
-  // ============================================
-  console.log('\n⏰ Creating provider working hours...');
-
-  const workingDays = [
-    DayOfWeek.MONDAY,
-    DayOfWeek.TUESDAY,
-    DayOfWeek.WEDNESDAY,
-    DayOfWeek.THURSDAY,
-    DayOfWeek.FRIDAY,
-    DayOfWeek.SUNDAY,
-  ];
-
-  let workingHoursCount = 0;
-  for (const provider of createdProviders) {
-    for (const day of workingDays) {
-      await prisma.doctorWorkingHours.create({
-        data: {
-          doctorId: provider.id,
-          dayOfWeek: day,
-          startTime: '08:00',
-          endTime: '17:00',
-        },
-      });
-      workingHoursCount++;
-    }
-    await prisma.doctorWorkingHours.create({
-      data: {
-        doctorId: provider.id,
-        dayOfWeek: DayOfWeek.SATURDAY,
-        startTime: '08:00',
-        endTime: '12:00',
-      },
-    });
-    workingHoursCount++;
-  }
-  console.log(
-    `  ✅ Created ${workingHoursCount} provider working hour records`,
-  );
-
-  // ============================================
-  // 8. CREATE BREAK TIMES (Lunch breaks)
-  // ============================================
-  console.log('\n🍽️ Creating break times...');
-
-  const today = new Date();
-  const dateOnly = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-  );
-
-  let breakTimeCount = 0;
-  for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
-    const breakDate = new Date(dateOnly);
-    breakDate.setDate(dateOnly.getDate() + dayOffset);
-    if (breakDate.getDay() === 0) continue;
-    for (const provider of createdProviders) {
-      await prisma.doctorBreakTime.create({
-        data: {
-          doctorId: provider.id,
-          breakDate: breakDate,
-          startTime: '12:00',
-          endTime: '13:00',
-          reason: 'Nghỉ trưa',
-        },
-      });
-      breakTimeCount++;
-    }
-  }
-  console.log(`  ✅ Created ${breakTimeCount} break time records`);
-
-  // ============================================
-  // 9. CREATE PROVIDER SCHEDULE SLOTS (Capacity tracking)
-  // ============================================
-  console.log('\n📅 Creating provider schedule slots...');
-
-  let slotCount = 0;
-  // Seed slots for the next 7 days
-  for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
-    const slotDate = new Date(dateOnly);
-    slotDate.setDate(dateOnly.getDate() + dayOffset);
-    if (slotDate.getDay() === 0) continue; // Skip Sunday
-
-    for (const provider of createdProviders) {
-      // Create slots from 08:00 to 17:00 (hourly)
-      for (let hour = 8; hour < 17; hour++) {
-        if (hour === 12) continue; // Skip lunch hour
-
-        const startTime = `${String(hour).padStart(2, '0')}:00`;
-        const endTime = `${String(hour + 1).padStart(2, '0')}:00`;
-
-        // Assign a consultation room
-        let assignedRoom: Room | undefined;
-        if (provider.role === UserRole.DOCTOR) {
-          const consultationRooms = createdRooms.filter(
-            (r) => r.type === RoomType.CONSULTATION,
-          );
-          assignedRoom =
-            consultationRooms[
-              createdProviders.findIndex((p) => p.id === provider.id) %
-                consultationRooms.length
-            ];
-        } else {
-          // Technicians get LAB or ULTRASOUND rooms
-          const techRooms = createdRooms.filter(
-            (r) => r.type === RoomType.LAB || r.type === RoomType.ULTRASOUND,
-          );
-          assignedRoom =
-            techRooms[
-              createdProviders.findIndex((p) => p.id === provider.id) %
-                techRooms.length
-            ];
-        }
-
-        await prisma.doctorScheduleSlot.create({
-          data: {
-            doctorId: provider.id,
-            roomId: assignedRoom?.id,
-            date: slotDate,
-            startTime,
-            endTime,
-            maxPreBookings: 2,
-            maxQueueSize: 5,
-            preBookedCount: 0,
-            queueCount: 0,
-            isActive: true,
+        patientProfile: {
+          create: {
+            fullName: p.fullName,
+            phone: p.phone,
+            email: p.email,
+            gender: p.gender,
+            bloodType: p.bloodType,
+            patientCode: generatePatientCode(),
           },
-        });
-        slotCount++;
-      }
-    }
-  }
-  console.log(`  ✅ Created ${slotCount} provider schedule slots`);
-
-  // ============================================
-  // 9. CREATE SAMPLE BOOKINGS (hybrid: pre-booking + walk-in)
-  // ============================================
-  console.log('\n📅 Creating sample bookings...');
-
-  const doctorVanAn = createdProviders.find(
-    (p) => p.email === 'bs.nguyenvana@clinic.com',
-  )!;
-  const doctorLeBinh = createdProviders.find(
-    (p) => p.email === 'bs.lethib@clinic.com',
-  )!;
-  const khamTongQuat = serviceMap.get('Khám nội tổng quát')!;
-  const khamTimMach = serviceMap.get('Khám tim mạch')!;
-  const xetNghiem = serviceMap.get('Tổng phân tích tế bào máu (CBC)')!;
-
-  const bookingDates = [
-    new Date(dateOnly), // today
-    new Date(dateOnly), // today
-    new Date(dateOnly), // today — walk-in
-    new Date(dateOnly.getTime() + 1 * 24 * 60 * 60 * 1000), // tomorrow
-    new Date(dateOnly.getTime() + 2 * 24 * 60 * 60 * 1000), // +2 days — walk-in
-    new Date(dateOnly.getTime() + 3 * 24 * 60 * 60 * 1000), // +3 days
-  ];
-
-  // Helper: compute endTime string from startTime + durationMinutes
-  function calcEndTime(startTime: string, durationMinutes: number): string {
-    const [h, m] = startTime.split(':').map(Number);
-    const total = h * 60 + m + durationMinutes;
-    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-  }
-
-  // ---- PRE-BOOKINGS (isPreBooked=true, startTime required) ----
-  const preBookings = [
-    // Online: Nguyễn Văn Nam — Nội tổng quát
-    {
-      patientProfile: createdPatientProfiles[0],
-      doctor: doctorVanAn,
-      service: khamTongQuat,
-      bookingDate: bookingDates[0],
-      startTime: '09:00',
-      source: BookingSource.ONLINE,
-      priority: BookingPriority.NORMAL,
-    },
-    // Online: Lê Thị Linh — Tim mạch
-    {
-      patientProfile: createdPatientProfiles[1],
-      doctor: doctorLeBinh,
-      service: khamTimMach,
-      bookingDate: bookingDates[1],
-      startTime: '10:00',
-      source: BookingSource.ONLINE,
-      priority: BookingPriority.NORMAL,
-    },
-    // Phone: Trần Anh Tuấn — upcoming
-    {
-      patientProfile: createdPatientProfiles[2],
-      doctor: doctorVanAn,
-      service: khamTongQuat,
-      bookingDate: bookingDates[3],
-      startTime: '09:00',
-      source: BookingSource.PHONE,
-      priority: BookingPriority.NORMAL,
-    },
-    // Receptionist pre-booking: Phạm Thị Mai — future
-    {
-      patientProfile: createdPatientProfiles[3],
-      doctor: doctorVanAn,
-      service: khamTongQuat,
-      bookingDate: bookingDates[5],
-      startTime: '14:00',
-      source: BookingSource.RECEPTIONIST,
-      priority: BookingPriority.NORMAL,
-    },
-  ];
-
-  for (const bData of preBookings) {
-    const dateStr = bData.bookingDate.toISOString().split('T')[0];
-    const endTime = calcEndTime(bData.startTime, bData.service.durationMinutes);
-    await prisma.booking.create({
-      data: {
-        patientProfileId: bData.patientProfile.id,
-        doctorId: bData.doctor.id,
-        serviceId: bData.service.id,
-        bookingCode: generateBookingCode(dateStr),
-        bookingDate: bData.bookingDate,
-        startTime: bData.startTime,
-        endTime,
-        isPreBooked: true,
-        source: bData.source,
-        priority: bData.priority,
-      },
-    });
-
-    // Update slot cache
-    await prisma.doctorScheduleSlot.updateMany({
-      where: {
-        doctorId: bData.doctor.id,
-        date: bData.bookingDate,
-        startTime: bData.startTime,
-      },
-      data: {
-        preBookedCount: { increment: 1 },
-        bookedCount: { increment: 1 },
-      },
-    });
-  }
-  console.log(`  ✅ Created ${preBookings.length} pre-bookings`);
-
-  // ---- WALK-IN BOOKINGS (isPreBooked=false, no startTime/endTime) ----
-  // Walk-in are created by receptionist; they get a BookingQueue record on check-in.
-  const walkInBookings = [
-    // Walk-in guest: Trần Văn Khách — today
-    {
-      patientProfile: createdGuestProfiles[0],
-      doctor: doctorVanAn,
-      service: xetNghiem,
-      bookingDate: bookingDates[2],
-      source: BookingSource.WALK_IN,
-      priority: BookingPriority.NORMAL,
-    },
-    // Walk-in guest urgent: Nguyễn Thị Vãng Lai — +2 days
-    {
-      patientProfile: createdGuestProfiles[1],
-      doctor: doctorLeBinh,
-      service: khamTimMach,
-      bookingDate: bookingDates[4],
-      source: BookingSource.RECEPTIONIST,
-      priority: BookingPriority.URGENT,
-    },
-  ];
-
-  const createdWalkInBookings: {
-    booking: { id: string };
-    bData: {
-      doctor: { id: string };
-      bookingDate: Date;
-      service: { durationMinutes: number };
-    };
-  }[] = [];
-  for (const bData of walkInBookings) {
-    const dateStr = bData.bookingDate.toISOString().split('T')[0];
-    const booking = await prisma.booking.create({
-      data: {
-        patientProfileId: bData.patientProfile.id,
-        doctorId: bData.doctor.id,
-        serviceId: bData.service.id,
-        bookingCode: generateBookingCode(dateStr),
-        bookingDate: bData.bookingDate,
-        // startTime / endTime intentionally null — walk-in
-        isPreBooked: false,
-        source: bData.source,
-        priority: bData.priority,
-      },
-    });
-    createdWalkInBookings.push({ booking, bData });
-  }
-  console.log(`  ✅ Created ${walkInBookings.length} walk-in bookings`);
-
-  // Seed BookingQueue for walk-in bookings (simulates check-in)
-  // In production this is created by BookingsService.checkIn()
-  let queuePos = 1;
-  for (const { booking, bData } of createdWalkInBookings) {
-    await prisma.bookingQueue.create({
-      data: {
-        bookingId: booking.id,
-        doctorId: bData.doctor.id,
-        queueDate: bData.bookingDate,
-        queuePosition: queuePos++,
-        isPreBooked: false,
-        scheduledTime: null,
-        estimatedWaitMinutes: (queuePos - 1) * bData.service.durationMinutes,
-      },
-    });
-  }
-  console.log(
-    `  ✅ Created ${createdWalkInBookings.length} walk-in queue records`,
-  );
-
-  const sampleBookingTotal = preBookings.length + walkInBookings.length;
-  console.log(
-    `  ✅ Total ${sampleBookingTotal} bookings created (${preBookings.length} pre-booked, ${walkInBookings.length} walk-in)`,
-  );
-
-  // ============================================
-  // 10. CREATE SAMPLE CLINICAL/BILLING WORKFLOW
-  // ============================================
-  console.log('\\n💼 Creating sample clinical workflow (EMR & Invoices)...');
-
-  // Create an invoice for the first pre-booking
-  const sampleBooking = preBookings[0];
-  const sampleBookingRecord = await prisma.booking.findFirst({
-    where: {
-      bookingDate: sampleBooking.bookingDate,
-      doctorId: sampleBooking.doctor.id,
-      startTime: sampleBooking.startTime,
-    },
-  });
-
-  if (sampleBookingRecord) {
-    // 10.1 EMR & Vitals
-    const medicalRecord = await prisma.medicalRecord.create({
-      data: {
-        bookingId: sampleBookingRecord.id,
-        patientProfileId: sampleBookingRecord.patientProfileId,
-        doctorId: sampleBookingRecord.doctorId,
-        visitStep: 'COMPLETED',
-        chiefComplaint: 'Đau đầu, chóng mặt thường xuyên',
-        clinicalFindings: 'Huyết áp hơi cao, cần theo dõi thêm',
-        bloodPressure: '135/85',
-        heartRate: 85,
-        temperature: 37.1,
-        weightKg: 65,
-        heightCm: 165,
-        bmi: 23.9,
-        diagnosisCode: 'I10',
-        diagnosisName: 'Tăng huyết áp vô căn (nguyên phát)',
-        treatmentPlan: 'Uống thuốc theo toa, tái khám sau 1 tháng',
-        isFinalized: true,
-      },
-    });
-
-    // 10.2 Service Order (sample — using string literal status for compatibility)
-    await prisma.visitServiceOrder.create({
-      data: {
-        medicalRecordId: medicalRecord.id,
-        serviceId: sampleBookingRecord.serviceId || '',
-        patientProfileId: sampleBookingRecord.patientProfileId,
-        bookingId: sampleBookingRecord.id,
-        status: 'COMPLETED' as unknown as Parameters<
-          typeof prisma.visitServiceOrder.create
-        >[0]['data']['status'],
-        orderedBy: sampleBookingRecord.doctorId,
-        resultText: 'Bình thường',
-        isAbnormal: false,
-        completedAt: new Date(),
-      },
-    });
-
-    // 10.3 Invoice + E-invoice fields (VAT)
-    const subtotal = sampleBooking.service.price;
-    const vatRate = 0; // Medical services typically 0% VAT
-    const invoice = await prisma.invoice.create({
-      data: {
-        bookingId: sampleBookingRecord.id,
-        patientProfileId: sampleBookingRecord.patientProfileId,
-        invoiceType: 'CONSULTATION',
-        invoiceNumber: `INV-2026-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`,
-        subtotal: subtotal,
-        vatRate: vatRate,
-        vatAmount: 0,
-        taxAmount: 0,
-        totalAmount: subtotal,
-        status: 'PAID',
-        paidAt: new Date(),
-        einvoiceStatus: 'ISSUED',
-        einvoiceCode: `EINV-${Math.floor(Math.random() * 1000000)}`,
-        items: {
-          create: [
-            {
-              itemName: sampleBooking.service.name,
-              serviceId: sampleBookingRecord.serviceId || '',
-              unitPrice: subtotal,
-              quantity: 1,
-              totalPrice: subtotal,
-            },
-          ],
         },
       },
     });
-
-    await prisma.payment.create({
-      data: {
-        invoiceId: invoice.id,
-        amountPaid: subtotal,
-        patientPaid: subtotal,
-        paymentMethod: 'CASH',
-        confirmedBy: admin.id,
-      },
-    });
-
-    // Also update booking status
-    await prisma.booking.update({
-      where: { id: sampleBookingRecord.id },
-      data: { status: 'COMPLETED' },
-    });
-
-    console.log(
-      `  ✅ Created sample EMR & E-Invoice for booking: ${sampleBookingRecord.bookingCode}`,
-    );
   }
+  console.log('  ✅ Patients created');
 
-  // ============================================
-  // 11. CREATE ICD-10 CODES (FULL DATASET IMPORT)
-  // ============================================
-  console.log('\n🩺 Creating ICD-10 Codes...');
-  const icd10Path = path.resolve(
-    process.cwd(),
-    '../Tools/icd10_vietnamese.json',
-  );
-  let icd10CodesData: { code: string; name: string }[] = [];
-
-  if (fs.existsSync(icd10Path)) {
-    console.log(`  📂 Found scraped dataset at ${icd10Path}`);
-    try {
-      icd10CodesData = JSON.parse(fs.readFileSync(icd10Path, 'utf8')) as {
-        code: string;
-        name: string;
-      }[];
-      console.log(`  📦 Loaded ${icd10CodesData.length} entries from JSON`);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error('  ❌ Error parsing JSON file:', errorMessage);
-    }
-  }
-
-  // Fallback sample if file missing or empty
-  if (icd10CodesData.length === 0) {
-    console.log('  ⚠️ Using fallback mock sample...');
-    icd10CodesData = [
-      { code: 'J00', name: 'Bệnh đường hô hấp trên cấp tính (Cảm lạnh)' },
-      { code: 'J01', name: 'Viêm xoang cấp' },
-      { code: 'J02', name: 'Viêm họng cấp' },
-      { code: 'J03', name: 'Viêm amidan cấp' },
-      { code: 'J04', name: 'Viêm thanh quản và khí quản cấp' },
-      { code: 'I10', name: 'Tăng huyết áp vô căn (nguyên phát)' },
-      { code: 'E11', name: 'Bệnh đái tháo đường không phụ thuộc insuline' },
-      {
-        code: 'E78',
-        name: 'Rối loạn chuyển hóa lipoprotein và tình trạng tăng lipid máu khác',
-      },
-      { code: 'K21', name: 'Bệnh trào ngược dạ dày - thực quản' },
-      { code: 'K29', name: 'Viêm dạ dày và tá tràng' },
-      { code: 'M54.5', name: 'Đau thắt lưng' },
-      { code: 'A09', name: 'Tiêu chảy và viêm dạ dày ruột' },
-    ];
-  }
-
-  const batchSize = 1000;
-  for (let i = 0; i < icd10CodesData.length; i += batchSize) {
-    const batch = icd10CodesData.slice(i, i + batchSize);
-    await prisma.icd10Code.createMany({
-      data: batch,
-      skipDuplicates: true,
-    });
-    console.log(
-      `  ✅ Batch ${i / batchSize + 1}: Migrated indices ${i + 1} to ${Math.min(i + batchSize, icd10CodesData.length)}`,
-    );
-  }
-  console.log(`  🎉 Finished seeding ${icd10CodesData.length} ICD-10 Codes`);
-
-  // ============================================
-  // SUMMARY
-  // ============================================
-  console.log('\n📊 Seed Summary:');
-  console.log('==========================================');
-
-  // ============================================
-  // 11. CREATE DEFAULT SYSTEM CONFIGS
-  // ============================================
-  console.log('\n⚙️ Creating default system configurations...');
-
-  const systemConfigs = [
-    // CLINIC
-    {
-      key: 'clinic.name',
-      value: 'SmartClinic Central',
-      category: 'CLINIC',
-      dataType: 'string',
-      description: 'Tên phòng khám',
-      isPublic: true,
-    },
-    {
-      key: 'clinic.address',
-      value: '123 Hospital St, Health District',
-      category: 'CLINIC',
-      dataType: 'string',
-      description: 'Địa chỉ phòng khám',
-      isPublic: true,
-    },
-    {
-      key: 'clinic.phone',
-      value: '+84 123 456 789',
-      category: 'CLINIC',
-      dataType: 'string',
-      description: 'Số điện thoại liên hệ',
-      isPublic: true,
-    },
-    {
-      key: 'clinic.email',
-      value: 'contact@clinic.com',
-      category: 'CLINIC',
-      dataType: 'string',
-      description: 'Email liên hệ',
-      isPublic: true,
-    },
-    {
-      key: 'clinic.taxId',
-      value: 'MST-12345678',
-      category: 'CLINIC',
-      dataType: 'string',
-      description: 'Mã số thuế',
-      isPublic: false,
-    },
-
-    // BOOKING
-    {
-      key: 'booking.openTime',
-      value: '08:00',
-      category: 'BOOKING',
-      dataType: 'string',
-      description: 'Giờ mở cửa',
-      isPublic: true,
-    },
-    {
-      key: 'booking.closeTime',
-      value: '17:00',
-      category: 'BOOKING',
-      dataType: 'string',
-      description: 'Giờ đóng cửa',
-      isPublic: true,
-    },
-    {
-      key: 'booking.slotDuration',
-      value: '30',
-      category: 'BOOKING',
-      dataType: 'number',
-      description: 'Thời lượng mỗi ca khám (phút)',
-      isPublic: true,
-    },
-    {
-      key: 'booking.cancelationWindowHours',
-      value: '24',
-      category: 'BOOKING',
-      dataType: 'number',
-      description: 'Thời hạn hủy hẹn trước (giờ)',
-      isPublic: true,
-    },
-    {
-      key: 'booking.noShowGraceMinutes',
-      value: '15',
-      category: 'BOOKING',
-      dataType: 'number',
-      description: 'Thời gian chờ tối đa (phút)',
-      isPublic: false,
-    },
-    {
-      key: 'booking.allowOnlineBooking',
-      value: 'true',
-      category: 'BOOKING',
-      dataType: 'boolean',
-      description: 'Cho phép đặt lịch trực tuyến',
-      isPublic: true,
-    },
-
-    // NOTIFICATION
-    {
-      key: 'notification.enableEmailReminders',
-      value: 'true',
-      category: 'NOTIFICATION',
-      dataType: 'boolean',
-      description: 'Gửi nhắc hẹn qua Email',
-      isPublic: false,
-    },
-    {
-      key: 'notification.enableSmsReminders',
-      value: 'false',
-      category: 'NOTIFICATION',
-      dataType: 'boolean',
-      description: 'Gửi nhắc hẹn qua SMS',
-      isPublic: false,
-    },
-    {
-      key: 'notification.reminderSchedule',
-      value: '24, 2',
-      category: 'NOTIFICATION',
-      dataType: 'string',
-      description: 'Lịch gửi nhắc hẹn (cách bao nhiêu giờ)',
-      isPublic: false,
-    },
-  ];
-
-  for (const config of systemConfigs) {
-    await prisma.systemConfig.create({
-      data: {
-        ...config,
-        updatedBy: admin.id,
-      },
-    });
-  }
-  console.log(`  ✅ Created ${systemConfigs.length} default configurations`);
-
-  const userCount = await prisma.user.count();
-  const roomCount = await prisma.room.count();
-  const serviceCount = await prisma.service.count();
-  const doctorServiceTotal = await prisma.doctorService.count();
-  const workingHoursTotal = await prisma.doctorWorkingHours.count();
-  const breakTimeTotal = await prisma.doctorBreakTime.count();
-  const patientProfileTotal = await prisma.patientProfile.count();
-  const guestProfileTotal = await prisma.patientProfile.count({
-    where: { isGuest: true },
-  });
-  const registeredProfileTotal = await prisma.patientProfile.count({
-    where: { isGuest: false },
-  });
-  const bookingTotal = await prisma.booking.count();
-
-  const adminCount = await prisma.user.count({
-    where: { role: UserRole.ADMIN },
-  });
-  const doctorCount = await prisma.user.count({
-    where: { role: UserRole.DOCTOR },
-  });
-  const receptionistCount = await prisma.user.count({
-    where: { role: UserRole.RECEPTIONIST },
-  });
-  const technicianCount = await prisma.user.count({
-    where: { role: UserRole.TECHNICIAN },
-  });
-  const patientUserCount = await prisma.user.count({
-    where: { role: UserRole.PATIENT },
-  });
-
-  console.log(`👥 Total Users: ${userCount}`);
-  console.log(`   - Admins: ${adminCount}`);
-  console.log(`   - Doctors: ${doctorCount}`);
-  console.log(`   - Receptionists: ${receptionistCount}`);
-  console.log(`   - Technicians: ${technicianCount}`);
-  console.log(`   - Patients (có tài khoản): ${patientUserCount}`);
-  console.log(`🏠 Rooms: ${roomCount}`);
-  console.log(`🧑‍⚕️ PatientProfiles: ${patientProfileTotal}`);
-  console.log(`   - Registered (có tài khoản): ${registeredProfileTotal}`);
-  console.log(`   - Guest (vãng lai): ${guestProfileTotal}`);
-  console.log(`🏥 Services: ${serviceCount}`);
-  console.log(`🔗 Doctor-Service Links: ${doctorServiceTotal}`);
-  console.log(`⏰ Working Hours: ${workingHoursTotal}`);
-  console.log(`🍽️ Break Times: ${breakTimeTotal}`);
-  console.log(`📅 Sample Bookings: ${bookingTotal}`);
-  console.log('==========================================');
-
-  console.log('\n📝 Demo Credentials:');
-  console.log('==========================================');
-  console.log('ADMIN:');
-  console.log('  admin@clinic.com / admin123');
-  console.log('\nDOCTORS:');
-  console.log('  bs.nguyenvana@clinic.com     / doctor123 → Nội tổng quát');
-  console.log('  bs.lethib@clinic.com          / doctor123 → Tim mạch');
-  console.log('  bs.tranthic@clinic.com        / doctor123 → Da liễu');
-  console.log('  bs.phamvand@clinic.com        / doctor123 → Răng hàm mặt');
-  console.log('  bs.hoangthie@clinic.com       / doctor123 → Mắt');
-  console.log('  bs.nguyenvantai@clinic.com    / doctor123 → Tai mũi họng');
-  console.log('  bs.tranthimylinh@clinic.com   / doctor123 → Sản phụ khoa');
-  console.log('\nRECEPTIONISTS:');
-  console.log('  letan.huong@clinic.com / receptionist123');
-  console.log('  letan.lan@clinic.com   / receptionist123');
-  console.log('\nTECHNICIANS:');
-  console.log('  ktv.phuong@clinic.com / technician123');
-  console.log('  ktv.tuan@clinic.com   / technician123');
-  console.log('\nPATIENTS (registered):');
-  console.log('  patient.nam@gmail.com / patient123  → BN-2026-0001');
-  console.log('  patient.linh@gmail.com / patient123 → BN-2026-0002');
-  console.log('  patient.tuan@gmail.com / patient123 → BN-2026-0003');
-  console.log('  patient.mai@gmail.com / patient123  → BN-2026-0004');
-  console.log('  patient.hung@gmail.com / patient123 → BN-2026-0005');
-  console.log('  patient.thu@gmail.com / patient123  → BN-2026-0006');
-  console.log('  patient.dat@gmail.com / patient123  → BN-2026-0007');
-  console.log('  patient.nhi@gmail.com / patient123  → BN-2026-0008');
-  console.log('\nGUEST PATIENTS (walk-in, no account):');
-  console.log('  Trần Văn Khách     → BN-2026-0009 (isGuest=true)');
-  console.log('  Nguyễn Thị Vãng Lai → BN-2026-0010 (isGuest=true)');
-  console.log('==========================================');
-
-  console.log('\n🎉 Seed v3.0 completed successfully!');
+  console.log('\n🚀 Database seeding completed successfully!');
 }
 
 main()
   .catch((e) => {
-    console.error('❌ Seeding failed:');
     console.error(e);
     process.exit(1);
   })
