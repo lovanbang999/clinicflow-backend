@@ -32,6 +32,7 @@ import { BillingService } from '../billing/billing.service';
 import { forwardRef } from '@nestjs/common';
 import { LabOrderDeleteInclude } from '../database/types/prisma-payload.types';
 import { Gender } from '@prisma/client';
+import { MedicalRecordsService } from '../medical-records/medical-records.service';
 
 export interface InternalService {
   id: string;
@@ -80,6 +81,7 @@ export class LabOrdersService {
     private readonly labOrdersGateway: LabOrdersGateway,
     @Inject(forwardRef(() => BillingService))
     private readonly billingService: BillingService,
+    private readonly medicalRecordsService: MedicalRecordsService,
   ) {}
 
   /**
@@ -615,6 +617,11 @@ export class LabOrdersService {
       testName: order.testName,
     });
 
+    // CRITICAL: Check if all orders are now done and advance MedicalRecord step
+    await this.medicalRecordsService.checkAndAdvanceToResultsReady(
+      order.medicalRecordId,
+    );
+
     return ResponseHelper.success(
       updatedOrder,
       'LAB.RESULT_ADDED',
@@ -667,6 +674,12 @@ export class LabOrdersService {
       where: { id: labOrderId },
       data: { status },
     });
+
+    if (status === LabOrderStatus.COMPLETED) {
+      await this.medicalRecordsService.checkAndAdvanceToResultsReady(
+        order.medicalRecordId,
+      );
+    }
 
     return ResponseHelper.success(
       updatedOrder,
@@ -741,6 +754,11 @@ export class LabOrdersService {
 
     // Auto-sync after deletion to remove from draft invoice
     await this.billingService.syncLabInvoice(order.bookingId);
+
+    // CRITICAL: If this was the last pending/active order, advance medical record step
+    await this.medicalRecordsService.checkAndAdvanceToResultsReady(
+      order.medicalRecordId,
+    );
 
     return ResponseHelper.success(
       null,
