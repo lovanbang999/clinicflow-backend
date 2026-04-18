@@ -6,6 +6,7 @@ import {
   IUserRepository,
   I_USER_REPOSITORY,
 } from '../database/interfaces/user.repository.interface';
+import { BookingDetail } from '../database/types/prisma-payload.types';
 import {
   IBookingRepository,
   I_BOOKING_REPOSITORY,
@@ -29,6 +30,8 @@ import {
   Prisma,
   ServiceOrderStatus,
   VisitStep,
+  UserRole,
+  NotificationType,
 } from '@prisma/client';
 import { format } from 'date-fns';
 import { vi } from 'date-fns/locale';
@@ -89,10 +92,8 @@ export class MedicalRecordsService {
     bookingId: string,
     doctorId: string,
     currentUser?: Express.User,
-  ) {
-    const booking = await this.bookingRepository.findUnique({
-      where: { id: bookingId },
-    });
+  ): Promise<BookingDetail> {
+    const booking = await this.bookingRepository.findBookingById(bookingId);
     if (!booking) throw new NotFoundException('Booking not found');
 
     // Ownership check: If doctor, must be the assigned doctor
@@ -247,7 +248,7 @@ export class MedicalRecordsService {
               userId: record.booking.doctorId,
               title: 'Kết quả khám/CLS đã có',
               content: `Bệnh nhân ${record.booking.patientProfile?.fullName ?? '...'} đã hoàn tất các chỉ định. Bạn có thể chẩn đoán.`,
-              type: 'LAB_RESULT_READY',
+              type: NotificationType.LAB_RESULT_READY,
               metadata: {
                 bookingId: record.bookingId,
                 recordId: record.id,
@@ -260,6 +261,19 @@ export class MedicalRecordsService {
             bookingId: record.bookingId,
             visitStep: VisitStep.RESULTS_READY,
           });
+
+          // Notify Patient
+          if (record.booking?.patientProfile?.userId) {
+            this.notificationsService
+              .createInAppNotification({
+                userId: record.booking.patientProfile.userId,
+                title: 'Kết quả CLS đã có',
+                content: `Tất cả kết quả xét nghiệm của bạn đã có. Vui lòng quay lại phòng khám gặp bác sĩ.`,
+                type: NotificationType.LAB_RESULT_READY,
+                metadata: { bookingId: record.bookingId },
+              })
+              .catch(console.error);
+          }
         }
       }
     }
@@ -460,6 +474,26 @@ export class MedicalRecordsService {
 
     // Auto-sync to draft invoice
     await this.billingService.syncLabInvoice(bookingId);
+
+    // Notify Receptionist & Patient
+    const patientName = booking.patientProfile?.fullName ?? 'Bệnh nhân';
+    await this.notificationsService.notifyRole({
+      role: UserRole.RECEPTIONIST,
+      title: 'Chỉ định CLS mới',
+      content: `Bệnh nhân ${patientName} có chỉ định CLS mới. Vui lòng thu phí tại quầy.`,
+      type: NotificationType.SYSTEM,
+      metadata: { bookingId },
+    });
+
+    if (booking.patientProfile?.userId) {
+      await this.notificationsService.createInAppNotification({
+        userId: booking.patientProfile.userId,
+        title: 'Chỉ định mới từ Bác sĩ',
+        content: `Bác sĩ đã chỉ định các dịch vụ CLS. Vui lòng di chuyển ra quầy lễ tân để thanh toán.`,
+        type: NotificationType.SYSTEM,
+        metadata: { bookingId },
+      });
+    }
 
     return ResponseHelper.success(
       result,
@@ -688,6 +722,17 @@ export class MedicalRecordsService {
       this.sendPostVisitEmailSafe(updatedRecord, dto).catch((err) =>
         this.logger.error('Post-visit email failed', err),
       );
+
+      // Notify Receptionist/Pharmacy
+      const patientName =
+        updatedRecord.booking?.patientProfile?.fullName ?? 'Bệnh nhân';
+      await this.notificationsService.notifyRole({
+        role: UserRole.RECEPTIONIST,
+        title: 'Có đơn thuốc mới',
+        content: `Bệnh nhân ${patientName} đã hoàn tất buổi khám và có đơn thuốc. Vui lòng chuẩn bị thuốc.`,
+        type: NotificationType.SYSTEM,
+        metadata: { bookingId: updatedRecord.bookingId },
+      });
     }
 
     return ResponseHelper.success(

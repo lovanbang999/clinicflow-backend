@@ -5,7 +5,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as Handlebars from 'handlebars';
 import { NotificationsGateway } from './notifications.gateway';
-import { NotificationType, NotificationChannel, Prisma } from '@prisma/client';
+import {
+  NotificationType,
+  NotificationChannel,
+  Prisma,
+  UserRole,
+} from '@prisma/client';
 import {
   ISystemRepository,
   I_SYSTEM_REPOSITORY,
@@ -82,6 +87,49 @@ export class NotificationsService {
     } catch (error) {
       this.logger.error('Failed to create in-app notification:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Send notification to all users with a specific role.
+   * Useful for notifying all receptionists or all technicians.
+   */
+  async notifyRole(data: {
+    role: UserRole;
+    title: string;
+    content: string;
+    type: NotificationType;
+    metadata?: Prisma.InputJsonValue;
+  }) {
+    try {
+      const users = await this.userRepository.findMany({
+        where: { role: data.role, isActive: true },
+        select: { id: true },
+      });
+
+      const notifications = await Promise.all(
+        users.map((user) =>
+          this.createInAppNotification({
+            userId: user.id,
+            title: data.title,
+            content: data.content,
+            type: data.type,
+            metadata: data.metadata,
+          }),
+        ),
+      );
+
+      // Also broadcast to the role room for immediate UI refresh if needed
+      this.gateway.broadcastToRole(data.role, {
+        title: data.title,
+        content: data.content,
+        type: data.type,
+        metadata: data.metadata,
+      });
+
+      return notifications;
+    } catch (error) {
+      this.logger.error(`Failed to notify role ${data.role}:`, error);
     }
   }
 
