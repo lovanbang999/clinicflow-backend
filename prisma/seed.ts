@@ -14,6 +14,8 @@ import {
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaMariaDb } from '@prisma/adapter-mariadb';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ============================================
 // CONFIG & CLIENT
@@ -43,6 +45,11 @@ function generatePatientCode(): string {
 const hashPassword = async (password: string) => {
   return await bcrypt.hash(password, 10);
 };
+
+interface Icd10Item {
+  code: string;
+  name: string;
+}
 
 // ============================================
 // SEED DATA CONSTANTS
@@ -906,6 +913,42 @@ async function main() {
     });
   }
   console.log('  ✅ Patients created');
+
+  // 12. SEED ICD10 CODES
+  console.log('\n🩺 Seeding ICD-10 codes...');
+  const icd10Path = path.join(__dirname, '../../Tools/icd10_vietnamese.json');
+  if (fs.existsSync(icd10Path)) {
+    try {
+      const icd10Data = JSON.parse(
+        fs.readFileSync(icd10Path, 'utf8'),
+      ) as Icd10Item[];
+      console.log(`  Found ${icd10Data.length} ICD-10 codes. Importing...`);
+
+      const chunkSize = 1000;
+      for (let i = 0; i < icd10Data.length; i += chunkSize) {
+        const chunk = icd10Data
+          .slice(i, i + chunkSize)
+          .map((item: Icd10Item) => ({
+            code: item.code,
+            name: item.name,
+          }));
+        await prisma.icd10Code.createMany({
+          data: chunk,
+          skipDuplicates: true,
+        });
+        if (i % 5000 === 0) {
+          console.log(
+            `    Imported ${i + chunk.length}/${icd10Data.length}...`,
+          );
+        }
+      }
+      console.log('  ✅ ICD-10 codes seeded successfully');
+    } catch (error) {
+      console.error('  ❌ Error seeding ICD-10 codes:', error);
+    }
+  } else {
+    console.warn('  ⚠️ ICD-10 file not found at', icd10Path);
+  }
 
   console.log('\n🚀 Database seeding completed successfully!');
 }
