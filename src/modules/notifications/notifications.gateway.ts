@@ -9,6 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Injectable, Logger } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 
 @WebSocketGateway({
   cors: {
@@ -34,20 +35,33 @@ export class NotificationsGateway
   }
 
   /**
-   * Client joins their own private room after authentication
+   * Client joins their own private room and role-based room after authentication
    */
   @SubscribeMessage('authenticate')
   handleAuthenticate(
     @ConnectedSocket() client: Socket,
-    @MessageBody() userId: string,
+    @MessageBody() data: { userId: string; role?: UserRole },
   ) {
+    const userId = typeof data === 'string' ? data : data.userId;
+    const role = typeof data === 'object' ? data.role : undefined;
+
     if (!userId) return;
-    const roomName = `user_${userId}`;
-    void client.join(roomName);
+
+    // Join private user room
+    const userRoom = `user_${userId}`;
+    void client.join(userRoom);
+
+    // Join role-based room if provided
+    if (role) {
+      const roleRoom = `role_${role}`;
+      void client.join(roleRoom);
+      this.logger.debug(`User ${userId} joined role room ${roleRoom}`);
+    }
+
     this.logger.debug(
-      `User ${userId} authenticated and joined room ${roomName}`,
+      `User ${userId} authenticated and joined room ${userRoom}`,
     );
-    return { event: 'authenticated', data: { userId, room: roomName } };
+    return { event: 'authenticated', data: { userId, role } };
   }
 
   /**
@@ -57,5 +71,14 @@ export class NotificationsGateway
     const roomName = `user_${userId}`;
     this.server.to(roomName).emit('newNotification', notification);
     this.logger.debug(`Sent real-time notification to user ${userId}`);
+  }
+
+  /**
+   * Broadcast a notification to all users of a specific role
+   */
+  broadcastToRole(role: UserRole, notification: any) {
+    const roomName = `role_${role}`;
+    this.server.to(roomName).emit('newNotification', notification);
+    this.logger.debug(`Broadcasted real-time notification to role ${role}`);
   }
 }

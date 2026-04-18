@@ -6,12 +6,13 @@ import {
   Prisma,
   InvoiceStatus,
   User,
+  NotificationType,
 } from '@prisma/client';
 import {
   BookingInclude,
   BookingWithRelations,
 } from '../database/types/prisma-payload.types';
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { BookingValidatorService } from './services/booking-validator.service';
 import { BookingNotificationService } from './services/booking-notification.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
@@ -26,6 +27,7 @@ import {
   ApiResponse,
 } from 'src/common/interfaces/api-response.interface';
 import { BillingService } from '../billing/billing.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   IBookingRepository,
   I_BOOKING_REPOSITORY,
@@ -60,6 +62,8 @@ const patientProfileSelect = {
 
 @Injectable()
 export class BookingsService {
+  private readonly logger = new Logger(BookingsService.name);
+
   constructor(
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
@@ -75,6 +79,7 @@ export class BookingsService {
     private readonly billingService: BillingService,
     @Inject(I_CLINICAL_REPOSITORY)
     private readonly clinicalRepository: IClinicalRepository,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -187,8 +192,15 @@ export class BookingsService {
       console.error('Failed to auto-create invoice:', e);
     }
 
-    // Notify admins of new booking
+    // Notify admins and receptionists of new booking
     await this.bookingNotification.notifyAdminsOfBooking(booking, 'CREATED');
+    await this.notificationsService.notifyRole({
+      role: UserRole.RECEPTIONIST,
+      title: 'Lịch hẹn trực tuyến mới',
+      content: `Bệnh nhân ${booking.patientProfile.fullName} vừa đặt lịch khám ${booking.service?.name ?? 'Dịch vụ chưa xác định'} trực tuyến.`,
+      type: NotificationType.SYSTEM,
+      metadata: { bookingId: booking.id, source: 'ONLINE' },
+    });
 
     return ResponseHelper.success(
       booking,
@@ -784,6 +796,27 @@ export class BookingsService {
                 },
               });
             }
+          }
+        }
+
+        // B2: When doctor calls patient (IN_PROGRESS), notify patient
+        if (status === BookingStatus.IN_PROGRESS) {
+          const patientUserId = updated.patientProfile?.userId;
+          if (patientUserId) {
+            this.notificationsService
+              .createInAppNotification({
+                userId: patientUserId,
+                title: 'Đã đến lượt khám của bạn',
+                content: `Bác sĩ ${updated.doctor?.fullName ?? ''} đang chờ bạn. Vui lòng di chuyển vào phòng ${updated.roomId || 'khám'}.`,
+                type: NotificationType.SYSTEM,
+                metadata: { bookingId: updated.id, roomId: updated.roomId },
+              })
+              .catch((err) =>
+                this.logger.error(
+                  'Failed to notify patient of IN_PROGRESS',
+                  err,
+                ),
+              );
           }
         }
 

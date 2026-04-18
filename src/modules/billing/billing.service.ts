@@ -930,7 +930,7 @@ export class BillingService {
         payments: true,
         booking: {
           include: {
-            patientProfile: { select: { fullName: true } },
+            patientProfile: { select: { fullName: true, userId: true } },
             medicalRecord: true,
           },
         },
@@ -1194,6 +1194,17 @@ export class BillingService {
                   invoiceId: invoice.id,
                   bookingId: invoice.bookingId,
                 } as Prisma.InputJsonValue,
+              });
+            }
+
+            // Notify Patient
+            if (invoice.booking?.patientProfile?.userId) {
+              await this.notificationsService.createInAppNotification({
+                userId: invoice.booking.patientProfile.userId,
+                title: 'Thanh toán xét nghiệm thành công',
+                content: `Thanh toán cho các chỉ định xét nghiệm đã được xác nhận. Vui lòng di chuyển đến khu vực cận lâm sàng.`,
+                type: 'SYSTEM',
+                metadata: { bookingId: invoice.bookingId },
               });
             }
           }
