@@ -62,4 +62,11 @@ export class SaveSymptomsDto {
   @IsOptional()
   @IsString()
   additionalSymptoms?: string;
+
+  @ApiPropertyOptional({
+    description: 'Preparation instructions / follow-up note',
+  })
+  @IsOptional()
+  @IsString()
+  followUpNote?: string;
 }

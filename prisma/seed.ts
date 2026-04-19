@@ -855,6 +855,7 @@ async function main() {
       DayOfWeek.THURSDAY,
       DayOfWeek.FRIDAY,
       DayOfWeek.SATURDAY,
+      DayOfWeek.SUNDAY,
     ]) {
       await prisma.doctorWorkingHours.create({
         data: {

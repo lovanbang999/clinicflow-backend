@@ -14,6 +14,7 @@ import {
   VisitStep,
   NotificationType,
   ServiceOrderStatus,
+  PerformerType,
 } from '@prisma/client';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { CompleteServiceOrderDto } from './dto/complete-service-order.dto';
@@ -32,6 +33,9 @@ export class VisitServiceOrdersService {
     const where: Prisma.VisitServiceOrderWhereInput = {
       status: status ?? {
         in: [ServiceOrderStatus.PENDING, ServiceOrderStatus.IN_PROGRESS],
+      },
+      service: {
+        performerType: PerformerType.DOCTOR,
       },
     };
 

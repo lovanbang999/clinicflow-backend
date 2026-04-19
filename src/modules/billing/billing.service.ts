@@ -653,7 +653,23 @@ export class BillingService {
       include: {
         items: {
           orderBy: { sortOrder: 'asc' },
-          include: { labOrder: true },
+          include: {
+            labOrder: {
+              include: {
+                service: {
+                  include: { category: true },
+                },
+              },
+            },
+            visitServiceOrder: {
+              include: {
+                performer: { select: { id: true, fullName: true } },
+                service: {
+                  include: { category: true },
+                },
+              },
+            },
+          },
         },
         payments: { orderBy: { paidAt: 'desc' } },
         booking: {
@@ -824,7 +840,23 @@ export class BillingService {
           items: {
             take: 1,
             orderBy: { sortOrder: 'asc' },
-            include: { labOrder: true },
+            include: {
+              labOrder: {
+                include: {
+                  service: {
+                    include: { category: true },
+                  },
+                },
+              },
+              visitServiceOrder: {
+                include: {
+                  performer: { select: { id: true, fullName: true } },
+                  service: {
+                    include: { category: true },
+                  },
+                },
+              },
+            },
           },
           booking: {
             include: {
