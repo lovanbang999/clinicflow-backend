@@ -66,6 +66,103 @@ export class BillingService {
   }
 
   /**
+   * Calculates the suggested order for a patient to visit clinical rooms
+   * based on preparation requirements (e.g. fasting), current queue size,
+   * and physical location (grouping by room/category).
+   */
+  private async assignSmartQueueOrder(
+    tx: Prisma.TransactionClient,
+    invoiceId: string,
+  ) {
+    // 1. Fetch all items with their services and categories
+    const items = await tx.invoiceItem.findMany({
+      where: { invoiceId },
+      include: {
+        labOrder: {
+          include: {
+            service: {
+              include: {
+                category: true,
+              },
+            },
+          },
+        },
+        visitServiceOrder: {
+          include: {
+            service: {
+              include: {
+                category: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // 2. Extract and combine orders
+    const orders = items
+      .map((item) => ({
+        id: item.labOrder?.id || item.visitServiceOrderId,
+        type: item.labOrder ? 'LAB' : 'VSO',
+        queueNumber:
+          item.labOrder?.queueNumber || item.visitServiceOrder?.queueNumber,
+        service: item.labOrder?.service || item.visitServiceOrder?.service,
+      }))
+      .filter((o) => o.id && o.service);
+
+    if (orders.length === 0) return;
+
+    // 3. Sorting logic (Level 2: Optimized Suggestion)
+    // Priority: Fasting/Preparation -> Lower Queue Number -> Shorter Duration
+    const sortedOrders = [...orders].sort((a, b) => {
+      // Priority 1: Preparation notes (e.g., "Fasting" / "Nhịn ăn")
+      const aHasPrep = a.service?.preparationNotes ? 1 : 0;
+      const bHasPrep = b.service?.preparationNotes ? 1 : 0;
+      if (aHasPrep !== bHasPrep) return bHasPrep - aHasPrep;
+
+      // Priority 2: Queue Number (lower is better, less wait)
+      const aQN = a.queueNumber ?? 9999;
+      const bQN = b.queueNumber ?? 9999;
+      if (aQN !== bQN) return aQN - bQN;
+
+      // Priority 3: Shorter duration first
+      const aDur = a.service?.durationMinutes ?? 0;
+      const bDur = b.service?.durationMinutes ?? 0;
+      return aDur - bDur;
+    });
+
+    // 4. Update suggestedOrder and groupKey in DB
+    for (let i = 0; i < sortedOrders.length; i++) {
+      const order = sortedOrders[i];
+      const suggestedOrder = i + 1;
+
+      // Determine groupKey: Group by Category Code + PerformerType
+      const groupKey = `${order.service?.performerType}-${order.service?.categoryId || 'none'}`;
+
+      if (order.type === 'LAB') {
+        await tx.labOrder.update({
+          where: { id: order.id as string },
+          data: { suggestedOrder, groupKey } as Prisma.LabOrderUpdateInput & {
+            suggestedOrder: number;
+            groupKey: string;
+          },
+        });
+      } else {
+        await tx.visitServiceOrder.update({
+          where: { id: order.id as string },
+          data: {
+            suggestedOrder,
+            groupKey,
+          } as Prisma.VisitServiceOrderUpdateInput & {
+            suggestedOrder: number;
+            groupKey: string;
+          },
+        });
+      }
+    }
+  }
+
+  /**
    * Verified if the requester has access to the invoice details.
    */
   private async validateInvoiceAccess(
@@ -598,9 +695,20 @@ export class BillingService {
         items: {
           orderBy: { sortOrder: 'asc' },
           include: {
-            labOrder: true,
+            labOrder: {
+              include: {
+                service: {
+                  include: { category: true },
+                },
+              },
+            },
             visitServiceOrder: {
-              include: { performer: true, service: true },
+              include: {
+                performer: true,
+                service: {
+                  include: { category: true },
+                },
+              },
             },
           },
         },
@@ -1140,6 +1248,9 @@ export class BillingService {
                 },
               });
             }
+
+            // Calculate Smart Queue Suggested Order
+            await this.assignSmartQueueOrder(tx, invoice.id);
 
             const patientName =
               invoice.booking?.patientProfile?.fullName || 'Khách';
