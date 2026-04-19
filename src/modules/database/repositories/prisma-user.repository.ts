@@ -185,6 +185,25 @@ export class PrismaUserRepository implements IUserRepository {
               },
             },
           },
+          workingHours: {
+            select: {
+              dayOfWeek: true,
+              startTime: true,
+              endTime: true,
+            },
+          },
+          offDays: {
+            where: {
+              offDate: {
+                gte: new Date(new Date().setUTCHours(0, 0, 0, 0)),
+                lte: new Date(new Date().setUTCHours(23, 59, 59, 999)),
+              },
+            },
+            select: {
+              offDate: true,
+              reason: true,
+            },
+          },
         },
         skip,
         take,
@@ -224,6 +243,25 @@ export class PrismaUserRepository implements IUserRepository {
             consultationFee: true,
             rating: true,
             reviewCount: true,
+          },
+        },
+        workingHours: {
+          select: {
+            dayOfWeek: true,
+            startTime: true,
+            endTime: true,
+          },
+        },
+        offDays: {
+          where: {
+            offDate: {
+              gte: new Date(new Date().setUTCHours(0, 0, 0, 0)),
+              lte: new Date(new Date().setUTCHours(23, 59, 59, 999)),
+            },
+          },
+          select: {
+            offDate: true,
+            reason: true,
           },
         },
       },

@@ -56,6 +56,7 @@ export type PublicDoctorResult = Prisma.UserGetPayload<{
         qualifications: true;
         yearsOfExperience: true;
         bio: true;
+        consultationFee: true;
         rating: true;
         reviewCount: true;
         services: {
@@ -71,6 +72,19 @@ export type PublicDoctorResult = Prisma.UserGetPayload<{
             };
           };
         };
+      };
+    };
+    workingHours: {
+      select: {
+        dayOfWeek: true;
+        startTime: true;
+        endTime: true;
+      };
+    };
+    offDays: {
+      select: {
+        offDate: true;
+        reason: true;
       };
     };
   };
@@ -94,8 +108,22 @@ export type PublicDoctorByIdResult = Prisma.UserGetPayload<{
         qualifications: true;
         yearsOfExperience: true;
         bio: true;
+        consultationFee: true;
         rating: true;
         reviewCount: true;
+      };
+    };
+    workingHours: {
+      select: {
+        dayOfWeek: true;
+        startTime: true;
+        endTime: true;
+      };
+    };
+    offDays: {
+      select: {
+        offDate: true;
+        reason: true;
       };
     };
   };

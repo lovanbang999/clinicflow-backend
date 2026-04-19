@@ -121,9 +121,12 @@ export class NotificationsService {
 
       // Also broadcast to the role room for immediate UI refresh if needed
       this.gateway.broadcastToRole(data.role, {
+        id: notifications[0]?.id || `temp-${Date.now()}`,
         title: data.title,
         content: data.content,
         type: data.type,
+        isRead: false,
+        createdAt: new Date().toISOString(),
         metadata: data.metadata,
       });
 

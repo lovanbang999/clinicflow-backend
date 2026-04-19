@@ -32,6 +32,7 @@ import {
   VisitStep,
   UserRole,
   NotificationType,
+  PerformerType,
 } from '@prisma/client';
 import { format } from 'date-fns';
 import { vi } from 'date-fns/locale';
@@ -55,7 +56,7 @@ export class MedicalRecordsService {
 
   private readonly visitIncludes = {
     visitServiceOrders: {
-      include: { service: true },
+      include: { service: true, performer: true },
       orderBy: { createdAt: 'asc' },
     },
     labOrders: {
@@ -314,6 +315,7 @@ export class MedicalRecordsService {
           medicalHistory: dto.medicalHistory,
           allergies: dto.allergies,
           additionalSymptoms: dto.additionalSymptoms,
+          followUpNote: dto.followUpNote,
           symptomsAt: new Date(),
           version: 1,
         },
@@ -331,6 +333,7 @@ export class MedicalRecordsService {
           medicalHistory: dto.medicalHistory,
           allergies: dto.allergies,
           additionalSymptoms: dto.additionalSymptoms,
+          followUpNote: dto.followUpNote,
           symptomsAt: new Date(),
           visitStep: VisitStep.SYMPTOMS_TAKEN,
           version: { increment: 1 },
@@ -422,28 +425,44 @@ export class MedicalRecordsService {
       const newItems = dto.items.filter((i) => !existingIds.has(i.serviceId));
 
       if (newItems.length > 0) {
-        // Create one VSO per service, setting performedBy from the provided ID or auto-pick
         for (const item of newItems) {
           const serviceId = item.serviceId;
           const svc = servicesWithDoctors.find((s) => s.id === serviceId);
+          if (!svc) continue;
 
-          // Priority: 1. Directly assigned in DTO -> 2. First specialist in association -> 3. Null
-          const specialistUserId =
-            item.performedBy ??
-            svc?.doctorServices?.[0]?.doctorProfile?.user?.id ??
-            null;
+          if (svc.performerType === PerformerType.TECHNICIAN) {
+            // Create LabOrder for Technicians
+            await tx.labOrder.create({
+              data: {
+                medicalRecordId: record.id,
+                serviceId,
+                patientProfileId: booking.patientProfileId,
+                bookingId,
+                doctorId: booking.doctorId, // Doctor who ordered it
+                testName: svc.name,
+                status: LabOrderStatus.PENDING,
+              },
+            });
+          } else {
+            // Create VisitServiceOrder for Specialists (Doctors)
+            // Priority: 1. Directly assigned in DTO -> 2. First specialist in association -> 3. Null
+            const specialistUserId =
+              item.performedBy ??
+              svc?.doctorServices?.[0]?.doctorProfile?.user?.id ??
+              null;
 
-          await tx.visitServiceOrder.create({
-            data: {
-              medicalRecordId: record.id,
-              serviceId,
-              patientProfileId: booking.patientProfileId,
-              bookingId,
-              orderedBy: doctorId,
-              performedBy: specialistUserId, // ← assign specialist doctor upfront
-              status: ServiceOrderStatus.PENDING,
-            },
-          });
+            await tx.visitServiceOrder.create({
+              data: {
+                medicalRecordId: record.id,
+                serviceId,
+                patientProfileId: booking.patientProfileId,
+                bookingId,
+                orderedBy: doctorId,
+                performedBy: specialistUserId,
+                status: ServiceOrderStatus.PENDING,
+              },
+            });
+          }
         }
       }
 
@@ -464,12 +483,17 @@ export class MedicalRecordsService {
         include: this.visitIncludes,
       });
 
-      const orders = await tx.visitServiceOrder.findMany({
+      const vsoOrders = await tx.visitServiceOrder.findMany({
         where: { medicalRecordId: record.id },
         include: { service: true },
       });
 
-      return { record: updated, orders };
+      const labOrders = await tx.labOrder.findMany({
+        where: { medicalRecordId: record.id },
+        include: { service: true },
+      });
+
+      return { record: updated, orders: vsoOrders, labOrders };
     });
 
     // Auto-sync to draft invoice
