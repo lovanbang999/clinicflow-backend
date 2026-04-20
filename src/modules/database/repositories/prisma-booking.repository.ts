@@ -11,6 +11,7 @@ import {
   InvoiceStatus,
   Prisma,
 } from '@prisma/client';
+
 import { TransactionClient } from '../interfaces/clinical.repository.interface';
 import {
   BookingDetail,
@@ -18,6 +19,7 @@ import {
   BookingWithRelations,
   QueueRecordWithRelations,
   BookingInclude,
+  SlotReservation,
 } from '../types/prisma-payload.types';
 import { IBookingRepository } from '../interfaces/booking.repository.interface';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -293,6 +295,90 @@ export class PrismaBookingRepository implements IBookingRepository {
     args: Prisma.DoctorScheduleSlotUpdateArgs,
   ): Promise<DoctorScheduleSlot> {
     return this.prisma.doctorScheduleSlot.update(args);
+  }
+
+  // === Slot Reservations ===
+  async createSlotReservation(
+    data: Omit<SlotReservation, 'id' | 'createdAt'>,
+  ): Promise<SlotReservation> {
+    const prisma = this.prisma as PrismaService & {
+      slotReservation: {
+        create: (args: {
+          data: Omit<SlotReservation, 'id' | 'createdAt'>;
+        }) => Promise<SlotReservation>;
+      };
+    };
+    return await prisma.slotReservation.create({ data });
+  }
+
+  async findSlotReservation(
+    doctorId: string,
+    date: Date,
+    startTime: string,
+  ): Promise<SlotReservation | null> {
+    const prisma = this.prisma as PrismaService & {
+      slotReservation: {
+        findFirst: (args: { where: any }) => Promise<SlotReservation | null>;
+      };
+    };
+    return await prisma.slotReservation.findFirst({
+      where: {
+        doctorId,
+        bookingDate: date,
+        startTime,
+        expiresAt: { gt: new Date() },
+      },
+    });
+  }
+
+  async findSlotReservations(
+    doctorId: string,
+    date: Date,
+  ): Promise<SlotReservation[]> {
+    const prisma = this.prisma as PrismaService & {
+      slotReservation: {
+        findMany: (args: { where: any }) => Promise<SlotReservation[]>;
+      };
+    };
+    return await prisma.slotReservation.findMany({
+      where: { doctorId, bookingDate: date, expiresAt: { gt: new Date() } },
+    });
+  }
+
+  async deleteSlotReservation(id: string): Promise<SlotReservation> {
+    const prisma = this.prisma as PrismaService & {
+      slotReservation: {
+        delete: (args: { where: { id: string } }) => Promise<SlotReservation>;
+      };
+    };
+    return await prisma.slotReservation.delete({ where: { id } });
+  }
+
+  async deleteExpiredReservations(): Promise<Prisma.BatchPayload> {
+    const prisma = this.prisma as PrismaService & {
+      slotReservation: {
+        deleteMany: (args: { where: any }) => Promise<Prisma.BatchPayload>;
+      };
+    };
+    return await prisma.slotReservation.deleteMany({
+      where: { expiresAt: { lte: new Date() } },
+    });
+  }
+
+  async deleteSlotReservationByDetails(
+    doctorId: string,
+    date: Date,
+    startTime: string,
+    patientProfileId: string,
+  ): Promise<Prisma.BatchPayload> {
+    const prisma = this.prisma as PrismaService & {
+      slotReservation: {
+        deleteMany: (args: { where: any }) => Promise<Prisma.BatchPayload>;
+      };
+    };
+    return await prisma.slotReservation.deleteMany({
+      where: { doctorId, bookingDate: date, startTime, patientProfileId },
+    });
   }
 
   // === Bookings ===

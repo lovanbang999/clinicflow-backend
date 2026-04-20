@@ -1,5 +1,6 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { BookingStatus, UserRole, DayOfWeek } from '@prisma/client';
+import { SlotReservation } from '../../database/types/prisma-payload.types';
 import { CreateBookingDto } from '../dto/create-booking.dto';
 import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { ApiException } from 'src/common/exceptions/api.exception';
@@ -64,6 +65,23 @@ export class BookingValidatorService {
         400,
         'Booking validation failed',
       );
+    }
+
+    // Check time if requested date is today
+    if (startTime && requestedDate.getTime() === today.getTime()) {
+      const vnNow = getVnDate(new Date());
+      const currentHhMm = `${String(vnNow.getHours()).padStart(2, '0')}:${String(
+        vnNow.getMinutes(),
+      ).padStart(2, '0')}`;
+
+      if (startTime < currentHhMm) {
+        throw new ApiException(
+          MessageCodes.BOOKING_INVALID_DATE,
+          'Booking time must be in the future for today',
+          400,
+          'Booking validation failed',
+        );
+      }
     }
 
     // 2. Check patientProfile exists
@@ -194,25 +212,38 @@ export class BookingValidatorService {
     startTime: string,
     endTime: string,
     maxSlotsPerHour: number,
+    patientProfileId?: string,
   ): Promise<boolean> {
-    const confirmedBookings = await this.bookingRepository.count({
-      where: {
-        doctorId,
-        bookingDate: new Date(bookingDate),
-        startTime,
-        status: {
-          in: [
-            BookingStatus.PENDING,
-            BookingStatus.CONFIRMED,
-            BookingStatus.CHECKED_IN,
-            BookingStatus.IN_PROGRESS,
-            BookingStatus.AWAITING_RESULTS,
-          ],
+    const [confirmedBookings, reservations] = await Promise.all([
+      this.bookingRepository.count({
+        where: {
+          doctorId,
+          bookingDate: new Date(bookingDate),
+          startTime,
+          status: {
+            in: [
+              BookingStatus.PENDING,
+              BookingStatus.CONFIRMED,
+              BookingStatus.CHECKED_IN,
+              BookingStatus.IN_PROGRESS,
+              BookingStatus.AWAITING_RESULTS,
+            ],
+          },
         },
-      },
-    });
+      }),
+      this.bookingRepository.findSlotReservations(
+        doctorId,
+        new Date(bookingDate),
+      ),
+    ]);
 
-    return confirmedBookings < maxSlotsPerHour;
+    // Exclude current patient's reservation from count
+    const otherReservationsCount = reservations.filter(
+      (r: SlotReservation) =>
+        r.startTime === startTime && r.patientProfileId !== patientProfileId,
+    ).length;
+
+    return confirmedBookings + otherReservationsCount < maxSlotsPerHour;
   }
 
   /**

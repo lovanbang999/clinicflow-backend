@@ -12,6 +12,7 @@ import {
   BookingInclude,
   BookingWithRelations,
 } from '../database/types/prisma-payload.types';
+import { TransactionClient } from '../database/interfaces/clinical.repository.interface';
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { BookingValidatorService } from './services/booking-validator.service';
 import { BookingNotificationService } from './services/booking-notification.service';
@@ -107,14 +108,9 @@ export class BookingsService {
       );
     }
 
-    // Online booking requires serviceId
-    if (!serviceId) {
-      throw new ApiException(
-        MessageCodes.SERVICE_NOT_FOUND,
-        'serviceId is required for online bookings',
-        400,
-        'Booking creation failed',
-      );
+    // Online booking validation
+    if (source === BookingSource.ONLINE) {
+      // serviceId is now optional for online bookings (Consultation path)
     }
 
     await this.validator.validateBooking({
@@ -122,29 +118,42 @@ export class BookingsService {
       isPreBooked: true,
     });
 
-    const service = await this.catalogRepository.findServiceById(serviceId);
+    let durationMinutes = 30; // Default: 30 minutes
+    let maxSlotsPerHour = 1; // Default
 
-    if (!service) {
-      throw new ApiException(
-        MessageCodes.SERVICE_NOT_FOUND,
-        'Service not found',
-        404,
-        'Booking creation failed',
-      );
+    if (serviceId) {
+      const service = await this.catalogRepository.findServiceById(serviceId);
+      if (!service) {
+        throw new ApiException(
+          MessageCodes.SERVICE_NOT_FOUND,
+          'Service not found',
+          404,
+          'Booking creation failed',
+        );
+      }
+      durationMinutes = service.durationMinutes;
+      maxSlotsPerHour = service.maxSlotsPerHour;
     }
 
-    const endTime = this.validator.calculateEndTime(
-      startTime,
-      service.durationMinutes,
-    );
+    const endTime = this.validator.calculateEndTime(startTime, durationMinutes);
 
-    void (await this.validator.checkSlotAvailability(
+    const isAvailable = await this.validator.checkSlotAvailability(
       doctorId,
       bookingDate,
       startTime,
       endTime,
-      service.maxSlotsPerHour,
-    ));
+      maxSlotsPerHour,
+      patientProfileId,
+    );
+
+    if (!isAvailable) {
+      throw new ApiException(
+        MessageCodes.BOOKING_INVALID_TIME,
+        'Time slot is no longer available or is temporarily locked',
+        400,
+        'Booking validation failed',
+      );
+    }
 
     const bookingCode = await this.generateBookingCode(bookingDate);
 
@@ -153,7 +162,7 @@ export class BookingsService {
         data: {
           patientProfileId,
           doctorId,
-          serviceId: serviceId,
+          serviceId: serviceId || undefined,
           bookingCode,
           bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
           startTime,
@@ -177,6 +186,31 @@ export class BookingsService {
           reason: 'Pre-booking created online',
         },
       });
+
+      // Release reservation if exists
+      if (source === BookingSource.ONLINE) {
+        await (
+          tx as TransactionClient & {
+            slotReservation: {
+              deleteMany: (args: {
+                where: {
+                  doctorId: string;
+                  bookingDate: Date;
+                  startTime: string;
+                  patientProfileId: string;
+                };
+              }) => Promise<Prisma.BatchPayload>;
+            };
+          }
+        ).slotReservation.deleteMany({
+          where: {
+            doctorId,
+            bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
+            startTime,
+            patientProfileId,
+          },
+        });
+      }
 
       return newBooking;
     });

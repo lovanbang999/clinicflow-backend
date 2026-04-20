@@ -15,6 +15,7 @@ import {
   BookingWithDuration,
   BookingWithRelations,
   QueueRecordWithRelations,
+  SlotReservation,
 } from '../types/prisma-payload.types';
 
 export const I_BOOKING_REPOSITORY = 'IBookingRepository';
@@ -114,6 +115,28 @@ export interface IBookingRepository {
   updateDoctorScheduleSlot(
     args: Prisma.DoctorScheduleSlotUpdateArgs,
   ): Promise<DoctorScheduleSlot>;
+
+  // === Slot Reservations ===
+  createSlotReservation(
+    data: Omit<SlotReservation, 'id' | 'createdAt'>,
+  ): Promise<SlotReservation>;
+  findSlotReservation(
+    doctorId: string,
+    date: Date,
+    startTime: string,
+  ): Promise<SlotReservation | null>;
+  findSlotReservations(
+    doctorId: string,
+    date: Date,
+  ): Promise<SlotReservation[]>;
+  deleteSlotReservation(id: string): Promise<SlotReservation>;
+  deleteExpiredReservations(): Promise<Prisma.BatchPayload>;
+  deleteSlotReservationByDetails(
+    doctorId: string,
+    date: Date,
+    startTime: string,
+    patientProfileId: string,
+  ): Promise<Prisma.BatchPayload>;
 
   // === Bookings ===
   createPreBookingTransaction(
