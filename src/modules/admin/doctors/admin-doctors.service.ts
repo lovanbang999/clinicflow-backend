@@ -116,6 +116,7 @@ export class AdminDoctorsService {
               bio: true,
               rating: true,
               reviewCount: true,
+              consultationFee: true,
             },
           },
         },
@@ -169,6 +170,7 @@ export class AdminDoctorsService {
             bio: true,
             rating: true,
             reviewCount: true,
+            consultationFee: true,
           },
         },
         _count: {
@@ -227,6 +229,7 @@ export class AdminDoctorsService {
         yearsOfExperience: dto.yearsOfExperience ?? 0,
         bio: dto.bio ?? null,
         rating: dto.rating ?? 0,
+        consultationFee: dto.consultationFee ?? 0,
       },
       update: {
         ...(dto.specialties !== undefined && { specialties: dto.specialties }),
@@ -238,6 +241,9 @@ export class AdminDoctorsService {
         }),
         ...(dto.bio !== undefined && { bio: dto.bio }),
         ...(dto.rating !== undefined && { rating: dto.rating }),
+        ...(dto.consultationFee !== undefined && {
+          consultationFee: dto.consultationFee,
+        }),
       },
       select: {
         id: true,
@@ -248,6 +254,7 @@ export class AdminDoctorsService {
         bio: true,
         rating: true,
         reviewCount: true,
+        consultationFee: true,
         updatedAt: true,
       },
     });
