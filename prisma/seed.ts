@@ -204,7 +204,7 @@ const DOCTORS = [
     specialties: ['Nội khoa', 'Khám sức khỏe tổng quát'],
     qualifications: ['Bác sĩ CK1', 'Thạc sĩ Y khoa'],
     experience: 15,
-    consultationFee: 200000,
+    consultationFee: 0,
     bio: 'Bác sĩ có 15 năm kinh nghiệm trong lĩnh vực nội tổng quát, tận tâm với bệnh nhân.',
   },
   {
@@ -240,7 +240,7 @@ const DOCTORS = [
     specialties: ['Nhi khoa'],
     qualifications: ['Thạc sĩ Nhi khoa'],
     experience: 8,
-    consultationFee: 250000,
+    consultationFee: 0,
     bio: 'Bác sĩ Nhi khoa tận tâm, yêu trẻ, có kinh nghiệm xử lý các bệnh lý nhi khoa phổ biến.',
   },
   {
@@ -300,7 +300,7 @@ const DOCTORS = [
     specialties: ['Tai Mũi Họng'],
     qualifications: ['Bác sĩ CK1'],
     experience: 9,
-    consultationFee: 200000,
+    consultationFee: 0,
     bio: 'Bác sĩ chuyên khoa Tai Mũi Họng, giàu kinh nghiệm điều trị viêm xoang, viêm họng mãn tính.',
   },
   {
