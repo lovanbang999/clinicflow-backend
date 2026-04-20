@@ -405,6 +405,20 @@ model Booking {
   @@map("bookings")
 }
 
+model SlotReservation {
+  id               String   @id @default(uuid())
+  doctorId         String
+  bookingDate      DateTime @db.Date
+  startTime        String
+  patientProfileId String
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+
+  @@index([doctorId, bookingDate, startTime])
+  @@index([expiresAt])
+  @@map("slot_reservations")
+}
+
 model BookingQueue {
   id                   String    @id @default(uuid())
   bookingId            String    @unique

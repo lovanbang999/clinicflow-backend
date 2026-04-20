@@ -39,6 +39,7 @@ export class BookingsController {
   constructor(private readonly bookingsService: BookingsService) {}
 
   @Post()
+  @Roles(UserRole.PATIENT)
   @ApiOperation({
     summary: 'Create a new online booking',
     description:

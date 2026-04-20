@@ -168,3 +168,14 @@ export type MedicalRecordWithBooking = Prisma.MedicalRecordGetPayload<{
     };
   };
 }>;
+
+/** Temporary slot reservation (soft-lock) */
+export interface SlotReservation {
+  id: string;
+  doctorId: string;
+  bookingDate: Date;
+  startTime: string;
+  patientProfileId: string;
+  expiresAt: Date;
+  createdAt: Date;
+}

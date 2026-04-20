@@ -13,11 +13,12 @@ import { DayOfWeek, UserRole } from '@prisma/client';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
-
+import { format } from 'date-fns';
 import {
   IBookingRepository,
   I_BOOKING_REPOSITORY,
 } from '../database/interfaces/booking.repository.interface';
+import { SlotReservation } from '../database/types/prisma-payload.types';
 import {
   IUserRepository,
   I_USER_REPOSITORY,
@@ -479,7 +480,7 @@ export class SchedulesService {
       });
     });
 
-    const availableSlots = await this.filterAvailableSlots(
+    const availableSlots = await this.getDetailedSlots(
       slotsAfterBreaks,
       doctorId,
       date,
@@ -533,20 +534,34 @@ export class SchedulesService {
     );
   }
 
-  private async filterAvailableSlots(
+  private async getDetailedSlots(
     slots: string[],
     doctorId: string,
     date: string,
     maxSlotsPerHour: number,
     patientId?: string,
-  ): Promise<string[]> {
-    const availableSlots: string[] = [];
+  ): Promise<
+    Array<{
+      time: string;
+      bookedCount: number;
+      maxSlots: number;
+      available: boolean;
+    }>
+  > {
+    const detailedSlots: Array<{
+      time: string;
+      bookedCount: number;
+      maxSlots: number;
+      available: boolean;
+    }> = [];
 
-    const existingBookings =
-      await this.bookingRepository.findBookingsByDoctorAndDate(
+    const [existingBookings, activeReservations] = await Promise.all([
+      this.bookingRepository.findBookingsByDoctorAndDate(
         doctorId,
         new Date(date),
-      );
+      ),
+      this.bookingRepository.findSlotReservations(doctorId, new Date(date)),
+    ]);
 
     const patientBookings = patientId
       ? existingBookings.filter(
@@ -554,25 +569,147 @@ export class SchedulesService {
         )
       : [];
 
+    const patientReservations = patientId
+      ? activeReservations.filter(
+          (res: SlotReservation) => res.patientProfileId === patientId,
+        )
+      : [];
+
+    // Check if we are looking at today to filter past slots
+    const now = new Date();
+    // Use local date string comparison to avoid timezone issues with toDateString()
+    const todayStr = format(now, 'yyyy-MM-dd');
+    const isToday = date === todayStr;
+    const currentTimeStr = format(now, 'HH:mm');
+
     for (const slot of slots) {
       const patientHasBooking = patientBookings.some(
         (booking) => booking.startTime === slot,
       );
 
-      if (patientHasBooking) {
+      const patientHasReservation = patientReservations.some(
+        (res: SlotReservation) => res.startTime === slot,
+      );
+
+      // If date is today, check if slot time has passed
+      if (isToday && slot < currentTimeStr) {
+        detailedSlots.push({
+          time: slot,
+          bookedCount: maxSlotsPerHour,
+          maxSlots: maxSlotsPerHour,
+          available: false,
+        });
         continue;
       }
 
-      const exactMatchCount = existingBookings.filter(
+      // If patient already booked this slot, they can't book it again
+      if (patientHasBooking) {
+        detailedSlots.push({
+          time: slot,
+          bookedCount: maxSlotsPerHour,
+          maxSlots: maxSlotsPerHour,
+          available: false,
+        });
+        continue;
+      }
+
+      const bookingCount = existingBookings.filter(
         (booking) => booking.startTime === slot,
       ).length;
 
-      if (exactMatchCount < maxSlotsPerHour) {
-        availableSlots.push(slot);
-      }
+      const reservationCount = activeReservations.filter(
+        (res: SlotReservation) =>
+          res.startTime === slot && res.patientProfileId !== patientId,
+      ).length;
+
+      const totalOccupied = bookingCount + reservationCount;
+
+      detailedSlots.push({
+        time: slot,
+        bookedCount: totalOccupied,
+        maxSlots: maxSlotsPerHour,
+        available: totalOccupied < maxSlotsPerHour || patientHasReservation,
+      });
     }
 
-    return availableSlots;
+    return detailedSlots;
+  }
+
+  async reserveSlot(
+    doctorId: string,
+    date: string,
+    startTime: string,
+    patientProfileId: string,
+  ) {
+    // 0. Check if reserving a past slot
+    const now = new Date();
+    const todayStr = format(now, 'yyyy-MM-dd');
+    const currentTimeStr = format(now, 'HH:mm');
+    if (date === todayStr && startTime < currentTimeStr) {
+      throw new ApiException(
+        'SCHEDULE.PAST_TIME_SLOT',
+        'Cannot reserve a time slot that has already passed',
+        HttpStatus.BAD_REQUEST,
+        'SchedulesService.reserveSlot',
+      );
+    }
+
+    // 1. Check if already reserved or booked
+    const [existingReservation] = await Promise.all([
+      this.bookingRepository.findSlotReservation(
+        doctorId,
+        new Date(date),
+        startTime,
+      ),
+    ]);
+
+    if (
+      existingReservation &&
+      existingReservation.patientProfileId !== patientProfileId
+    ) {
+      throw new ApiException(
+        'SCHEDULE.SLOT_LOCKED',
+        'Slot is temporarily locked by another user',
+        409,
+      );
+    }
+
+    // 2. Create reservation (expires in 5 minutes)
+    const expiresAt = new Date();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 5);
+
+    if (existingReservation) {
+      // Refresh expiration if it's the same patient
+      return this.bookingRepository.createSlotReservation({
+        doctorId,
+        bookingDate: new Date(date),
+        startTime,
+        patientProfileId,
+        expiresAt,
+      });
+    }
+
+    return this.bookingRepository.createSlotReservation({
+      doctorId,
+      bookingDate: new Date(date),
+      startTime,
+      patientProfileId,
+      expiresAt,
+    });
+  }
+
+  async releaseSlot(
+    doctorId: string,
+    date: string,
+    startTime: string,
+    patientProfileId: string,
+  ) {
+    return this.bookingRepository.deleteSlotReservationByDetails(
+      doctorId,
+      new Date(date),
+      startTime,
+      patientProfileId,
+    );
   }
 
   private getDayOfWeek(date: Date): DayOfWeek {

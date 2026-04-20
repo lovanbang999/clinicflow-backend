@@ -301,6 +301,46 @@ export class SchedulesController {
     return this.schedulesService.getAvailableSlots(queryDto);
   }
 
+  @Post('reserve-slot')
+  @Public()
+  @ApiOperation({ summary: 'Temporarily lock a time slot for 5 minutes' })
+  reserveSlot(
+    @Body()
+    dto: {
+      doctorId: string;
+      date: string;
+      startTime: string;
+      patientProfileId: string;
+    },
+  ) {
+    return this.schedulesService.reserveSlot(
+      dto.doctorId,
+      dto.date,
+      dto.startTime,
+      dto.patientProfileId,
+    );
+  }
+
+  @Post('release-slot')
+  @Public()
+  @ApiOperation({ summary: 'Release a temporarily locked time slot' })
+  releaseSlot(
+    @Body()
+    dto: {
+      doctorId: string;
+      date: string;
+      startTime: string;
+      patientProfileId: string;
+    },
+  ) {
+    return this.schedulesService.releaseSlot(
+      dto.doctorId,
+      dto.date,
+      dto.startTime,
+      dto.patientProfileId,
+    );
+  }
+
   @Post('working-hours/bulk')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR)
   @ApiOperation({
