@@ -5,14 +5,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class DoctorTool {
   constructor(private readonly prisma: PrismaService) {}
 
-  async execute(args: { doctorName: string; specialtyName?: string }) {
+  async execute(args: { doctorName?: string; specialtyName?: string }) {
     const { doctorName, specialtyName } = args;
 
     const doctors = await this.prisma.user.findMany({
       where: {
         role: 'DOCTOR',
         isActive: true,
-        fullName: { contains: doctorName },
+        ...(doctorName ? { fullName: { contains: doctorName } } : {}),
       },
       select: {
         id: true,
@@ -72,9 +72,12 @@ export class DoctorTool {
       : doctors;
 
     if (filtered.length === 0) {
+      const nameClause = doctorName ? `tên "${doctorName}"` : '';
+      const specClause = specialtyName ? `chuyên khoa "${specialtyName}"` : '';
+      const combined = [nameClause, specClause].filter(Boolean).join(' thuộc ');
       return {
         found: false,
-        message: `Không tìm thấy bác sĩ nào với tên "${doctorName}"${specialtyName ? ` thuộc chuyên khoa "${specialtyName}"` : ''}.`,
+        message: `Không tìm thấy bác sĩ nào${combined ? ` với ${combined}` : ''}.`,
         doctors: [],
       };
     }
@@ -99,7 +102,12 @@ export class DoctorTool {
           .filter((s) => s.bookedCount < s.maxPatients)
           .map((s) => ({
             slotId: s.id,
-            date: s.date.toISOString().split('T')[0],
+            date: new Intl.DateTimeFormat('en-CA', {
+              timeZone: 'Asia/Ho_Chi_Minh',
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+            }).format(s.date),
             startTime: s.startTime,
             endTime: s.endTime,
             roomName: s.room?.name,
