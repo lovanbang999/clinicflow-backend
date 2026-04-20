@@ -15,6 +15,7 @@ import { SpecialtyTool } from './tools/specialty.tool';
 import { ScheduleTool } from './tools/schedule.tool';
 import { BookingTool } from './tools/booking.tool';
 import { DoctorTool } from './tools/doctor.tool';
+import { MyBookingsTool } from './tools/my-bookings.tool';
 import { CloudflareAdapter } from './cloudflare.adapter';
 import { AiSessionService } from './ai-session.service';
 import { AiSessionOutcome, AiMessageRole } from '@prisma/client';
@@ -30,6 +31,7 @@ export class AiService {
     private readonly scheduleTool: ScheduleTool,
     private readonly bookingTool: BookingTool,
     private readonly doctorTool: DoctorTool,
+    private readonly myBookingsTool: MyBookingsTool,
     private readonly cloudflareAdapter: CloudflareAdapter,
     private readonly aiSessionService: AiSessionService,
   ) {}
@@ -78,6 +80,13 @@ export class AiService {
         serviceId: string;
         date: string;
         startTime: string;
+      });
+    }
+
+    if (name === 'getMyBookings') {
+      return this.myBookingsTool.execute({
+        patientProfileId: patientId,
+        includeAll: (args.includeAll as boolean | undefined) ?? false,
       });
     }
 
@@ -174,9 +183,21 @@ export class AiService {
       message: userMessage,
     };
     let hasMoreTurns = true;
+    let turnCount = 0;
+    const MAX_TURNS = 8;
     let fullModelText = ''; // Accumulates the complete AI response for persistence
 
     while (hasMoreTurns) {
+      if (++turnCount > MAX_TURNS) {
+        this.logger.warn(
+          `processChat exceeded ${MAX_TURNS} turns — forcing completion`,
+        );
+        const maxTurnsMsg =
+          '\n\nXin lỗi, tôi không thể xử lý yêu cầu này. Vui lòng thử lại hoặc đặt câu hỏi cụ thể hơn.';
+        subscriber.next({ data: { text: maxTurnsMsg } });
+        fullModelText += maxTurnsMsg;
+        break;
+      }
       const responseStream = await chat.sendMessageStream(messageToProcess);
       const functionCallsInTurn: FunctionCall[] = [];
       let turnText = '';
