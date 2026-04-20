@@ -9,6 +9,7 @@ import {
   PerformerType,
   ExamFormType,
   LabFormType,
+  ScheduleSlotStatus,
   Service,
   Category,
 } from '@prisma/client';
@@ -190,6 +191,12 @@ const CATEGORIES = [
     code: 'CAT_NHANKHOA',
     name: 'Nhãn khoa',
     description: 'Khám mắt',
+    type: ServiceCategoryType.EXAMINATION,
+  },
+  {
+    code: 'CAT_THANKINH',
+    name: 'Thần kinh',
+    description: 'Chẩn đoán và điều trị bệnh lý thần kinh',
     type: ServiceCategoryType.EXAMINATION,
   },
 ];
@@ -642,6 +649,14 @@ async function main() {
       pType: PerformerType.DOCTOR,
       eType: ExamFormType.ENDOCRINE,
     },
+    {
+      name: 'Khám thần kinh',
+      description: 'Chẩn đoán đau đầu, chóng mặt, rối loạn thần kinh, mất ngủ',
+      category: 'Thần kinh',
+      price: 450000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.NEUROLOGY,
+    },
 
     // Lab Services (Nhóm 1 - KTV thực hiện)
     {
@@ -870,6 +885,74 @@ async function main() {
   console.log(
     `  ✅ Created ${allProviders.length} providers with profiles and working hours`,
   );
+
+  // 6b. SEED SCHEDULE SLOTS — 30 days of demo slots for every doctor
+  console.log('\n📅 Creating schedule slots...');
+  const allDoctors = await prisma.user.findMany({
+    where: { role: UserRole.DOCTOR, isActive: true },
+    select: { id: true },
+  });
+  const consultationRooms = await prisma.room.findMany({
+    where: { type: RoomType.CONSULTATION, isActive: true },
+    select: { id: true },
+  });
+
+  if (allDoctors.length > 0 && consultationRooms.length > 0) {
+    const timeBlocks = [
+      { start: '08:00', end: '09:00' },
+      { start: '09:00', end: '10:00' },
+      { start: '10:00', end: '11:00' },
+      { start: '13:30', end: '14:30' },
+      { start: '14:30', end: '15:30' },
+      { start: '15:30', end: '16:30' },
+    ];
+
+    // Use VN timezone to get the correct "today" date string, then construct
+    // a UTC midnight Date so MySQL @db.Date stores the correct VN date.
+    const todayVN = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+    }).format(new Date()); // e.g. "2026-04-20"
+    const today = new Date(todayVN + 'T00:00:00.000Z');
+
+    const slotData: {
+      doctorId: string; roomId: string; date: Date;
+      startTime: string; endTime: string;
+      maxPatients: number; bookedCount: number;
+      status: ScheduleSlotStatus; isActive: boolean;
+      maxPreBookings: number; maxQueueSize: number;
+      preBookedCount: number; queueCount: number;
+    }[] = [];
+    for (let dayOffset = 0; dayOffset < 30; dayOffset++) {
+      const slotDate = new Date(today);
+      slotDate.setDate(today.getDate() + dayOffset);
+
+      for (let di = 0; di < allDoctors.length; di++) {
+        const room = consultationRooms[di % consultationRooms.length];
+        for (const block of timeBlocks) {
+          slotData.push({
+            doctorId: allDoctors[di].id,
+            roomId: room.id,
+            date: slotDate,
+            startTime: block.start,
+            endTime: block.end,
+            maxPatients: 1,
+            bookedCount: 0,
+            status: ScheduleSlotStatus.SCHEDULED,
+            isActive: true,
+            maxPreBookings: 1,
+            maxQueueSize: 5,
+            preBookedCount: 0,
+            queueCount: 0,
+          });
+        }
+      }
+    }
+
+    await prisma.doctorScheduleSlot.createMany({ data: slotData });
+    console.log(`  ✅ Created ${slotData.length} schedule slots across ${allDoctors.length} doctors for 30 days`);
+  } else {
+    console.warn('  ⚠️ No doctors or consultation rooms found — skipping slot generation');
+  }
 
   // 7. SEED RECEPTIONISTS
   for (const r of RECEPTIONISTS) {

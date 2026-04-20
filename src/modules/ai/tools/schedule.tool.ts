@@ -33,21 +33,28 @@ export class ScheduleTool {
   async execute(args: {
     serviceId?: string;
     specialtyName?: string;
+    doctorId?: string;
     date?: string;
     limit?: number;
   }) {
-    const { serviceId, specialtyName, date, limit = 5 } = args;
+    const { serviceId, specialtyName, doctorId, date, limit = 5 } = args;
+
+    // Compute Vietnam time constants once (Vietnam is fixed UTC+7, no DST)
+    const nowUTC = new Date();
+    const todayVN = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+    }).format(nowUTC); // e.g. "2026-04-20"
+    const todayStart = new Date(todayVN + 'T00:00:00.000Z');
+
+    // Current VN wall-clock time as "HH:MM" for past-slot filtering
+    const vnNow = new Date(nowUTC.getTime() + 7 * 60 * 60 * 1000);
+    const nowTimeVN = `${String(vnNow.getUTCHours()).padStart(2, '0')}:${String(vnNow.getUTCMinutes()).padStart(2, '0')}`;
 
     const findSlots = async (searchDate?: Date, isRange = false) => {
-      const getVnDate = (date: Date) => {
-        return new Date(
-          date.toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }),
-        );
-      };
-
       const whereClause: Record<string, any> = {
         status: 'SCHEDULED',
         isActive: true,
+        ...(doctorId ? { doctorId } : {}),
       };
 
       if (searchDate) {
@@ -57,18 +64,13 @@ export class ScheduleTool {
             lte: new Date(searchDate.getTime() + 7 * 24 * 60 * 60 * 1000), // + 7 days
           };
         } else {
-          // Exact date match (ignoring time) in local TZ
-          const start = getVnDate(searchDate);
-          start.setHours(0, 0, 0, 0);
-          const end = getVnDate(searchDate);
-          end.setHours(23, 59, 59, 999);
-          whereClause.date = { gte: start, lte: end };
+          // Exact date: searchDate from user input "YYYY-MM-DD" is already UTC midnight
+          const nextDay = new Date(searchDate.getTime() + 24 * 60 * 60 * 1000);
+          whereClause.date = { gte: searchDate, lt: nextDay };
         }
       } else {
-        // Today and future in local TZ
-        const today = getVnDate(new Date());
-        today.setHours(0, 0, 0, 0);
-        whereClause.date = { gte: today };
+        // Today and future in VN timezone
+        whereClause.date = { gte: todayStart };
       }
 
       const slots = (await this.bookingRepository.findManyDoctorScheduleSlot({
@@ -95,7 +97,10 @@ export class ScheduleTool {
         orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
       })) as unknown as SlotWithRelations[];
 
-      // Filter available and specialty
+      const slotDateFormatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+      });
+
       return slots
         .filter((slot) => slot.bookedCount < slot.maxPatients)
         .filter((s) => {
@@ -109,6 +114,14 @@ export class ScheduleTool {
           return s.doctor.doctorProfile?.services.some(
             (sv) => sv.serviceId === serviceId,
           );
+        })
+        // Exclude past time slots for today (e.g. it's 22:40 — all 08:00-16:30 slots are over)
+        .filter((slot) => {
+          const slotDateStr = slotDateFormatter.format(slot.date);
+          if (slotDateStr === todayVN) {
+            return slot.startTime > nowTimeVN;
+          }
+          return true;
         });
     };
 
@@ -116,9 +129,9 @@ export class ScheduleTool {
     let filteredSlots = await findSlots(searchDate, false);
     let isFallback = false;
 
-    // If no slots found on specific date, try next 7 days
+    // If no slots found on specific date, try 7 days starting from the requested date
     if (date && filteredSlots.length === 0) {
-      filteredSlots = await findSlots(new Date(), true);
+      filteredSlots = await findSlots(searchDate, true);
       isFallback = true;
     }
 
