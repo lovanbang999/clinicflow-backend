@@ -917,6 +917,7 @@ export class MedicalRecordsService {
             },
           },
           visitServiceOrders: { include: { service: true } },
+          labOrders: { include: { service: true } },
           prescription: {
             include: { items: { orderBy: { sortOrder: 'asc' } } },
           },
