@@ -254,11 +254,20 @@ export class BillingService {
 
     // Guard: PHARMACY invoice can only be created on the same day as the booking
     if (invoiceType === InvoiceType.PHARMACY) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const bookingDay = new Date(booking.bookingDate);
-      bookingDay.setHours(0, 0, 0, 0);
-      if (bookingDay.getTime() !== today.getTime()) {
+      const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+      const nowVN = new Date(Date.now() + VN_OFFSET_MS);
+      const todayUTC = new Date(
+        Date.UTC(nowVN.getUTCFullYear(), nowVN.getUTCMonth(), nowVN.getUTCDate()),
+      );
+      // bookingDate is stored as UTC midnight of the Vietnam local date
+      const bookingDayUTC = new Date(
+        Date.UTC(
+          new Date(booking.bookingDate).getUTCFullYear(),
+          new Date(booking.bookingDate).getUTCMonth(),
+          new Date(booking.bookingDate).getUTCDate(),
+        ),
+      );
+      if (bookingDayUTC.getTime() !== todayUTC.getTime()) {
         throw new ApiException(
           'BILLING.PHARMACY_INVOICE_EXPIRED',
           'Invoice PHARMACY can only be created on the same day as the booking. Please ask the patient to buy medicine outside.',
@@ -319,7 +328,7 @@ export class BillingService {
 
       let totalToUpdate = seedSubtotal;
 
-      if (invoiceType === InvoiceType.LAB) {
+      if (invoiceType === InvoiceType.SERVICE) {
         const labOrderWhere: Prisma.LabOrderWhereInput = {
           bookingId: dto.bookingId,
           status: LabOrderStatus.PENDING,
@@ -474,7 +483,7 @@ export class BillingService {
     const invoice = await this.financeRepository.findFirstInvoice({
       where: {
         bookingId,
-        invoiceType: InvoiceType.LAB,
+        invoiceType: InvoiceType.SERVICE,
         status: InvoiceStatus.DRAFT,
       },
     });
@@ -504,7 +513,7 @@ export class BillingService {
     if (!invoice) {
       const result = await this.createInvoice({
         bookingId,
-        invoiceType: InvoiceType.LAB,
+        invoiceType: InvoiceType.SERVICE,
       });
       this.labOrdersGateway.server.emit('billing_list_refresh', { bookingId });
       return result.data;
@@ -1195,7 +1204,7 @@ export class BillingService {
         });
 
         // If LAB invoice: mark ALL linked lab orders and visit service orders as PAID
-        if (invoice.invoiceType === InvoiceType.LAB) {
+        if (invoice.invoiceType === InvoiceType.SERVICE) {
           const paidItems = await tx.invoiceItem.findMany({
             where: { invoiceId },
           });
@@ -1724,12 +1733,16 @@ export class BillingService {
   // Workspace Endpoints
 
   async getWorkspaceQueue(params: { search?: string }) {
-    // All bookingDates are stored as UTC midnight (e.g. 2026-04-15T00:00:00.000Z).
-    // We must compute date boundaries in UTC explicitly, not via setHours() which
-    // is timezone-sensitive and would produce wrong boundaries on a UTC+7 server.
+    // bookingDates are stored as UTC midnight of the Vietnam local date
+    // (e.g. April 25 Vietnam → 2026-04-25T00:00:00.000Z). The server runs in
+    // UTC (Docker), so using now.getUTCDate() gives the UTC calendar day which
+    // may lag Vietnam by one day (e.g. 19:45 UTC Apr 24 = 02:45 Vietnam Apr 25).
+    // We must offset by +7 h to find Vietnam's "today" before computing boundaries.
+    const VN_OFFSET_MS = 7 * 60 * 60 * 1000; // UTC+7
     const now = new Date();
+    const nowVN = new Date(now.getTime() + VN_OFFSET_MS);
     const todayStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+      Date.UTC(nowVN.getUTCFullYear(), nowVN.getUTCMonth(), nowVN.getUTCDate()),
     );
     const tomorrowStart = new Date(todayStart.getTime() + 86400_000);
     const thirtyDaysAgo = new Date(todayStart.getTime() - 30 * 86400_000);
@@ -1867,10 +1880,12 @@ export class BillingService {
   }
 
   async getWorkspaceKpis() {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
+    const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+    const nowVN = new Date(Date.now() + VN_OFFSET_MS);
+    const today = new Date(
+      Date.UTC(nowVN.getUTCFullYear(), nowVN.getUTCMonth(), nowVN.getUTCDate()),
+    );
+    const tomorrow = new Date(today.getTime() + 86400_000);
 
     const invoices = await this.financeRepository.findManyInvoice({
       where: {
