@@ -408,6 +408,79 @@ const DOCTORS = [
   },
 ];
 
+const MEDICINES = [
+  {
+    code: 'MED-PARA-500',
+    genericName: 'Paracetamol',
+    brandName: 'Hapacol 500mg',
+    concentration: '500mg',
+    dosageForm: 'Viên nén',
+    defaultUnit: 'viên',
+    defaultPrice: 2000,
+    stockQuantity: 1000,
+  },
+  {
+    code: 'MED-AMOX-500',
+    genericName: 'Amoxicillin',
+    brandName: 'Amoxicillin 500mg',
+    concentration: '500mg',
+    dosageForm: 'Viên nang',
+    defaultUnit: 'viên',
+    defaultPrice: 3500,
+    stockQuantity: 500,
+  },
+  {
+    code: 'MED-IBU-400',
+    genericName: 'Ibuprofen',
+    brandName: 'Gofen 400',
+    concentration: '400mg',
+    dosageForm: 'Viên nang mềm',
+    defaultUnit: 'viên',
+    defaultPrice: 5000,
+    stockQuantity: 300,
+  },
+  {
+    code: 'MED-OME-20',
+    genericName: 'Omeprazole',
+    brandName: 'Losec',
+    concentration: '20mg',
+    dosageForm: 'Viên nang',
+    defaultUnit: 'viên',
+    defaultPrice: 8000,
+    stockQuantity: 200,
+  },
+  {
+    code: 'MED-MET-500',
+    genericName: 'Metformin',
+    brandName: 'Glucophage',
+    concentration: '500mg',
+    dosageForm: 'Viên nén',
+    defaultUnit: 'viên',
+    defaultPrice: 4500,
+    stockQuantity: 600,
+  },
+  {
+    code: 'MED-AML-5',
+    genericName: 'Amlodipine',
+    brandName: 'Amlor',
+    concentration: '5mg',
+    dosageForm: 'Viên nén',
+    defaultUnit: 'viên',
+    defaultPrice: 12000,
+    stockQuantity: 400,
+  },
+  {
+    code: 'MED-SAL-2',
+    genericName: 'Salbutamol',
+    brandName: 'Ventolin',
+    concentration: '2mg',
+    dosageForm: 'Viên nén',
+    defaultUnit: 'viên',
+    defaultPrice: 3000,
+    stockQuantity: 250,
+  },
+];
+
 const TECHNICIANS = [
   {
     email: 'ktv.phuong@clinic.com',
@@ -522,6 +595,8 @@ async function main() {
     () => prisma.service.deleteMany(),
     () => prisma.category.deleteMany(),
     () => prisma.room.deleteMany(),
+    () => prisma.medicine.deleteMany(),
+    () => prisma.slotReservation.deleteMany(),
     () => prisma.user.deleteMany(),
   ];
 
@@ -1044,6 +1119,13 @@ async function main() {
   } else {
     console.warn('  ⚠️ ICD-10 file not found at', icd10Path);
   }
+
+  // 13. SEED MEDICINES
+  console.log('\n💊 Seeding medicines...');
+  for (const med of MEDICINES) {
+    await prisma.medicine.create({ data: med });
+  }
+  console.log(`  ✅ Created ${MEDICINES.length} medicines`);
 
   console.log('\n🚀 Database seeding completed successfully!');
 }
