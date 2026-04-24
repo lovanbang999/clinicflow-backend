@@ -143,61 +143,61 @@ const CATEGORIES = [
     code: 'CAT_CDHA',
     name: 'Chẩn đoán hình ảnh',
     description: 'Siêu âm, X-Quang',
-    type: ServiceCategoryType.LAB,
+    type: ServiceCategoryType.IMAGING,
   },
   {
     code: 'CAT_NHIKHOA',
     name: 'Nhi khoa',
     description: 'Khám và điều trị cho trẻ em',
-    type: ServiceCategoryType.EXAMINATION,
+    type: ServiceCategoryType.SPECIALIST,
   },
   {
     code: 'CAT_SANPHUKHOA',
     name: 'Sản phụ khoa',
     description: 'Chăm sóc sức khỏe phụ nữ và thai sản',
-    type: ServiceCategoryType.EXAMINATION,
+    type: ServiceCategoryType.SPECIALIST,
   },
   {
     code: 'CAT_CHINHHINH',
     name: 'Chấn thương chỉnh hình',
     description: 'Cơ xương khớp',
-    type: ServiceCategoryType.EXAMINATION,
+    type: ServiceCategoryType.SPECIALIST,
   },
   {
     code: 'CAT_TAMLY',
     name: 'Tâm lý',
     description: 'Tư vấn sức khỏe tâm thần',
-    type: ServiceCategoryType.EXAMINATION,
+    type: ServiceCategoryType.SPECIALIST,
   },
   {
     code: 'CAT_TMH',
     name: 'Tai Mũi Họng',
     description: 'Khám chuyên khoa TMH',
-    type: ServiceCategoryType.EXAMINATION,
+    type: ServiceCategoryType.SPECIALIST,
   },
   {
     code: 'CAT_DALIEU',
     name: 'Da liễu',
     description: 'Khám và điều trị bệnh ngoài da',
-    type: ServiceCategoryType.EXAMINATION,
+    type: ServiceCategoryType.SPECIALIST,
   },
   {
     code: 'CAT_NHAKHOA',
     name: 'Nha khoa',
     description: 'Răng Hàm Mặt',
-    type: ServiceCategoryType.EXAMINATION,
+    type: ServiceCategoryType.SPECIALIST,
   },
   {
     code: 'CAT_NHANKHOA',
     name: 'Nhãn khoa',
     description: 'Khám mắt',
-    type: ServiceCategoryType.EXAMINATION,
+    type: ServiceCategoryType.SPECIALIST,
   },
   {
     code: 'CAT_THANKINH',
     name: 'Thần kinh',
     description: 'Chẩn đoán và điều trị bệnh lý thần kinh',
-    type: ServiceCategoryType.EXAMINATION,
+    type: ServiceCategoryType.SPECIALIST,
   },
 ];
 
@@ -915,12 +915,19 @@ async function main() {
     const today = new Date(todayVN + 'T00:00:00.000Z');
 
     const slotData: {
-      doctorId: string; roomId: string; date: Date;
-      startTime: string; endTime: string;
-      maxPatients: number; bookedCount: number;
-      status: ScheduleSlotStatus; isActive: boolean;
-      maxPreBookings: number; maxQueueSize: number;
-      preBookedCount: number; queueCount: number;
+      doctorId: string;
+      roomId: string;
+      date: Date;
+      startTime: string;
+      endTime: string;
+      maxPatients: number;
+      bookedCount: number;
+      status: ScheduleSlotStatus;
+      isActive: boolean;
+      maxPreBookings: number;
+      maxQueueSize: number;
+      preBookedCount: number;
+      queueCount: number;
     }[] = [];
     for (let dayOffset = 0; dayOffset < 30; dayOffset++) {
       const slotDate = new Date(today);
@@ -949,9 +956,13 @@ async function main() {
     }
 
     await prisma.doctorScheduleSlot.createMany({ data: slotData });
-    console.log(`  ✅ Created ${slotData.length} schedule slots across ${allDoctors.length} doctors for 30 days`);
+    console.log(
+      `  ✅ Created ${slotData.length} schedule slots across ${allDoctors.length} doctors for 30 days`,
+    );
   } else {
-    console.warn('  ⚠️ No doctors or consultation rooms found — skipping slot generation');
+    console.warn(
+      '  ⚠️ No doctors or consultation rooms found — skipping slot generation',
+    );
   }
 
   // 7. SEED RECEPTIONISTS

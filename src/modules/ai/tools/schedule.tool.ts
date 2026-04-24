@@ -101,28 +101,30 @@ export class ScheduleTool {
         timeZone: 'Asia/Ho_Chi_Minh',
       });
 
-      return slots
-        .filter((slot) => slot.bookedCount < slot.maxPatients)
-        .filter((s) => {
-          if (!specialtyName) return true;
-          return s.doctor.doctorProfile?.specialties.some((sp) =>
-            sp.toLowerCase().includes(specialtyName.toLowerCase()),
-          );
-        })
-        .filter((s) => {
-          if (!serviceId) return true;
-          return s.doctor.doctorProfile?.services.some(
-            (sv) => sv.serviceId === serviceId,
-          );
-        })
-        // Exclude past time slots for today (e.g. it's 22:40 — all 08:00-16:30 slots are over)
-        .filter((slot) => {
-          const slotDateStr = slotDateFormatter.format(slot.date);
-          if (slotDateStr === todayVN) {
-            return slot.startTime > nowTimeVN;
-          }
-          return true;
-        });
+      return (
+        slots
+          .filter((slot) => slot.bookedCount < slot.maxPatients)
+          .filter((s) => {
+            if (!specialtyName) return true;
+            return s.doctor.doctorProfile?.specialties.some((sp) =>
+              sp.toLowerCase().includes(specialtyName.toLowerCase()),
+            );
+          })
+          .filter((s) => {
+            if (!serviceId) return true;
+            return s.doctor.doctorProfile?.services.some(
+              (sv) => sv.serviceId === serviceId,
+            );
+          })
+          // Exclude past time slots for today (e.g. it's 22:40 — all 08:00-16:30 slots are over)
+          .filter((slot) => {
+            const slotDateStr = slotDateFormatter.format(slot.date);
+            if (slotDateStr === todayVN) {
+              return slot.startTime > nowTimeVN;
+            }
+            return true;
+          })
+      );
     };
 
     const searchDate = date ? new Date(date) : undefined;

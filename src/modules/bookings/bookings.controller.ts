@@ -21,6 +21,7 @@ import {
 } from '@nestjs/swagger';
 import { BookingsService } from './bookings.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import { CreateDirectServiceBookingDto } from './dto/create-direct-service-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { FilterBookingDto } from './dto/filter-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
@@ -121,6 +122,25 @@ export class BookingsController {
     @CurrentUser('id') userId: string,
   ) {
     return this.bookingsService.createByReceptionist(createBookingDto, userId);
+  }
+
+  @Post('receptionist/direct-service')
+  @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Mode B — Đặt thẳng dịch vụ (không qua tư vấn)',
+    description:
+      'Bệnh nhân đã biết cần xét nghiệm / khám chuyên khoa gì. ' +
+      'Tạo Booking + MedicalRecord (visitStep=SERVICES_ORDERED) + LabOrder/VisitServiceOrder + Invoice LAB DRAFT trong 1 transaction. ' +
+      'KHÔNG tạo CONSULTATION invoice. KHÔNG qua B2 tư vấn.',
+  })
+  @ApiResponse({ status: 201, description: 'Direct service booking created' })
+  @ApiResponse({ status: 404, description: 'Service or Doctor not found' })
+  @ApiResponse({ status: 409, description: 'Queue full for this doctor today' })
+  createDirectServiceBooking(
+    @Body() dto: CreateDirectServiceBookingDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.bookingsService.createDirectServiceBooking(dto, userId);
   }
 
   @Patch(':id/service')

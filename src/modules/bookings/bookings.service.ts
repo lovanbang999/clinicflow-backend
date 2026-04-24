@@ -7,6 +7,7 @@ import {
   InvoiceStatus,
   User,
   NotificationType,
+  VisitStep,
 } from '@prisma/client';
 import {
   BookingInclude,
@@ -399,6 +400,314 @@ export class BookingsService {
       isPreBooked
         ? 'Pre-booking created and confirmed successfully'
         : 'Walk-in booking created successfully',
+      201,
+    );
+  }
+
+  /**
+   * Mô hình B — "Đặt thẳng dịch vụ" (Mode B Direct Service Walk-in).
+   *
+   * Bệnh nhân đã biết cần xét nghiệm / chuyên khoa gì.
+   * Luồng B3 → B4: KHÔNG tạo CONSULTATION invoice, KHÔNG qua B2 tư vấn.
+   *
+   * Transaction tạo:
+   *  1. Booking (status=CONFIRMED, source=WALK_IN)
+   *  2. MedicalRecord (visitStep=SERVICES_ORDERED — bỏ qua SYMPTOMS_TAKEN)
+   *  3. LabOrder (TECHNICIAN) hoặc VisitServiceOrder (DOCTOR) cho mỗi service
+   *  4. Invoice LAB DRAFT (seeded with all orders)
+   */
+  async createDirectServiceBooking(
+    dto: import('./dto/create-direct-service-booking.dto').CreateDirectServiceBookingDto,
+    createdById: string,
+  ): Promise<ApiResponse<any>> {
+    const {
+      patientProfileId,
+      doctorId,
+      serviceIds,
+      bookingDate,
+      isPreBooked = false,
+      startTime,
+      patientNotes,
+      priority = BookingPriority.NORMAL,
+    } = dto;
+
+    if (isPreBooked && !startTime) {
+      throw new ApiException(
+        MessageCodes.BOOKING_INVALID_TIME,
+        'startTime is required for pre-bookings',
+        400,
+        'Direct service booking failed',
+      );
+    }
+
+    // Validate all services exist and are active
+    const services = await this.catalogRepository.findManyServices({
+      where: { id: { in: serviceIds }, isActive: true },
+      include: {
+        doctorServices: {
+          include: {
+            doctorProfile: { include: { user: { select: { id: true } } } },
+          },
+          take: 1,
+        },
+      },
+    });
+
+    if (services.length !== serviceIds.length) {
+      throw new ApiException(
+        MessageCodes.SERVICE_NOT_FOUND,
+        'One or more services not found or inactive',
+        404,
+        'Direct service booking failed',
+      );
+    }
+
+    // Validate doctor exists and patient profile is valid
+    await this.validator.validateBooking({
+      patientProfileId,
+      doctorId,
+      bookingDate,
+      isPreBooked,
+      // serviceId omitted intentionally — validator handles undefined gracefully
+    } as import('./dto/create-booking.dto').CreateBookingDto);
+
+    const slot = await this.bookingRepository.findDoctorScheduleSlot(
+      doctorId,
+      new Date(`${bookingDate}T00:00:00.000Z`),
+    );
+
+    if (!isPreBooked) {
+      const walkInCount = await this.bookingRepository.countBookingsByFilters({
+        doctorId,
+        bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
+        isPreBooked: false,
+        status: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] },
+      });
+      const maxQueue = slot?.maxQueueSize ?? 10;
+      if (walkInCount >= maxQueue) {
+        throw new ApiException(
+          MessageCodes.QUEUE_SLOT_FULL,
+          `Walk-in queue is full for this doctor today (max ${maxQueue})`,
+          409,
+          'Direct service booking failed',
+        );
+      }
+    }
+
+    const bookingCode = await this.generateBookingCode(bookingDate);
+    const primaryService = services[0];
+    let endTime: string | undefined;
+    if (isPreBooked && startTime) {
+      endTime = this.validator.calculateEndTime(
+        startTime,
+        primaryService.durationMinutes,
+      );
+    }
+
+    const result = await this.bookingRepository.transaction(async (tx) => {
+      // 1. Create Booking
+      const newBooking = await tx.booking.create({
+        data: {
+          patientProfileId,
+          doctorId,
+          serviceId: primaryService.id, // Primary service for booking record
+          bookingCode,
+          bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
+          startTime: isPreBooked ? startTime : undefined,
+          endTime: isPreBooked ? endTime : undefined,
+          isPreBooked,
+          status: BookingStatus.CONFIRMED,
+          source: BookingSource.WALK_IN,
+          priority,
+          patientNotes,
+          bookedBy: createdById,
+          confirmedAt: new Date(),
+          roomId: slot?.roomId ?? undefined,
+        },
+        include: BookingInclude,
+      });
+
+      await tx.bookingStatusHistory.create({
+        data: {
+          bookingId: newBooking.id,
+          oldStatus: null,
+          newStatus: BookingStatus.CONFIRMED,
+          changedById: createdById,
+          reason:
+            'Mode B — Direct service walk-in: patient knows what service they need',
+        },
+      });
+
+      // 2. Create MedicalRecord rút gọn — bỏ qua SYMPTOMS_TAKEN
+      const medicalRecord = await tx.medicalRecord.create({
+        data: {
+          bookingId: newBooking.id,
+          patientProfileId,
+          doctorId,
+          visitStep: VisitStep.SERVICES_ORDERED,
+          orderedAt: new Date(),
+          version: 1,
+        },
+      });
+
+      // 3. Create LabOrder / VisitServiceOrder for each service and separate invoices
+      const labOrdersToInvoice: Array<{
+        service: (typeof services)[0];
+        orderId: string;
+      }> = [];
+      const visitOrdersToInvoice: Array<{
+        service: (typeof services)[0];
+        orderId: string;
+      }> = [];
+
+      for (const svc of services) {
+        if (svc.performerType === 'TECHNICIAN') {
+          const labOrder = await tx.labOrder.create({
+            data: {
+              medicalRecordId: medicalRecord.id,
+              serviceId: svc.id,
+              patientProfileId,
+              bookingId: newBooking.id,
+              doctorId,
+              testName: svc.name,
+              status: 'PENDING',
+            },
+          });
+          labOrdersToInvoice.push({ service: svc, orderId: labOrder.id });
+        } else {
+          // DOCTOR performer — use explicit assignment from DTO, fall back to doctorServices[0]
+          type ServiceWithDoctor = Prisma.ServiceGetPayload<{
+            include: {
+              doctorServices: {
+                include: {
+                  doctorProfile: {
+                    include: { user: { select: { id: true } } };
+                  };
+                };
+              };
+            };
+          }>;
+
+          const explicitAssignment = dto.serviceAssignments?.find(
+            (a) => a.serviceId === svc.id,
+          );
+          const fallbackUserId =
+            (svc as ServiceWithDoctor).doctorServices?.[0]?.doctorProfile?.user
+              ?.id ?? null;
+
+          const performingUserId =
+            explicitAssignment?.performingDoctorId ?? fallbackUserId ?? null;
+
+          const visitOrder = await tx.visitServiceOrder.create({
+            data: {
+              medicalRecordId: medicalRecord.id,
+              serviceId: svc.id,
+              patientProfileId,
+              bookingId: newBooking.id,
+              orderedBy: doctorId,
+              performedBy: performingUserId,
+              status: 'PENDING',
+            },
+          });
+          visitOrdersToInvoice.push({ service: svc, orderId: visitOrder.id });
+        }
+      }
+
+      // 4. Create Invoices (split by type: LAB and CONSULTATION)
+      let currentInvoiceCount = await tx.invoice.count();
+
+      // Create LAB invoice
+      if (labOrdersToInvoice.length > 0) {
+        const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(currentInvoiceCount + 1).padStart(4, '0')}`;
+        currentInvoiceCount++;
+        const totalAmount = labOrdersToInvoice.reduce(
+          (sum, item) => sum + Number(item.service.price),
+          0,
+        );
+
+        await tx.invoice.create({
+          data: {
+            bookingId: newBooking.id,
+            patientProfileId,
+            invoiceType: 'LAB',
+            invoiceNumber,
+            subtotal: totalAmount,
+            discountAmount: 0,
+            vatRate: 0,
+            vatAmount: 0,
+            taxAmount: 0,
+            totalAmount,
+            status: 'DRAFT',
+            notes: 'Mode B — Thu tiền tại quầy lễ tân (Dịch vụ CLS).',
+            items: {
+              create: labOrdersToInvoice.map((item, idx) => ({
+                itemName: item.service.name,
+                unitPrice: Number(item.service.price),
+                quantity: 1,
+                totalPrice: Number(item.service.price),
+                sortOrder: idx,
+                labOrderId: item.orderId,
+                serviceId: item.service.id,
+              })),
+            },
+          },
+        });
+      }
+
+      // Create CONSULTATION (Specialist) invoice
+      if (visitOrdersToInvoice.length > 0) {
+        const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(currentInvoiceCount + 1).padStart(4, '0')}`;
+        currentInvoiceCount++;
+        const totalAmount = visitOrdersToInvoice.reduce(
+          (sum, item) => sum + Number(item.service.price),
+          0,
+        );
+
+        await tx.invoice.create({
+          data: {
+            bookingId: newBooking.id,
+            patientProfileId,
+            invoiceType: 'CONSULTATION',
+            invoiceNumber,
+            subtotal: totalAmount,
+            discountAmount: 0,
+            vatRate: 0,
+            vatAmount: 0,
+            taxAmount: 0,
+            totalAmount,
+            status: 'DRAFT',
+            notes: 'Mode B — Thu tiền tại quầy lễ tân (Khám chuyên khoa).',
+            items: {
+              create: visitOrdersToInvoice.map((item, idx) => ({
+                itemName: item.service.name,
+                unitPrice: Number(item.service.price),
+                quantity: 1,
+                totalPrice: Number(item.service.price),
+                sortOrder: idx,
+                visitServiceOrderId: item.orderId,
+                serviceId: item.service.id,
+              })),
+            },
+          },
+        });
+      }
+
+      return newBooking;
+    });
+
+    // Notify receptionists of new direct service booking
+    await this.notificationsService.notifyRole({
+      role: UserRole.RECEPTIONIST,
+      title: 'Đặt thẳng dịch vụ mới',
+      content: `Bệnh nhân ${result.patientProfile.fullName} đã đăng ký ${services.length} dịch vụ trực tiếp. Vui lòng thu phí.`,
+      type: NotificationType.SYSTEM,
+      metadata: { bookingId: result.id, source: 'DIRECT_SERVICE' },
+    });
+
+    return ResponseHelper.success(
+      result,
+      'BOOKING.DIRECT_SERVICE_CREATED',
+      'Direct service booking created successfully',
       201,
     );
   }

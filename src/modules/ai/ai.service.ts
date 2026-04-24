@@ -17,6 +17,7 @@ import { BookingTool } from './tools/booking.tool';
 import { DoctorTool } from './tools/doctor.tool';
 import { MyBookingsTool } from './tools/my-bookings.tool';
 import { CloudflareAdapter } from './cloudflare.adapter';
+import { GroqAdapter } from './groq.adapter';
 import { AiSessionService } from './ai-session.service';
 import { AiSessionOutcome, AiMessageRole } from '@prisma/client';
 import { Observable, Subscriber } from 'rxjs';
@@ -26,15 +27,35 @@ export class AiService {
   private readonly logger = new Logger(AiService.name);
 
   constructor(
-    @Inject(AI_PROVIDER) private readonly ai: GoogleGenAI,
+    @Inject(AI_PROVIDER) private readonly aiInstances: GoogleGenAI[],
     private readonly specialtyTool: SpecialtyTool,
     private readonly scheduleTool: ScheduleTool,
     private readonly bookingTool: BookingTool,
     private readonly doctorTool: DoctorTool,
     private readonly myBookingsTool: MyBookingsTool,
     private readonly cloudflareAdapter: CloudflareAdapter,
+    private readonly groqAdapter: GroqAdapter,
     private readonly aiSessionService: AiSessionService,
   ) {}
+
+  private pickAiInstance(): GoogleGenAI {
+    return this.aiInstances[
+      Math.floor(Math.random() * this.aiInstances.length)
+    ];
+  }
+
+  private isRetryableError(err: unknown): boolean {
+    const e = err as { status?: number; message?: string };
+    const msg = e?.message?.toLowerCase() ?? '';
+    return (
+      e?.status === 503 ||
+      e?.status === 429 ||
+      msg.includes('503') ||
+      msg.includes('429') ||
+      msg.includes('high demand') ||
+      msg.includes('service unavailable')
+    );
+  }
 
   /**
    * Handles tool call execution mapping
@@ -116,25 +137,30 @@ export class AiService {
         subscriber,
         patientContext,
       ).catch(async (err) => {
-        const errorProxy = err as {
-          status?: number;
-          message?: string;
-          [key: string]: unknown;
-        };
-        const errorMsg = errorProxy?.message || '';
-        const isQuotaExceeded =
-          errorProxy?.status === 429 || errorMsg.includes('429');
-        const isHighDemand =
-          errorProxy?.status === 503 ||
-          errorMsg.includes('503') ||
-          errorMsg.toLowerCase().includes('high demand') ||
-          errorMsg.toLowerCase().includes('service unavailable');
+        if (!this.isRetryableError(err)) {
+          this.logger.error('Chat error:', err);
+          subscriber.error(err);
+          return;
+        }
 
-        if (isQuotaExceeded || isHighDemand) {
-          this.logger.warn(
-            `Gemini ${isQuotaExceeded ? 'Quota Exceeded' : 'High Demand (503)'}. Triggering Cloudflare fallback...`,
+        // Retry once with a different key before falling back
+        this.logger.warn(
+          `Gemini failed (${(err as { status?: number })?.status ?? 'unknown'}). Retrying with alternate key...`,
+        );
+        await new Promise((r) => setTimeout(r, 1500));
+
+        try {
+          await this.processChat(
+            historyMessages,
+            userMessage,
+            patientId,
+            userId,
+            sessionId,
+            subscriber,
+            patientContext,
           );
-          await this.cloudflareAdapter.processFallbackChat(
+        } catch {
+          const fallbackArgs = [
             historyMessages as Array<{
               role?: string;
               parts?: Array<{ text?: string }>;
@@ -142,10 +168,23 @@ export class AiService {
             }>,
             userMessage,
             subscriber,
-          );
-        } else {
-          this.logger.error('Chat error:', err);
-          subscriber.error(err);
+            (
+              name: string,
+              args: Record<string, unknown>,
+              pid: string,
+              uid?: string,
+            ) => this.executeTool(name, args, pid, uid),
+            patientId,
+            userId,
+          ] as const;
+
+          try {
+            this.logger.warn('Retry failed. Trying Groq fallback...');
+            await this.groqAdapter.processFallbackChat(...fallbackArgs);
+          } catch {
+            this.logger.warn('Groq failed. Triggering Cloudflare fallback...');
+            await this.cloudflareAdapter.processFallbackChat(...fallbackArgs);
+          }
         }
       });
     });
@@ -170,8 +209,8 @@ export class AiService {
     // Build a personalized system prompt with patient context + current time
     const systemInstruction = buildSystemPrompt(patientContext);
 
-    const chat = this.ai.chats.create({
-      model: 'gemini-2.5-flash',
+    const chat = this.pickAiInstance().chats.create({
+      model: 'gemini-2.0-flash',
       config: {
         systemInstruction,
         tools: CHATBOT_TOOLS,

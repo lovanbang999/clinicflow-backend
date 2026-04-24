@@ -318,7 +318,17 @@ export const AI_PROVIDER = 'AI_PROVIDER';
 export const aiProvider = {
   provide: AI_PROVIDER,
   useFactory: () => {
-    return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+    const keys = [
+      process.env.GEMINI_API_KEY,
+      process.env.GEMINI_API_KEY_2,
+      process.env.GEMINI_API_KEY_3,
+    ].filter(Boolean) as string[];
+
+    if (keys.length === 0) {
+      throw new Error('No GEMINI_API_KEY configured');
+    }
+
+    return keys.map((key) => new GoogleGenAI({ apiKey: key }));
   },
 };
 

@@ -1175,6 +1175,14 @@ export class MedicalRecordsService {
 
       // 2. Update Booking to AWAITING_RESULTS (Consultation doctor knows patient is being seen)
       if (vso.bookingId) {
+        // Fetch current booking status to use as correct oldStatus in history
+        // (direct-service walk-ins are CONFIRMED; normal referrals are CHECKED_IN)
+        const currentBooking = await tx.booking.findUnique({
+          where: { id: vso.bookingId },
+          select: { status: true },
+        });
+        const prevStatus = currentBooking?.status ?? BookingStatus.CHECKED_IN;
+
         await tx.booking.update({
           where: { id: vso.bookingId },
           data: { status: BookingStatus.AWAITING_RESULTS },
@@ -1183,7 +1191,7 @@ export class MedicalRecordsService {
         await tx.bookingStatusHistory.create({
           data: {
             bookingId: vso.bookingId,
-            oldStatus: BookingStatus.CHECKED_IN, // Assuming they were checked-in/waiting
+            oldStatus: prevStatus,
             newStatus: BookingStatus.AWAITING_RESULTS,
             changedById: doctorId,
             reason: 'Specialist examination started',

@@ -407,11 +407,42 @@ export class QueueService {
     });
 
     if (!queueRecord) {
-      throw new ApiException(
-        MessageCodes.QUEUE_NOT_FOUND,
-        'Queue record not found',
-        404,
-        'Queue retrieval failed',
+      // Fallback: If no BookingQueue record exists (e.g. for direct-service walk-ins that bypassed checkIn),
+      // we can construct a synthetic QueueRecord if the booking exists.
+      const booking = await this.bookingRepository.findUnique({
+        where: { id: bookingId },
+        include: BookingInclude,
+      });
+
+      if (!booking) {
+        throw new ApiException(
+          MessageCodes.QUEUE_NOT_FOUND,
+          'Queue record not found',
+          404,
+          'Queue retrieval failed',
+        );
+      }
+
+      // Return synthetic queue record
+      return ResponseHelper.success(
+        {
+          id: `synth-${booking.id}`,
+          bookingId: booking.id,
+          doctorId: booking.doctorId,
+          queueDate: booking.bookingDate,
+          queuePosition: 0,
+          estimatedWaitMinutes: 0,
+          isPreBooked: booking.isPreBooked,
+          scheduledTime: booking.startTime,
+          createdAt: booking.createdAt,
+          updatedAt: booking.updatedAt,
+          calledAt: null,
+          completedAt: null,
+          booking,
+        } as unknown as QueueRecordWithRelations,
+        MessageCodes.QUEUE_RETRIEVED,
+        'Queue record retrieved successfully (Synthetic)',
+        200,
       );
     }
 
