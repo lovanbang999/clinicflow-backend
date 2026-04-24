@@ -8,10 +8,6 @@ datasource db {
   provider = "mysql"
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// LOOKUP / REFERENCE
-// ─────────────────────────────────────────────────────────────────────────────
-
 model Icd10Code {
   id        String   @id @default(uuid())
   code      String   @unique
@@ -24,47 +20,42 @@ model Icd10Code {
   @@map("icd10_codes")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// USER & AUTH
-// ─────────────────────────────────────────────────────────────────────────────
-
 model User {
-  id                   String                 @id @default(uuid())
-  email                String                 @unique
-  password             String
-  role                 UserRole               @default(PATIENT)
-  fullName             String
-  phone                String?
-  avatar               String?
-  dateOfBirth          DateTime?              @db.Date
-  gender               Gender?
-  address              String?
-  isActive             Boolean                @default(false)
-  isVerified           Boolean                @default(false)
-  deletedAt            DateTime?
-  createdAt            DateTime               @default(now())
-  updatedAt            DateTime               @updatedAt
-
-  aiChatSessions       AiChatSession[]
-  auditLogs            AuditLog[]             @relation("ActorLogs")
-  statusChanges        BookingStatusHistory[] @relation("ChangedByUser")
-  bookedBookings       Booking[]              @relation("BookedByUser")
-  cancelledBookings    Booking[]              @relation("CancelledByUser")
-  bookingsAsDoctor     Booking[]              @relation("DoctorBookings")
-  breakTimes           DoctorBreakTime[]
-  approvedOffDays      DoctorOffDay[]         @relation("ApprovedOffDays")
-  offDays              DoctorOffDay[]         @relation("DoctorOffDays")
-  doctorProfile        DoctorProfile?
-  scheduleSlots        DoctorScheduleSlot[]   @relation("DoctorScheduleSlots")
-  visitServiceOrdersAsPerformer VisitServiceOrder[] @relation("PerformedBy")
-  workingHours         DoctorWorkingHours[]
-  labResultsRecorded   LabResult[]            @relation("RecordedByUser")
-  notifications        Notification[]
-  patientProfile       PatientProfile?
-  paymentsConfirmed    Payment[]              @relation("ConfirmedByUser")
-  refreshTokens        RefreshToken[]
-  systemConfigsUpdated SystemConfig[]         @relation("UpdatedByUser")
-  verificationCodes    VerificationCode[]
+  id                            String                 @id @default(uuid())
+  email                         String                 @unique
+  password                      String
+  role                          UserRole               @default(PATIENT)
+  fullName                      String
+  phone                         String?
+  avatar                        String?
+  dateOfBirth                   DateTime?              @db.Date
+  gender                        Gender?
+  address                       String?
+  isActive                      Boolean                @default(false)
+  isVerified                    Boolean                @default(false)
+  deletedAt                     DateTime?
+  createdAt                     DateTime               @default(now())
+  updatedAt                     DateTime               @updatedAt
+  aiChatSessions                AiChatSession[]
+  auditLogs                     AuditLog[]             @relation("ActorLogs")
+  statusChanges                 BookingStatusHistory[] @relation("ChangedByUser")
+  bookedBookings                Booking[]              @relation("BookedByUser")
+  cancelledBookings             Booking[]              @relation("CancelledByUser")
+  bookingsAsDoctor              Booking[]              @relation("DoctorBookings")
+  breakTimes                    DoctorBreakTime[]
+  approvedOffDays               DoctorOffDay[]         @relation("ApprovedOffDays")
+  offDays                       DoctorOffDay[]         @relation("DoctorOffDays")
+  doctorProfile                 DoctorProfile?
+  scheduleSlots                 DoctorScheduleSlot[]   @relation("DoctorScheduleSlots")
+  workingHours                  DoctorWorkingHours[]
+  labResultsRecorded            LabResult[]            @relation("RecordedByUser")
+  notifications                 Notification[]
+  patientProfile                PatientProfile?
+  paymentsConfirmed             Payment[]              @relation("ConfirmedByUser")
+  refreshTokens                 RefreshToken[]
+  systemConfigsUpdated          SystemConfig[]         @relation("UpdatedByUser")
+  verificationCodes             VerificationCode[]
+  visitServiceOrdersAsPerformer VisitServiceOrder[]    @relation("PerformedBy")
 
   @@index([email])
   @@index([role])
@@ -104,10 +95,6 @@ model VerificationCode {
   @@map("verification_codes")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DOCTOR
-// ─────────────────────────────────────────────────────────────────────────────
-
 model DoctorProfile {
   id                String          @id @default(uuid())
   userId            String          @unique
@@ -115,8 +102,6 @@ model DoctorProfile {
   qualifications    Json
   yearsOfExperience Int             @default(0)
   bio               String?
-  // Nếu consultationFee > 0 → B1 tạo Invoice CONSULTATION và thu tiền trước khi vào gặp BS
-  // Nếu null hoặc 0 → không thu phí khám tư vấn
   consultationFee   Decimal?        @db.Decimal(12, 2)
   rating            Decimal         @default(0.00) @db.Decimal(3, 2)
   reviewCount       Int             @default(0)
@@ -216,30 +201,23 @@ model DoctorService {
   @@map("doctor_services")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ROOM
-// ─────────────────────────────────────────────────────────────────────────────
-
 model Room {
-  id            String               @id @default(uuid())
-  name          String               @unique
-  type          RoomType             @default(CONSULTATION)
-  floor         String?
-  capacity      Int                  @default(1)
-  isActive      Boolean              @default(true)
-  notes         String?
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
-  bookings      Booking[]
-  scheduleSlots DoctorScheduleSlot[]
+  id                 String               @id @default(uuid())
+  name               String               @unique
+  type               RoomType             @default(CONSULTATION)
+  floor              String?
+  capacity           Int                  @default(1)
+  isActive           Boolean              @default(true)
+  notes              String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  bookings           Booking[]
+  scheduleSlots      DoctorScheduleSlot[]
+  visitServiceOrders VisitServiceOrder[]  @relation("VSORoom")
 
   @@index([isActive])
   @@map("rooms")
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PATIENT
-// ─────────────────────────────────────────────────────────────────────────────
 
 model PatientProfile {
   id                       String    @id @default(uuid())
@@ -282,10 +260,6 @@ model PatientProfile {
   @@map("patient_profiles")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SERVICE & CATEGORY
-// ─────────────────────────────────────────────────────────────────────────────
-
 model Category {
   id          String              @id @default(uuid())
   code        String              @unique
@@ -303,34 +277,24 @@ model Category {
 }
 
 model Service {
-  id              String        @id @default(uuid())
-  name            String        @unique
-  description     String?
-  iconUrl         String?
-  serviceCode     String?       @unique
-  durationMinutes Int
-  price           Decimal       @db.Decimal(12, 2)
-  maxSlotsPerHour Int           @default(2)
-  categoryId      String?
-  preparationNotes String?
-  tags            Json          @default("[]")
-
-  // ── Routing logic ──────────────────────────────────────────────────────────
-  // TECHNICIAN → tạo LabOrder → worklist KTV (/technician/lab-worklist)
-  // DOCTOR     → tạo VisitServiceOrder → queue BS chuyên khoa (/doctor/examination)
-  performerType   PerformerType @default(TECHNICIAN)
-
-  // Xác định form kết quả đặc thù khi BS chuyên khoa nhập kết quả (chỉ áp dụng khi performerType = DOCTOR)
-  examFormType    ExamFormType  @default(GENERAL)
-
-  // Xác định form nhập kết quả cho KTV (chỉ áp dụng khi performerType = TECHNICIAN)
-  labFormType     LabFormType   @default(GENERAL)
-
-  isActive        Boolean       @default(true)
-  deletedAt       DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-
+  id                 String              @id @default(uuid())
+  name               String              @unique
+  description        String?
+  iconUrl            String?
+  serviceCode        String?             @unique
+  durationMinutes    Int
+  price              Decimal             @db.Decimal(12, 2)
+  maxSlotsPerHour    Int                 @default(2)
+  categoryId         String?
+  preparationNotes   String?
+  tags               Json
+  performerType      PerformerType       @default(TECHNICIAN)
+  examFormType       ExamFormType        @default(GENERAL)
+  isActive           Boolean             @default(true)
+  deletedAt          DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  labFormType        LabFormType         @default(GENERAL)
   bookings           Booking[]
   doctorServices     DoctorService[]
   invoiceItems       InvoiceItem[]
@@ -345,25 +309,20 @@ model Service {
   @@map("services")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BOOKING & QUEUE
-// ─────────────────────────────────────────────────────────────────────────────
-
 model Booking {
-  id               String          @id @default(uuid())
+  id               String                 @id @default(uuid())
   patientProfileId String
   doctorId         String
-  // serviceId = null khi mới tạo (B1). BS tư vấn cập nhật sau khi xác định dịch vụ chính (B2)
   serviceId        String?
-  bookingCode      String          @unique
-  bookingDate      DateTime        @db.Date
+  bookingCode      String                 @unique
+  bookingDate      DateTime               @db.Date
   startTime        String?
   endTime          String?
-  isPreBooked      Boolean         @default(true)
+  isPreBooked      Boolean                @default(true)
   estimatedTime    DateTime?
-  status           BookingStatus   @default(PENDING)
-  source           BookingSource   @default(ONLINE)
-  priority         BookingPriority @default(NORMAL)
+  status           BookingStatus          @default(PENDING)
+  source           BookingSource          @default(ONLINE)
+  priority         BookingPriority        @default(NORMAL)
   bookedBy         String?
   patientNotes     String?
   doctorNotes      String?
@@ -372,22 +331,22 @@ model Booking {
   confirmedAt      DateTime?
   checkedInAt      DateTime?
   reminderSentAt   DateTime?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
   roomId           String?
-
-  aiChatSessions AiChatSession[]
-  queueRecord    BookingQueue?
-  statusHistory  BookingStatusHistory[]
-  bookedByUser   User?          @relation("BookedByUser", fields: [bookedBy], references: [id])
-  cancelledByUser User?         @relation("CancelledByUser", fields: [cancelledBy], references: [id])
-  doctor         User           @relation("DoctorBookings", fields: [doctorId], references: [id])
-  patientProfile PatientProfile @relation(fields: [patientProfileId], references: [id])
-  room           Room?          @relation(fields: [roomId], references: [id])
-  service        Service?       @relation(fields: [serviceId], references: [id])
-  invoices       Invoice[]
-  labOrders      LabOrder[]
-  medicalRecord  MedicalRecord?
+  bookingMode      BookingMode            @default(CONSULTATION_FIRST)
+  aiChatSessions   AiChatSession[]
+  queueRecord      BookingQueue?
+  statusHistory    BookingStatusHistory[]
+  bookedByUser     User?                  @relation("BookedByUser", fields: [bookedBy], references: [id])
+  cancelledByUser  User?                  @relation("CancelledByUser", fields: [cancelledBy], references: [id])
+  doctor           User                   @relation("DoctorBookings", fields: [doctorId], references: [id])
+  patientProfile   PatientProfile         @relation(fields: [patientProfileId], references: [id])
+  room             Room?                  @relation(fields: [roomId], references: [id])
+  service          Service?               @relation(fields: [serviceId], references: [id])
+  invoices         Invoice[]
+  labOrders        LabOrder[]
+  medicalRecord    MedicalRecord?
 
   @@index([patientProfileId])
   @@index([doctorId])
@@ -398,10 +357,10 @@ model Booking {
   @@index([doctorId, bookingDate, isPreBooked])
   @@index([doctorId, bookingDate, startTime])
   @@index([doctorId, bookingDate, status])
-  @@index([bookedBy],     map: "bookings_bookedBy_fkey")
-  @@index([cancelledBy],  map: "bookings_cancelledBy_fkey")
-  @@index([roomId],       map: "bookings_roomId_fkey")
-  @@index([serviceId],    map: "bookings_serviceId_fkey")
+  @@index([bookedBy], map: "bookings_bookedBy_fkey")
+  @@index([cancelledBy], map: "bookings_cancelledBy_fkey")
+  @@index([roomId], map: "bookings_roomId_fkey")
+  @@index([serviceId], map: "bookings_serviceId_fkey")
   @@map("bookings")
 }
 
@@ -458,29 +417,20 @@ model BookingStatusHistory {
   @@map("booking_status_history")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MEDICAL RECORD & CLINICAL
-// ─────────────────────────────────────────────────────────────────────────────
-
 model MedicalRecord {
-  id               String    @id @default(uuid())
-  bookingId        String    @unique
-  patientProfileId String
-  doctorId         String
-
-  visitStep        VisitStep @default(SYMPTOMS_TAKEN)
-  version          Int       @default(0)
-
-  // Sinh hiệu (B2 — BS tư vấn ghi)
-  bloodPressure    String?
-  heartRate        Int?
-  temperature      Decimal?  @db.Decimal(4, 1)
-  spO2             Int?
-  weightKg         Decimal?  @db.Decimal(5, 2)
-  heightCm         Decimal?  @db.Decimal(5, 1)
-  bmi              Decimal?  @db.Decimal(4, 1)
-
-  // Triệu chứng & lịch sử (B2)
+  id                 String              @id @default(uuid())
+  bookingId          String              @unique
+  patientProfileId   String
+  doctorId           String
+  visitStep          VisitStep           @default(SYMPTOMS_TAKEN)
+  version            Int                 @default(0)
+  bloodPressure      String?
+  heartRate          Int?
+  temperature        Decimal?            @db.Decimal(4, 1)
+  spO2               Int?
+  weightKg           Decimal?            @db.Decimal(5, 2)
+  heightCm           Decimal?            @db.Decimal(5, 1)
+  bmi                Decimal?            @db.Decimal(4, 1)
   chiefComplaint     String?
   additionalSymptoms String?
   clinicalFindings   String?
@@ -488,22 +438,17 @@ model MedicalRecord {
   medicalHistory     String?
   allergies          String?
   symptomsAt         DateTime?
-
-  // Chẩn đoán & điều trị (B7)
-  diagnosisCode  String?
-  diagnosisName  String?
-  treatmentPlan  String?
-  followUpDate   DateTime? @db.Date
-  followUpNote   String?
-
-  // Timestamps
-  orderedAt    DateTime?
-  diagnosedAt  DateTime?
-  prescribedAt DateTime?
-  isFinalized  Boolean   @default(false)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
+  diagnosisCode      String?
+  diagnosisName      String?
+  treatmentPlan      String?
+  followUpDate       DateTime?           @db.Date
+  followUpNote       String?
+  orderedAt          DateTime?
+  diagnosedAt        DateTime?
+  prescribedAt       DateTime?
+  isFinalized        Boolean             @default(false)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
   labOrders          LabOrder[]
   booking            Booking             @relation(fields: [bookingId], references: [id])
   prescription       Prescription?
@@ -516,82 +461,64 @@ model MedicalRecord {
   @@map("medical_records")
 }
 
-// Dịch vụ Nhóm 2 (performerType = DOCTOR): BS chuyên khoa thực hiện
-// VD: Khám mắt, khám răng, khám tai mũi họng...
 model VisitServiceOrder {
-  id               String          @id @default(uuid())
-  medicalRecordId  String
-  serviceId        String
-  patientProfileId String
-  bookingId        String
-  status           ServiceOrderStatus @default(PENDING)
-  orderedBy        String          // userId của BS tư vấn ra chỉ định
-  performedBy      String?         // userId của BS chuyên khoa thực hiện
-  performer        User?           @relation("PerformedBy", fields: [performedBy], references: [id])
-
-  // STT tại phòng chuyên khoa (tương tự LabOrder.queueNumber)
-  // Được gán sau khi BN thanh toán (B3)
-  queueNumber      Int?
-
-  // Thời điểm BN thanh toán dịch vụ này (B3)
-  paidAt           DateTime?
-
-  // Kết quả khám chuyên khoa (B4')
-  resultText       String?   @db.Text
-  findings         Json?     // Structured specialist examination data
-  resultFileUrl    String?
-  isAbnormal       Boolean?
-  abnormalNote     String?
-
-  // Ghi chú / khuyến nghị BS chuyên khoa gửi lại BS tư vấn
-  specialistNote   String?   @db.Text
-
-  startedAt        DateTime?
-  completedAt      DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-
-  // Smart Queue Suggestion
-  suggestedOrder   Int?      // Recommended order for the patient to visit
-  groupKey         String?   // Key to group services together (e.g., by room)
-
-  prescriptionItems PrescriptionItem[]
-  medicalRecord     MedicalRecord @relation(fields: [medicalRecordId], references: [id], onDelete: Cascade)
-  service           Service       @relation(fields: [serviceId], references: [id])
+  id                String             @id @default(uuid())
+  medicalRecordId   String
+  serviceId         String
+  patientProfileId  String
+  bookingId         String
+  status            ServiceOrderStatus @default(PENDING)
+  orderedBy         String
+  performedBy       String?
+  queueNumber       Int?
+  paidAt            DateTime?
+  resultText        String?            @db.Text
+  resultFileUrl     String?
+  isAbnormal        Boolean?
+  abnormalNote      String?
+  specialistNote    String?            @db.Text
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  findings          Json?
+  groupKey          String?
+  suggestedOrder    Int?
+  estimatedWaitAt   DateTime?
+  roomId            String?
   invoiceItem       InvoiceItem?
+  prescriptionItems PrescriptionItem[]
+  medicalRecord     MedicalRecord      @relation(fields: [medicalRecordId], references: [id], onDelete: Cascade)
+  performer         User?              @relation("PerformedBy", fields: [performedBy], references: [id])
+  room              Room?              @relation("VSORoom", fields: [roomId], references: [id])
+  service           Service            @relation(fields: [serviceId], references: [id])
 
   @@index([medicalRecordId])
   @@index([patientProfileId])
   @@index([bookingId])
   @@index([status])
   @@index([serviceId], map: "visit_service_orders_serviceId_fkey")
+  @@index([roomId], map: "visit_service_orders_roomId_fkey")
+  @@index([performedBy], map: "visit_service_orders_performedBy_fkey")
   @@map("visit_service_orders")
 }
 
-// Dịch vụ Nhóm 1 (performerType = TECHNICIAN): KTV thực hiện
-// VD: XN máu, siêu âm, X-quang, ECG...
 model LabOrder {
-  id               String         @id @default(uuid())
-  bookingId        String
-  medicalRecordId  String
-  patientProfileId String
-  doctorId         String         // BS tư vấn ra chỉ định
-  testName         String
-  testDescription  String?
-  serviceId        String?
-  status           LabOrderStatus @default(PENDING)
-
-  // Được gán sau khi BN thanh toán (B3) — STT tại phòng lab/kỹ thuật
-  queueNumber      Int?
-
-  orderedAt        DateTime @default(now())
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  // Smart Queue Suggestion
-  suggestedOrder   Int?      // Recommended order for the patient to visit
-  groupKey         String?   // Key to group services together (e.g., by room)
-
+  id                String             @id @default(uuid())
+  bookingId         String
+  medicalRecordId   String
+  patientProfileId  String
+  doctorId          String
+  testName          String
+  testDescription   String?
+  serviceId         String?
+  status            LabOrderStatus     @default(PENDING)
+  queueNumber       Int?
+  orderedAt         DateTime           @default(now())
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  groupKey          String?
+  suggestedOrder    Int?
   invoiceItem       InvoiceItem?
   booking           Booking            @relation(fields: [bookingId], references: [id])
   medicalRecord     MedicalRecord      @relation(fields: [medicalRecordId], references: [id])
@@ -601,60 +528,70 @@ model LabOrder {
 
   @@index([patientProfileId])
   @@index([medicalRecordId])
-  @@index([bookingId],  map: "lab_orders_bookingId_fkey")
-  @@index([serviceId],  map: "lab_orders_serviceId_fkey")
+  @@index([bookingId], map: "lab_orders_bookingId_fkey")
+  @@index([serviceId], map: "lab_orders_serviceId_fkey")
   @@index([doctorId])
   @@index([status])
   @@map("lab_orders")
 }
 
 model LabResult {
-  id            String   @id @default(uuid())
-  labOrderId    String   @unique
-  resultText    String?  @db.Text
-  resultFileUrl String?
-  isAbnormal    Boolean?
-  abnormalNote  String?
-  recordedBy    String   // userId của KTV
-  resultDate    DateTime
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  labOrder      LabOrder @relation(fields: [labOrderId], references: [id])
-  recordedByUser User    @relation("RecordedByUser", fields: [recordedBy], references: [id])
+  id             String   @id @default(uuid())
+  labOrderId     String   @unique
+  resultText     String?  @db.Text
+  resultFileUrl  String?
+  isAbnormal     Boolean?
+  abnormalNote   String?
+  recordedBy     String
+  resultDate     DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  labOrder       LabOrder @relation(fields: [labOrderId], references: [id])
+  recordedByUser User     @relation("RecordedByUser", fields: [recordedBy], references: [id])
 
   @@index([labOrderId])
   @@index([recordedBy], map: "lab_results_recordedBy_fkey")
   @@map("lab_results")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PRESCRIPTION
-// ─────────────────────────────────────────────────────────────────────────────
+model Medicine {
+  id                String             @id @default(uuid())
+  code              String             @unique
+  genericName       String
+  brandName         String?
+  concentration     String?
+  dosageForm        String?
+  defaultUnit       String             @default("viên")
+  defaultPrice      Decimal            @default(0.00) @db.Decimal(12, 2)
+  isActive          Boolean            @default(true)
+  stockQuantity     Int                @default(0)
+  notes             String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  prescriptionItems PrescriptionItem[]
+
+  @@index([genericName])
+  @@index([code])
+  @@index([isActive])
+  @@map("medicines")
+}
 
 model Prescription {
-  id               String    @id @default(uuid())
-  medicalRecordId  String    @unique
-  patientProfileId String
-  doctorId         String
-
-  notes            String?
-  isPrinted        Boolean   @default(false)
-  printedAt        DateTime?
-
-  // B8 — Thuốc tùy chọn:
-  // null = chưa quyết định, true = mua tại phòng khám, false = mua ngoài
+  id                    String             @id @default(uuid())
+  medicalRecordId       String             @unique
+  patientProfileId      String
+  doctorId              String
+  notes                 String?
+  isPrinted             Boolean            @default(false)
+  printedAt             DateTime?
   isFulfilledInternally Boolean?
-  // Thời điểm BN nhận thuốc tại quầy dược (khi isFulfilledInternally = true)
   fulfilledAt           DateTime?
-  // FK đến Invoice PHARMACY (chỉ có khi isFulfilledInternally = true)
-  pharmacyInvoiceId     String?   @unique
-  pharmacyInvoice       Invoice?  @relation("PharmacyInvoice", fields: [pharmacyInvoiceId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  items         PrescriptionItem[]
-  medicalRecord MedicalRecord @relation(fields: [medicalRecordId], references: [id])
+  pharmacyInvoiceId     String?            @unique
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  items                 PrescriptionItem[]
+  medicalRecord         MedicalRecord      @relation(fields: [medicalRecordId], references: [id])
+  pharmacyInvoice       Invoice?           @relation("PharmacyInvoice", fields: [pharmacyInvoiceId], references: [id])
 
   @@index([patientProfileId])
   @@index([medicalRecordId])
@@ -663,7 +600,7 @@ model Prescription {
 }
 
 model PrescriptionItem {
-  id                  String    @id @default(uuid())
+  id                  String             @id @default(uuid())
   prescriptionId      String
   visitServiceOrderId String?
   labOrderId          String?
@@ -672,24 +609,23 @@ model PrescriptionItem {
   frequency           String
   durationDays        Int?
   quantity            Int
-  unit                String    @default("viên")
+  unit                String             @default("viên")
   instructions        String?
-  sortOrder           Int       @default(0)
-  createdAt           DateTime  @default(now())
-
-  labOrder          LabOrder?          @relation(fields: [labOrderId],          references: [id])
-  prescription      Prescription       @relation(fields: [prescriptionId],      references: [id], onDelete: Cascade)
-  visitServiceOrder VisitServiceOrder? @relation(fields: [visitServiceOrderId], references: [id])
+  sortOrder           Int                @default(0)
+  createdAt           DateTime           @default(now())
+  medicineId          String?
+  unitPrice           Decimal?           @db.Decimal(12, 2)
+  labOrder            LabOrder?          @relation(fields: [labOrderId], references: [id])
+  medicine            Medicine?          @relation(fields: [medicineId], references: [id])
+  prescription        Prescription       @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  visitServiceOrder   VisitServiceOrder? @relation(fields: [visitServiceOrderId], references: [id])
 
   @@index([prescriptionId])
-  @@index([labOrderId],          map: "prescription_items_labOrderId_fkey")
+  @@index([labOrderId], map: "prescription_items_labOrderId_fkey")
   @@index([visitServiceOrderId], map: "prescription_items_visitServiceOrderId_fkey")
+  @@index([medicineId], map: "prescription_items_medicineId_fkey")
   @@map("prescription_items")
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BILLING
-// ─────────────────────────────────────────────────────────────────────────────
 
 model Invoice {
   id               String         @id @default(uuid())
@@ -716,12 +652,10 @@ model Invoice {
   paidAt           DateTime?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
-
-  items        InvoiceItem[]
-  booking      Booking       @relation(fields: [bookingId],        references: [id])
-  payments     Payment[]
-  // Relation ngược từ Prescription.pharmacyInvoice (chỉ Invoice type=PHARMACY mới có)
-  prescription Prescription? @relation("PharmacyInvoice")
+  items            InvoiceItem[]
+  booking          Booking        @relation(fields: [bookingId], references: [id])
+  payments         Payment[]
+  prescription     Prescription?  @relation("PharmacyInvoice")
 
   @@index([bookingId])
   @@index([patientProfileId])
@@ -733,26 +667,21 @@ model Invoice {
 }
 
 model InvoiceItem {
-  id          String   @id @default(uuid())
-  invoiceId   String
-  serviceId   String?
-  itemName    String
-  unitPrice   Decimal  @db.Decimal(12, 2)
-  quantity    Int      @default(1)
-  totalPrice  Decimal  @db.Decimal(12, 2)
-  sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
-
-  // Link đến LabOrder (Nhóm 1 — KTV thực hiện)
+  id                  String             @id @default(uuid())
+  invoiceId           String
+  serviceId           String?
+  itemName            String
+  unitPrice           Decimal            @db.Decimal(12, 2)
+  quantity            Int                @default(1)
+  totalPrice          Decimal            @db.Decimal(12, 2)
+  sortOrder           Int                @default(0)
+  createdAt           DateTime           @default(now())
   labOrderId          String?            @unique
-  labOrder            LabOrder?          @relation(fields: [labOrderId],          references: [id])
-
-  // Link đến VisitServiceOrder (Nhóm 2 — BS chuyên khoa thực hiện)
   visitServiceOrderId String?            @unique
+  invoice             Invoice            @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  labOrder            LabOrder?          @relation(fields: [labOrderId], references: [id])
+  service             Service?           @relation(fields: [serviceId], references: [id])
   visitServiceOrder   VisitServiceOrder? @relation(fields: [visitServiceOrderId], references: [id])
-
-  invoice  Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  service  Service?  @relation(fields: [serviceId], references: [id])
 
   @@index([invoiceId])
   @@index([serviceId])
@@ -780,10 +709,6 @@ model Payment {
   @@index([confirmedBy], map: "payments_confirmedBy_fkey")
   @@map("payments")
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// NOTIFICATION, AUDIT, SYSTEM
-// ─────────────────────────────────────────────────────────────────────────────
 
 model Notification {
   id           String              @id @default(uuid())
@@ -851,10 +776,6 @@ model SystemConfig {
   @@map("system_configs")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AI CHAT
-// ─────────────────────────────────────────────────────────────────────────────
-
 model AiChatSession {
   id               String           @id @default(uuid())
   userId           String
@@ -899,10 +820,6 @@ model AiChatMessage {
   @@map("ai_chat_messages")
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ENUMS
-// ═════════════════════════════════════════════════════════════════════════════
-
 enum UserRole {
   PATIENT
   DOCTOR
@@ -937,7 +854,6 @@ enum BookingStatus {
   CONFIRMED
   CHECKED_IN
   IN_PROGRESS
-  // BN đang ở phòng lab/chuyên khoa — BS tư vấn không gọi BN tiếp theo vào
   AWAITING_RESULTS
   COMPLETED
   CANCELLED
@@ -973,83 +889,77 @@ enum RoomType {
   WAITING
 }
 
-// Dùng cho LabOrder (Nhóm 1 — KTV thực hiện)
 enum LabOrderStatus {
-  PENDING      // Mới tạo, chờ BN thanh toán
-  PAID         // BN đã thanh toán, đang chờ KTV thực hiện
-  IN_PROGRESS  // KTV đang thực hiện
-  COMPLETED    // KTV đã hoàn tất và nhập kết quả
+  PENDING
+  PAID
+  IN_PROGRESS
+  COMPLETED
   CANCELLED
 }
 
-// Dùng cho VisitServiceOrder (Nhóm 2 — BS chuyên khoa thực hiện)
-// Tách riêng để tránh nhầm lẫn về ngữ nghĩa
 enum ServiceOrderStatus {
-  PENDING      // Mới tạo, chờ BN thanh toán
-  PAID         // BN đã thanh toán, chờ BS chuyên khoa thực hiện
-  IN_PROGRESS  // BS chuyên khoa đang khám
-  COMPLETED    // BS chuyên khoa đã hoàn tất và nhập kết quả
+  PENDING
+  PAID
+  IN_PROGRESS
+  COMPLETED
   CANCELLED
 }
 
 enum ServiceCategoryType {
-  EXAMINATION  // Khám lâm sàng
-  LAB          // Xét nghiệm
-  IMAGING      // Chẩn đoán hình ảnh (siêu âm, X-quang, MRI, CT)
-  PROCEDURE    // Thủ thuật (nội soi, điện tim, đo loãng xương)
-  SPECIALIST   // Khám chuyên khoa (mắt, răng, TMH...)
+  EXAMINATION
+  LAB
+  IMAGING
+  PROCEDURE
+  SPECIALIST
 }
 
-// Quyết định route: ai thực hiện dịch vụ này
 enum PerformerType {
-  TECHNICIAN // KTV → /technician/lab-worklist
-  DOCTOR     // BS chuyên khoa → /doctor/examination
+  TECHNICIAN
+  DOCTOR
 }
 
-// Form kết quả đặc thù cho từng chuyên khoa (chỉ dùng khi performerType = DOCTOR)
 enum ExamFormType {
-  GENERAL      // Tổng quát / chuyên khoa khác (form chung)
-  EYE          // Nhãn khoa
-  DENTAL       // Răng hàm mặt
-  ENT          // Tai mũi họng
-  CARDIOLOGY   // Tim mạch
-  DERMATOLOGY  // Da liễu
-  GYNECOLOGY   // Sản phụ khoa
-  ORTHOPEDIC   // Cơ xương khớp
-  NEUROLOGY    // Thần kinh
-  GASTRO       // Tiêu hóa
-  ENDOCRINE    // Nội tiết & chuyển hóa
-  UROLOGY      // Tiết niệu
-  RESPIRATORY  // Hô hấp
+  GENERAL
+  EYE
+  DENTAL
+  ENT
+  CARDIOLOGY
+  DERMATOLOGY
+  GYNECOLOGY
+  ORTHOPEDIC
+  NEUROLOGY
+  GASTRO
+  ENDOCRINE
+  UROLOGY
+  RESPIRATORY
 }
 
-// Form nhập kết quả cho KTV (chỉ dùng khi performerType = TECHNICIAN)
 enum LabFormType {
-  BLOOD_LAB    // Xét nghiệm máu - bảng nhập từng chỉ số (CBC, Lipid, Gan, Thận...)
-  URINE_LAB    // Xét nghiệm nước tiểu / phân - nhập từng chỉ số
-  IMAGING      // Chẩn đoán hình ảnh (siêu âm, X-quang, CT, MRI) - upload + kết luận
-  ECG          // Điện tâm đồ - nhịp tim, ST-T, kết luận dropdown
-  ENDOSCOPY    // Nội soi - vị trí tổn thương, CLO test, sinh thiết
-  SPIROMETRY   // Đo chức năng hô hấp - FEV1, FVC, FEV1/FVC
-  BONE_DENSITY // Đo loãng xương - T-score, Z-score theo vùng
-  GENERAL      // Chung/Khác - chỉ textarea + upload
+  BLOOD_LAB
+  URINE_LAB
+  IMAGING
+  ECG
+  ENDOSCOPY
+  SPIROMETRY
+  BONE_DENSITY
+  GENERAL
 }
 
 enum VisitStep {
-  SYMPTOMS_TAKEN   // BS tư vấn đã ghi sinh hiệu + triệu chứng
-  SERVICES_ORDERED // BS tư vấn đã ra chỉ định dịch vụ
-  AWAITING_RESULTS // BN đã thanh toán, đang thực hiện dịch vụ tại các phòng
-  RESULTS_READY    // Tất cả dịch vụ hoàn tất, sẵn sàng để BS tư vấn đọc kết quả
-  DIAGNOSED        // BS tư vấn đã chẩn đoán
-  PRESCRIBED       // BS tư vấn đã kê đơn thuốc
-  COMPLETED        // Hoàn tất toàn bộ lượt khám
+  SYMPTOMS_TAKEN
+  SERVICES_ORDERED
+  AWAITING_RESULTS
+  RESULTS_READY
+  DIAGNOSED
+  PRESCRIBED
+  COMPLETED
 }
 
 enum InvoiceStatus {
-  DRAFT      // Đang được tạo, chưa thu tiền
-  OPEN       // Đã phát hành, chờ thanh toán
-  ISSUED     // Đã xuất hóa đơn
-  PAID       // Đã thanh toán
+  DRAFT
+  OPEN
+  ISSUED
+  PAID
   CANCELLED
   REFUNDED
 }
@@ -1061,9 +971,14 @@ enum EInvoiceStatus {
 }
 
 enum InvoiceType {
-  CONSULTATION // Điểm thu 1 (B1): phí khám tư vấn BS — tùy chọn
-  LAB          // Điểm thu 2 (B3): phí dịch vụ/XN — bắt buộc nếu có chỉ định
-  PHARMACY     // Điểm thu 3 (B8): phí thuốc — tùy chọn
+  CONSULTATION
+  SERVICE
+  PHARMACY
+}
+
+enum BookingMode {
+  CONSULTATION_FIRST
+  DIRECT_SERVICE
 }
 
 enum PaymentMethod {
