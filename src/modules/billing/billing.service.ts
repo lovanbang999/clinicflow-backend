@@ -1295,31 +1295,42 @@ export class BillingService {
             };
 
             // Step3 → After LAB payment: transition booking to AWAITING_RESULTS
-            // Patient is now heading to the lab/procedure room
-            await tx.booking.update({
-              where: { id: invoice.bookingId },
-              data: {
-                status: 'AWAITING_RESULTS' as BookingStatus,
-              },
-            });
-            await tx.bookingStatusHistory.create({
-              data: {
-                bookingId: invoice.bookingId,
-                oldStatus: 'IN_PROGRESS',
-                newStatus: 'AWAITING_RESULTS' as BookingStatus,
-                changedById: confirmedByUserId,
-                reason:
-                  'LAB invoice paid — patient heading to procedure/lab room',
-              },
-            });
+            // Only applies when the booking has already entered the examination phase
+            // (IN_PROGRESS or CHECKED_IN). Walk-in direct-service bookings that are
+            // still CONFIRMED have not gone through check-in yet, so we must NOT
+            // transition them — doing so would prevent addToQueue() from running
+            // when the CONSULTATION invoice is paid afterward.
+            const currentBookingStatus = invoice.booking?.status;
+            const canTransitionToAwaiting =
+              currentBookingStatus === BookingStatus.IN_PROGRESS ||
+              currentBookingStatus === BookingStatus.CHECKED_IN;
 
-            // Also update MedicalRecord visitStep to AWAITING_RESULTS
-            await tx.medicalRecord.updateMany({
-              where: { bookingId: invoice.bookingId },
-              data: {
-                visitStep: 'AWAITING_RESULTS' as VisitStep,
-              },
-            });
+            if (canTransitionToAwaiting) {
+              await tx.booking.update({
+                where: { id: invoice.bookingId },
+                data: {
+                  status: 'AWAITING_RESULTS' as BookingStatus,
+                },
+              });
+              await tx.bookingStatusHistory.create({
+                data: {
+                  bookingId: invoice.bookingId,
+                  oldStatus: currentBookingStatus as BookingStatus,
+                  newStatus: 'AWAITING_RESULTS' as BookingStatus,
+                  changedById: confirmedByUserId,
+                  reason:
+                    'LAB invoice paid — patient heading to procedure/lab room',
+                },
+              });
+
+              // Also update MedicalRecord visitStep to AWAITING_RESULTS
+              await tx.medicalRecord.updateMany({
+                where: { bookingId: invoice.bookingId },
+                data: {
+                  visitStep: 'AWAITING_RESULTS' as VisitStep,
+                },
+              });
+            }
 
             // Notify technicians that new lab orders are ready to be performed
             const technicians = await tx.user.findMany({
@@ -1353,19 +1364,74 @@ export class BillingService {
           }
         }
 
-        // If CONSULTATION invoice: if a specialist service is assigned by doctor, auto re-queue
-        if (
-          invoice.invoiceType === InvoiceType.CONSULTATION &&
-          invoice.booking?.serviceId &&
-          invoice.booking?.doctorId
-        ) {
-          // Patient has been referred to a specialist and just paid the fee.
-          // Auto check-in for the new service.
-          // Note: addToQueue handles the status change and queue record creation.
-          await this.queueService.addToQueue(
-            invoice.bookingId,
-            confirmedByUserId,
-          );
+        // If CONSULTATION invoice: two sub-cases based on invoice content
+        //
+        // Sub-case A — Direct Service mode (Mode B walk-in):
+        //   The receptionist booked specialist services directly. Invoice items
+        //   carry visitServiceOrderId. We must mark each VSO as PAID, assign a
+        //   daily queue number, and broadcast to the specialist's queue.
+        //   addToQueue is NOT called here — the specialist sees patients through
+        //   the VSO mix-in already built into queue.service.ts findAll().
+        //
+        // Sub-case B — Normal consultation referral (Mode A):
+        //   A doctor finished a consultation and referred the patient to a
+        //   specialist service. There are no VSO items in this invoice.
+        //   We call addToQueue so the patient enters the new specialist's
+        //   BookingQueue (CONFIRMED → CHECKED_IN).
+        if (invoice.invoiceType === InvoiceType.CONSULTATION) {
+          const consultItems = await tx.invoiceItem.findMany({
+            where: { invoiceId },
+          });
+
+          const directVsoIds = consultItems
+            .filter(
+              (i) =>
+                (i as typeof i & { visitServiceOrderId?: string | null })
+                  .visitServiceOrderId,
+            )
+            .map(
+              (i) =>
+                (i as typeof i & { visitServiceOrderId?: string | null })
+                  .visitServiceOrderId as string,
+            );
+
+          if (directVsoIds.length > 0) {
+            // Sub-case A: Direct Service — mark VSOs PAID + assign queue numbers
+            const startOfDayVso = new Date();
+            startOfDayVso.setHours(0, 0, 0, 0);
+
+            for (const vsoId of directVsoIds) {
+              const lastVsoOrder = await tx.visitServiceOrder.findFirst({
+                where: {
+                  createdAt: { gte: startOfDayVso },
+                  queueNumber: { not: null },
+                },
+                orderBy: { queueNumber: 'desc' },
+                select: { queueNumber: true },
+              });
+              const nextVsoQueueNumber =
+                (Number(lastVsoOrder?.queueNumber) || 0) + 1;
+
+              await tx.visitServiceOrder.update({
+                where: { id: vsoId },
+                data: {
+                  status: ServiceOrderStatus.PAID,
+                  paidAt: new Date(),
+                  queueNumber: nextVsoQueueNumber,
+                },
+              });
+            }
+
+            // Accumulate for post-commit WebSocket broadcast to specialist doctors
+            paidVsoIds = [...paidVsoIds, ...directVsoIds];
+          } else if (invoice.booking?.serviceId && invoice.booking?.doctorId) {
+            // Sub-case B: Normal consultation referral — add to primary doctor's queue
+            // addToQueue transitions booking CONFIRMED → CHECKED_IN and creates queue record
+            await this.queueService.addToQueue(
+              invoice.bookingId,
+              confirmedByUserId,
+            );
+          }
         }
       } else if (invoice.status === InvoiceStatus.DRAFT) {
         // First payment: DRAFT → OPEN
