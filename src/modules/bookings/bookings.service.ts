@@ -174,6 +174,7 @@ export class BookingsService {
           priority,
           patientNotes,
           bookedBy: null,
+          bookingMode: 'CONSULTATION_FIRST',
         },
         include: BookingInclude,
       });
@@ -353,6 +354,7 @@ export class BookingsService {
           bookedBy: createdById,
           confirmedAt: isPreBooked ? null : new Date(),
           roomId: slot?.roomId || undefined,
+          bookingMode: 'CONSULTATION_FIRST',
         },
         include: BookingInclude,
       });
@@ -523,6 +525,7 @@ export class BookingsService {
           bookedBy: createdById,
           confirmedAt: new Date(),
           roomId: slot?.roomId ?? undefined,
+          bookingMode: 'DIRECT_SERVICE',
         },
         include: BookingInclude,
       });
@@ -629,7 +632,7 @@ export class BookingsService {
           data: {
             bookingId: newBooking.id,
             patientProfileId,
-            invoiceType: 'LAB',
+            invoiceType: 'SERVICE',
             invoiceNumber,
             subtotal: totalAmount,
             discountAmount: 0,
@@ -654,7 +657,7 @@ export class BookingsService {
         });
       }
 
-      // Create CONSULTATION (Specialist) invoice
+      // Create SERVICE (Specialist) invoice
       if (visitOrdersToInvoice.length > 0) {
         const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(currentInvoiceCount + 1).padStart(4, '0')}`;
         currentInvoiceCount++;
@@ -667,7 +670,7 @@ export class BookingsService {
           data: {
             bookingId: newBooking.id,
             patientProfileId,
-            invoiceType: 'CONSULTATION',
+            invoiceType: 'SERVICE',
             invoiceNumber,
             subtotal: totalAmount,
             discountAmount: 0,
