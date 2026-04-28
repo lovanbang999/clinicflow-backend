@@ -1,34 +1,189 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MailService } from './mail.service';
+import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as Handlebars from 'handlebars';
+import { NotificationsGateway } from './notifications.gateway';
+import {
+  NotificationType,
+  NotificationChannel,
+  Prisma,
+  UserRole,
+} from '@prisma/client';
+import {
+  ISystemRepository,
+  I_SYSTEM_REPOSITORY,
+} from '../database/interfaces/system.repository.interface';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../database/interfaces/user.repository.interface';
+import { Inject } from '@nestjs/common';
 
 interface BookingEmailData {
   bookingId: string;
+  patientId?: string; // Added to link in-app notification
   patientName: string;
   patientEmail: string;
   doctorName: string;
   serviceName: string;
   bookingDate: string;
-  startTime: string;
-  endTime: string;
+  startTime?: string | null;
+  endTime?: string | null;
   duration: number;
   status: string;
   price?: number;
   patientNotes?: string;
   queuePosition?: number;
   estimatedWaitTime?: number;
+  diagnosisName?: string;
+  hasPrescription?: boolean;
 }
 
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
-  private bookingConfirmationTemplate: HandlebarsTemplateDelegate;
-  private queuePromotionTemplate: HandlebarsTemplateDelegate;
+  private layoutTemplate: HandlebarsTemplateDelegate;
+  private templates: Record<string, HandlebarsTemplateDelegate> = {};
 
-  constructor(private readonly mailService: MailService) {
+  constructor(
+    private readonly mailService: MailService,
+    private readonly configService: ConfigService,
+    @Inject(I_SYSTEM_REPOSITORY)
+    private readonly systemRepository: ISystemRepository,
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+    private readonly gateway: NotificationsGateway,
+  ) {
     this.loadTemplates();
+  }
+
+  /**
+   * Create and send an in-app notification
+   */
+  async createInAppNotification(data: {
+    userId: string;
+    title: string;
+    content: string;
+    type: NotificationType;
+    metadata?: Prisma.InputJsonValue;
+  }) {
+    try {
+      const notification = await this.systemRepository.createNotification({
+        data: {
+          userId: data.userId,
+          title: data.title,
+          content: data.content,
+          type: data.type,
+          channel: NotificationChannel.IN_APP,
+          metadata: data.metadata ?? Prisma.JsonNull,
+        },
+      });
+
+      // Send via WebSocket if user is connected
+      this.gateway.sendToUser(data.userId, notification);
+
+      return notification;
+    } catch (error) {
+      this.logger.error('Failed to create in-app notification:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send notification to all users with a specific role.
+   * Useful for notifying all receptionists or all technicians.
+   */
+  async notifyRole(data: {
+    role: UserRole;
+    title: string;
+    content: string;
+    type: NotificationType;
+    metadata?: Prisma.InputJsonValue;
+  }) {
+    try {
+      const users = await this.userRepository.findMany({
+        where: { role: data.role, isActive: true },
+        select: { id: true },
+      });
+
+      const notifications = await Promise.all(
+        users.map((user) =>
+          this.createInAppNotification({
+            userId: user.id,
+            title: data.title,
+            content: data.content,
+            type: data.type,
+            metadata: data.metadata,
+          }),
+        ),
+      );
+
+      // Also broadcast to the role room for immediate UI refresh if needed
+      this.gateway.broadcastToRole(data.role, {
+        id: notifications[0]?.id || `temp-${Date.now()}`,
+        title: data.title,
+        content: data.content,
+        type: data.type,
+        isRead: false,
+        createdAt: new Date().toISOString(),
+        metadata: data.metadata,
+      });
+
+      return notifications;
+    } catch (error) {
+      this.logger.error(`Failed to notify role ${data.role}:`, error);
+    }
+  }
+
+  /**
+   * Get user's in-app notifications
+   */
+  async getMyNotifications(userId: string) {
+    const list = await this.systemRepository.findManyNotification({
+      where: {
+        userId,
+        channel: NotificationChannel.IN_APP,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    const unreadCount = await this.systemRepository.countNotification({
+      where: {
+        userId,
+        channel: NotificationChannel.IN_APP,
+        isRead: false,
+      },
+    });
+
+    return { notifications: list, unreadCount };
+  }
+
+  /**
+   * Mark notification as read
+   */
+  async markAsRead(userId: string, id: string) {
+    return this.systemRepository.updateNotification({
+      where: { id, userId },
+      data: {
+        isRead: true,
+        readAt: new Date(),
+      },
+    });
+  }
+
+  /**
+   * Mark all as read
+   */
+  async markAllAsRead(userId: string) {
+    return this.systemRepository.updateManyNotification({
+      where: { userId, isRead: false, channel: NotificationChannel.IN_APP },
+      data: {
+        isRead: true,
+        readAt: new Date(),
+      },
+    });
   }
 
   /**
@@ -36,33 +191,55 @@ export class NotificationsService {
    */
   private loadTemplates() {
     try {
-      const templatesDir = path.join(__dirname, 'templates');
-
-      // Load booking confirmation template
-      const bookingConfirmationPath = path.join(
-        templatesDir,
-        'booking-confirmation.hbs',
-      );
-      const bookingConfirmationSource = fs.readFileSync(
-        bookingConfirmationPath,
-        'utf-8',
-      );
-      this.bookingConfirmationTemplate = Handlebars.compile(
-        bookingConfirmationSource,
+      const templatesDir = path.join(
+        process.cwd(),
+        'src/modules/notifications/templates',
       );
 
-      // Load queue promotion template
-      const queuePromotionPath = path.join(templatesDir, 'queue-promotion.hbs');
-      const queuePromotionSource = fs.readFileSync(queuePromotionPath, 'utf-8');
-      this.queuePromotionTemplate = Handlebars.compile(queuePromotionSource);
+      // Load layout
+      const layoutPath = path.join(templatesDir, 'layout.hbs');
+      if (fs.existsSync(layoutPath)) {
+        this.layoutTemplate = Handlebars.compile(
+          fs.readFileSync(layoutPath, 'utf-8'),
+        );
+      }
 
-      this.logger.log('Email templates loaded successfully');
+      // Load all body templates
+      const templateFiles = [
+        'booking-confirmation',
+        'booking-cancellation',
+        'booking-reminder',
+        'post-visit',
+        'invoice',
+        'queue-promotion',
+      ];
+
+      for (const t of templateFiles) {
+        const tPath = path.join(templatesDir, `${t}.hbs`);
+        if (fs.existsSync(tPath)) {
+          this.templates[t] = Handlebars.compile(
+            fs.readFileSync(tPath, 'utf-8'),
+          );
+        }
+      }
+
+      this.logger.log('Notification email templates loaded successfully');
     } catch (error) {
       this.logger.error('Failed to load email templates:', error);
-      this.logger.warn(
-        'Email notifications will not be sent with custom templates',
-      );
     }
+  }
+
+  /**
+   * Helper to compile template with layout
+   */
+  private compile(templateName: string, data: any): string {
+    const bodyTemplate = this.templates[templateName];
+    if (!bodyTemplate || !this.layoutTemplate) {
+      this.logger.error(`Template ${templateName} or layout not found`);
+      return '';
+    }
+    const bodyHtml = bodyTemplate(data);
+    return this.layoutTemplate({ ...data, body: bodyHtml });
   }
 
   /**
@@ -70,26 +247,38 @@ export class NotificationsService {
    */
   async sendBookingConfirmation(data: BookingEmailData): Promise<void> {
     try {
-      // Note: QUEUED status is deprecated — booking flow now uses PENDING → CONFIRMED
       const isPending = data.status === 'PENDING';
-      const isQueued = false; // kept for template backward compat
+      const isQueued = data.status === 'QUEUED' || !data.startTime;
 
-      const html = this.bookingConfirmationTemplate({
+      const subject = isPending
+        ? '📅 Lịch hẹn mới đang được xử lý - Smart Clinic'
+        : '✅ Xác nhận lịch hẹn thành công - Smart Clinic';
+
+      const html = this.compile('booking-confirmation', {
         ...data,
         isQueued,
         isPending,
-        statusClass: this.getStatusClass(data.status),
+        subject,
+        subheader: 'Xác nhận đặt lịch',
       });
 
-      const subject = isPending
-        ? '📅 Booking Scheduled - Smart Clinic'
-        : '✅ Booking Confirmed - Smart Clinic';
-
       await this.mailService.sendMail(data.patientEmail, subject, html);
-
       this.logger.log(
         `Booking confirmation email sent to ${data.patientEmail}`,
       );
+
+      // Trigger in-app notification
+      if (data.patientId) {
+        await this.createInAppNotification({
+          userId: data.patientId,
+          title: isPending ? 'Lịch hẹn đang xử lý' : 'Lịch hẹn đã xác nhận',
+          content: isPending
+            ? `Lịch hẹn khám ${data.serviceName} của bạn đang được hệ thống xử lý.`
+            : `Lịch hẹn khám ${data.serviceName} của bạn đã được xác nhận thành công.`,
+          type: NotificationType.BOOKING_CONFIRMED,
+          metadata: { bookingId: data.bookingId },
+        });
+      }
     } catch (error) {
       this.logger.error('Failed to send booking confirmation email:', error);
     }
@@ -100,13 +289,30 @@ export class NotificationsService {
    */
   async sendQueuePromotion(data: BookingEmailData): Promise<void> {
     try {
-      const html = this.queuePromotionTemplate(data);
+      const subject = '🎉 Lịch hẹn của bạn đã được xác nhận! - Smart Clinic';
+      const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+      const myBookingsUrl = `${frontendUrl}/patient/bookings`;
 
-      const subject = '🎉 Your Appointment is Confirmed! - Smart Clinic';
+      const html = this.compile('queue-promotion', {
+        ...data,
+        myBookingsUrl,
+        subject,
+        subheader: 'Thông báo xác nhận lịch',
+      });
 
       await this.mailService.sendMail(data.patientEmail, subject, html);
-
       this.logger.log(`Queue promotion email sent to ${data.patientEmail}`);
+
+      // Trigger in-app notification
+      if (data.patientId) {
+        await this.createInAppNotification({
+          userId: data.patientId,
+          title: 'Lịch hẹn đã được xác nhận',
+          content: `Lịch hẹn khám ${data.serviceName} của bạn đã được chuyển từ hàng đợi sang xác nhận.`,
+          type: NotificationType.BOOKING_CONFIRMED,
+          metadata: { bookingId: data.bookingId },
+        });
+      }
     } catch (error) {
       this.logger.error('Failed to send queue promotion email:', error);
     }
@@ -117,59 +323,32 @@ export class NotificationsService {
    */
   async sendBookingCancellation(data: BookingEmailData): Promise<void> {
     try {
-      const html = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-              .header { background: #dc3545; color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-              .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-              .booking-card { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
-              .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #888; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h1>🏥 Smart Clinic</h1>
-                <p>Booking Cancellation</p>
-              </div>
-              <div class="content">
-                <h2>Hello ${data.patientName},</h2>
-                <p>Your appointment has been cancelled.</p>
-                
-                <div class="booking-card">
-                  <h3>📋 Cancelled Booking Details</h3>
-                  <p><strong>Booking ID:</strong> ${data.bookingId}</p>
-                  <p><strong>Doctor:</strong> ${data.doctorName}</p>
-                  <p><strong>Service:</strong> ${data.serviceName}</p>
-                  <p><strong>Date:</strong> ${data.bookingDate}</p>
-                  <p><strong>Time:</strong> ${data.startTime} - ${data.endTime}</p>
-                </div>
-                
-                <p>If you did not request this cancellation or have any questions, please contact us immediately.</p>
-                <p>We hope to serve you again soon!</p>
-                
-                <p>Best regards,<br>Smart Clinic Team</p>
-              </div>
-              <div class="footer">
-                <p>This is an automated email. Please do not reply.</p>
-                <p>&copy; 2025 Smart Clinic. All rights reserved.</p>
-              </div>
-            </div>
-          </body>
-        </html>
-      `;
+      const subject = '❌ Thông báo hủy lịch hẹn - Smart Clinic';
+      const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+      const rebookUrl = `${frontendUrl}/booking`;
 
-      const subject = '❌ Booking Cancelled - Smart Clinic';
+      const html = this.compile('booking-cancellation', {
+        ...data,
+        rebookUrl,
+        subject,
+        subheader: 'Hủy lịch hẹn',
+      });
 
       await this.mailService.sendMail(data.patientEmail, subject, html);
-
       this.logger.log(
         `Booking cancellation email sent to ${data.patientEmail}`,
       );
+
+      // Trigger in-app notification
+      if (data.patientId) {
+        await this.createInAppNotification({
+          userId: data.patientId,
+          title: 'Lịch hẹn đã bị hủy',
+          content: `Lịch hẹn khám ${data.serviceName} vào ngày ${data.bookingDate} đã bị hủy.`,
+          type: NotificationType.BOOKING_CANCELLED,
+          metadata: { bookingId: data.bookingId },
+        });
+      }
     } catch (error) {
       this.logger.error('Failed to send booking cancellation email:', error);
     }
@@ -180,84 +359,195 @@ export class NotificationsService {
    */
   async sendBookingReminder(data: BookingEmailData): Promise<void> {
     try {
-      const html = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-              .header { background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-              .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-              .booking-card { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
-              .alert { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }
-              .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #888; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h1>🏥 Smart Clinic</h1>
-                <p>Appointment Reminder</p>
-              </div>
-              <div class="content">
-                <h2>Hello ${data.patientName}! 👋</h2>
-                <p><strong>This is a friendly reminder about your upcoming appointment tomorrow.</strong></p>
-                
-                <div class="booking-card">
-                  <h3>📋 Appointment Details</h3>
-                  <p><strong>Doctor:</strong> ${data.doctorName}</p>
-                  <p><strong>Service:</strong> ${data.serviceName}</p>
-                  <p><strong>Date:</strong> ${data.bookingDate}</p>
-                  <p><strong>Time:</strong> ${data.startTime} - ${data.endTime}</p>
-                </div>
-                
-                <div class="alert">
-                  <strong>📌 Please Remember:</strong>
-                  <ul>
-                    <li>Arrive 10 minutes early</li>
-                    <li>Bring your ID and medical documents</li>
-                    <li>If you need to cancel, please do so ASAP</li>
-                  </ul>
-                </div>
-                
-                <p>We look forward to seeing you!</p>
-                
-                <p>Best regards,<br>Smart Clinic Team</p>
-              </div>
-              <div class="footer">
-                <p>This is an automated email. Please do not reply.</p>
-                <p>&copy; 2025 Smart Clinic. All rights reserved.</p>
-              </div>
-            </div>
-          </body>
-        </html>
-      `;
+      const subject =
+        '⏰ Nhắc hẹn: Lịch khám của bạn vào ngày mai - Smart Clinic';
 
-      const subject = '⏰ Appointment Reminder - Tomorrow - Smart Clinic';
+      const html = this.compile('booking-reminder', {
+        ...data,
+        subject,
+        subheader: 'Nhắc lịch khám bệnh',
+      });
 
       await this.mailService.sendMail(data.patientEmail, subject, html);
-
       this.logger.log(`Booking reminder email sent to ${data.patientEmail}`);
+
+      // Trigger in-app notification
+      if (data.patientId) {
+        await this.createInAppNotification({
+          userId: data.patientId,
+          title: 'Nhắc nhở lịch khám',
+          content: `Bạn có lịch khám ${data.serviceName} vào ngày mai. Đừng quên nhé!`,
+          type: NotificationType.APPOINTMENT_REMINDER,
+          metadata: { bookingId: data.bookingId },
+        });
+      }
     } catch (error) {
       this.logger.error('Failed to send booking reminder email:', error);
     }
   }
 
   /**
-   * Get status CSS class
+   * Send post-visit email (Thank you + Prescription notification)
    */
-  private getStatusClass(status: string): string {
-    const statusMap: Record<string, string> = {
-      PENDING: 'pending',
-      CONFIRMED: 'confirmed',
-      CHECKED_IN: 'confirmed',
-      IN_PROGRESS: 'confirmed',
-      COMPLETED: 'confirmed',
-      CANCELLED: 'pending',
-      NO_SHOW: 'pending',
-    };
+  async sendPostVisitEmail(data: BookingEmailData): Promise<void> {
+    try {
+      const subject = data.hasPrescription
+        ? '💊 Đơn thuốc của bạn đã sẵn sàng - Smart Clinic'
+        : '✅ Hoàn tất buổi thăm khám - Smart Clinic';
 
-    return statusMap[status] || 'pending';
+      const html = this.compile('post-visit', {
+        ...data,
+        subject,
+        subheader: 'Kết quả thăm khám',
+      });
+
+      await this.mailService.sendMail(data.patientEmail, subject, html);
+      this.logger.log(`Post-visit email sent to ${data.patientEmail}`);
+
+      // Trigger in-app notification
+      if (data.patientId) {
+        await this.createInAppNotification({
+          userId: data.patientId,
+          title: data.hasPrescription
+            ? 'Đơn thuốc sẵn sàng'
+            : 'Thăm khám hoàn tất',
+          content: data.hasPrescription
+            ? `Đơn thuốc cho buổi khám ${data.serviceName} đã sẵn sàng. Vui lòng kiểm tra.`
+            : `Cảm ơn bạn đã tin tưởng Smart Clinic. Buổi thăm khám ${data.serviceName} đã hoàn tất.`,
+          type: data.hasPrescription
+            ? NotificationType.LAB_RESULT_READY
+            : NotificationType.SYSTEM,
+          metadata: { bookingId: data.bookingId },
+        });
+      }
+    } catch (error) {
+      this.logger.error('Failed to send post-visit email:', error);
+    }
+  }
+
+  /**
+   * Send invoice email
+   */
+  async sendInvoiceEmail(data: {
+    patientId?: string; // Added to link in-app notification
+    patientName: string;
+    patientEmail: string;
+    invoiceNumber: string;
+    invoiceDate: string;
+    invoiceType: string;
+    totalAmount: string;
+    invoiceUrl: string;
+  }): Promise<void> {
+    try {
+      const subject = `🧾 Hóa đơn thanh toán ${data.invoiceNumber} - Smart Clinic`;
+
+      const html = this.compile('invoice', {
+        ...data,
+        subject,
+        subheader: 'Hóa đơn dịch vụ',
+      });
+
+      await this.mailService.sendMail(data.patientEmail, subject, html);
+      this.logger.log(`Invoice email sent to ${data.patientEmail}`);
+
+      // Trigger in-app notification
+      if (data.patientId) {
+        await this.createInAppNotification({
+          userId: data.patientId,
+          title: 'Hóa đơn mới',
+          content: `Hóa đơn ${data.invoiceNumber} cho dịch vụ ${data.invoiceType} đã được phát hành.`,
+          type: NotificationType.INVOICE_ISSUED,
+          metadata: { invoiceNumber: data.invoiceNumber },
+        });
+      }
+    } catch (error) {
+      this.logger.error('Failed to send invoice email:', error);
+    }
+  }
+  /**
+   * Send notification to all ADMIN users (System Activity)
+   */
+  async notifyAdmins(data: {
+    title: string;
+    content: string;
+    metadata?: Prisma.InputJsonValue;
+  }) {
+    try {
+      const admins = await this.userRepository.findMany({
+        where: { role: 'ADMIN', isActive: true },
+        select: { id: true },
+      });
+
+      if (admins.length === 0) return;
+
+      const notifications = await Promise.all(
+        admins.map((admin) =>
+          this.systemRepository.createNotification({
+            data: {
+              userId: admin.id,
+              title: data.title,
+              content: data.content,
+              type: NotificationType.ADMIN_ACTIVITY,
+              channel: NotificationChannel.IN_APP,
+              metadata: data.metadata ?? Prisma.JsonNull,
+            },
+          }),
+        ),
+      );
+
+      // Broadcast to each admin via WebSocket
+      admins.forEach((admin, index) => {
+        this.gateway.sendToUser(admin.id, notifications[index]);
+      });
+
+      this.logger.log(
+        `System activity notification sent to ${admins.length} admins`,
+      );
+    } catch (error) {
+      this.logger.error('Failed to notify admins:', error);
+    }
+  }
+
+  /**
+   * Send notification to all RECEPTIONIST users
+   */
+  async notifyReceptionists(data: {
+    title: string;
+    content: string;
+    metadata?: Prisma.InputJsonValue;
+  }) {
+    try {
+      const staff = await this.userRepository.findMany({
+        where: { role: 'RECEPTIONIST', isActive: true },
+        select: { id: true },
+      });
+
+      if (staff.length === 0) return;
+
+      const notifications = await Promise.all(
+        staff.map((s) =>
+          this.systemRepository.createNotification({
+            data: {
+              userId: s.id,
+              title: data.title,
+              content: data.content,
+              type: NotificationType.SYSTEM,
+              channel: NotificationChannel.IN_APP,
+              metadata: data.metadata ?? Prisma.JsonNull,
+            },
+          }),
+        ),
+      );
+
+      staff.forEach((s, index) => {
+        this.gateway.sendToUser(s.id, notifications[index]);
+      });
+
+      this.logger.log(
+        `Staff notification sent to ${staff.length} receptionists`,
+      );
+    } catch (error) {
+      this.logger.error('Failed to notify receptionists:', error);
+    }
   }
 }

@@ -1,6 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsInt, Min, Max } from 'class-validator';
-import { Type } from 'class-transformer';
+import {
+  IsOptional,
+  IsString,
+  IsInt,
+  Min,
+  Max,
+  IsBoolean,
+} from 'class-validator';
+import { Type, Transform } from 'class-transformer';
 
 export class PatientSearchQueryDto {
   @ApiPropertyOptional({
@@ -36,6 +43,23 @@ export class PatientSearchQueryDto {
   @IsOptional()
   @IsString()
   bloodType?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filter by patient code (e.g. BN-2026-0001)',
+  })
+  @IsOptional()
+  @IsString()
+  patientCode?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filter guest patients only (true) or registered only (false)',
+  })
+  @IsOptional()
+  @Transform(
+    ({ value }: { value: unknown }) => value === 'true' || value === true,
+  )
+  @IsBoolean()
+  isGuest?: boolean;
 
   @ApiPropertyOptional({ minimum: 1, default: 1 })
   @Type(() => Number)

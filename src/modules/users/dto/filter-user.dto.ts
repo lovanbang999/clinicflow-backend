@@ -41,7 +41,7 @@ export class FilterUserDto {
   isVerified?: boolean;
 
   @ApiProperty({
-    description: 'Search by name or email',
+    description: 'Search by name, email, or phone',
     required: false,
     example: 'john',
   })
@@ -68,4 +68,23 @@ export class FilterUserDto {
   @IsOptional()
   @Transform(({ value }) => parseInt(String(value), 10))
   limit?: number = 10;
+
+  @ApiProperty({
+    description: 'Field to sort by',
+    required: false,
+    example: 'fullName',
+  })
+  @IsOptional()
+  @IsString()
+  sortBy?: string = 'createdAt';
+
+  @ApiProperty({
+    description: 'Sort order',
+    required: false,
+    enum: ['asc', 'desc'],
+    example: 'desc',
+  })
+  @IsOptional()
+  @IsEnum(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc' = 'desc';
 }

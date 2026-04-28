@@ -5,8 +5,10 @@ import {
   IsDateString,
   IsInt,
   Min,
+  IsEnum,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ScheduleSlotStatus } from '@prisma/client';
 
 export class UpdateScheduleDto {
   @ApiPropertyOptional({
@@ -49,7 +51,7 @@ export class UpdateScheduleDto {
   })
   @IsString()
   @IsOptional()
-  room?: string;
+  roomId?: string;
 
   @ApiPropertyOptional({
     description: 'Type of the appointment slot',
@@ -79,7 +81,7 @@ export class UpdateScheduleDto {
     description: 'Status of the schedule',
     example: 'SCHEDULED',
   })
-  @IsString()
+  @IsEnum(ScheduleSlotStatus)
   @IsOptional()
-  status?: string;
+  status?: ScheduleSlotStatus;
 }

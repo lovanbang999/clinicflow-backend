@@ -79,4 +79,12 @@ export class CreateServiceDto {
   @Min(1, { message: 'Max slots must be at least 1' })
   @Max(10, { message: 'Max slots cannot exceed 10' })
   maxSlotsPerHour: number;
+
+  @ApiProperty({
+    description: 'Category ID linking to Category model',
+    example: 'uuid-string',
+  })
+  @IsString()
+  @IsNotEmpty({ message: 'Category is required' })
+  categoryId: string;
 }

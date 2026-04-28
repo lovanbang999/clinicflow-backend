@@ -13,12 +13,12 @@ import { BookingStatus } from '@prisma/client';
 
 export class FilterBookingDto {
   @ApiProperty({
-    description: 'Filter by patient ID',
+    description: 'Filter by patient profile ID',
     required: false,
   })
   @IsOptional()
   @IsUUID('4')
-  patientId?: string;
+  patientProfileId?: string;
 
   @ApiProperty({
     description: 'Filter by doctor ID',
@@ -44,6 +44,13 @@ export class FilterBookingDto {
   @IsOptional()
   @IsEnum(BookingStatus)
   status?: BookingStatus;
+
+  @ApiProperty({
+    description: 'Filter by patient name, phone or booking code',
+    required: false,
+  })
+  @IsOptional()
+  search?: string;
 
   @ApiProperty({
     description: 'Filter by date (YYYY-MM-DD)',

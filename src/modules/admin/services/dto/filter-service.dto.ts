@@ -24,4 +24,19 @@ export class FilterServiceDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiProperty({ required: false, type: String })
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @ApiProperty({ required: false, type: Number, default: 1 })
+  @IsOptional()
+  @Transform(({ value }) => parseInt(String(value), 10))
+  page?: number = 1;
+
+  @ApiProperty({ required: false, type: Number, default: 10 })
+  @IsOptional()
+  @Transform(({ value }) => parseInt(String(value), 10))
+  limit?: number = 10;
 }

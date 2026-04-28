@@ -2,11 +2,13 @@ import { Module } from '@nestjs/common';
 import { QueueService } from './queue.service';
 import { QueueController } from './queue.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { QueueGateway } from './queue.gateway';
+import { DatabaseModule } from '../database/database.module';
 
 @Module({
-  imports: [NotificationsModule],
+  imports: [DatabaseModule, NotificationsModule],
   controllers: [QueueController],
-  providers: [QueueService],
-  exports: [QueueService],
+  providers: [QueueService, QueueGateway],
+  exports: [QueueService, QueueGateway],
 })
 export class QueueModule {}

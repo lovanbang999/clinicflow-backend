@@ -1,15 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
-import { Transporter } from 'nodemailer';
+import { createTransport, Transporter } from 'nodemailer';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as Handlebars from 'handlebars';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: Transporter;
+  private layoutTemplate: HandlebarsTemplateDelegate;
+  private templates: Record<string, HandlebarsTemplateDelegate> = {};
 
   constructor(private configService: ConfigService) {
     this.initializeTransporter();
+    this.loadTemplates();
   }
 
   /**
@@ -29,7 +34,7 @@ export class MailService {
       return;
     }
 
-    this.transporter = nodemailer.createTransport({
+    this.transporter = createTransport({
       host: mailHost,
       port: mailPort,
       secure: false, // true for 465, false for other ports
@@ -50,6 +55,52 @@ export class MailService {
   }
 
   /**
+   * Load and compile templates
+   */
+  private loadTemplates() {
+    try {
+      // Use process.cwd() or similar to ensure we find templates in different environments
+      const templatesDir = path.join(
+        process.cwd(),
+        'src/modules/notifications/templates',
+      );
+
+      const layoutPath = path.join(templatesDir, 'layout.hbs');
+      if (fs.existsSync(layoutPath)) {
+        this.layoutTemplate = Handlebars.compile(
+          fs.readFileSync(layoutPath, 'utf-8'),
+        );
+      }
+
+      const authTemplates = ['verification', 'password-reset', 'welcome'];
+      for (const t of authTemplates) {
+        const tPath = path.join(templatesDir, `${t}.hbs`);
+        if (fs.existsSync(tPath)) {
+          this.templates[t] = Handlebars.compile(
+            fs.readFileSync(tPath, 'utf-8'),
+          );
+        }
+      }
+      this.logger.log('Auth email templates loaded successfully');
+    } catch (error) {
+      this.logger.error('Failed to load email templates:', error);
+    }
+  }
+
+  /**
+   * Helper to compile template with layout
+   */
+  private compile(templateName: string, data: any): string {
+    const bodyTemplate = this.templates[templateName];
+    if (!bodyTemplate || !this.layoutTemplate) {
+      this.logger.error(`Template ${templateName} or layout not found`);
+      return '';
+    }
+    const bodyHtml = bodyTemplate(data);
+    return this.layoutTemplate({ ...data, body: bodyHtml });
+  }
+
+  /**
    * Send verification email with OTP code
    */
   async sendVerificationEmail(
@@ -57,47 +108,13 @@ export class MailService {
     fullName: string,
     code: string,
   ): Promise<void> {
-    const subject = 'Verify Your Email - Smart Clinic';
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-            .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-            .otp-code { background: white; border: 2px dashed #667eea; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #667eea; margin: 20px 0; border-radius: 8px; }
-            .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #888; }
-            .button { background: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 10px 0; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>🏥 Smart Clinic</h1>
-              <p>Email Verification</p>
-            </div>
-            <div class="content">
-              <h2>Hello ${fullName}! 👋</h2>
-              <p>Thank you for registering with Smart Clinic. To complete your registration, please use the verification code below:</p>
-              
-              <div class="otp-code">${code}</div>
-              
-              <p><strong>This code will expire in 15 minutes.</strong></p>
-              
-              <p>If you didn't request this verification, please ignore this email.</p>
-              
-              <p>Best regards,<br>Smart Clinic Team</p>
-            </div>
-            <div class="footer">
-              <p>This is an automated email. Please do not reply.</p>
-              <p>&copy; 2025 Smart Clinic. All rights reserved.</p>
-            </div>
-          </div>
-        </body>
-      </html>
-    `;
+    const subject = 'Mã xác nhận đăng ký - Smart Clinic';
+    const html = this.compile('verification', {
+      fullName,
+      code,
+      subject,
+      subheader: 'Xác thực tài khoản',
+    });
 
     await this.sendMail(email, subject, html, fullName, code);
   }
@@ -110,46 +127,13 @@ export class MailService {
     fullName: string,
     code: string,
   ): Promise<void> {
-    const subject = 'Password Reset - Smart Clinic';
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-            .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-            .otp-code { background: white; border: 2px dashed #667eea; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #667eea; margin: 20px 0; border-radius: 8px; }
-            .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #888; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>🏥 Smart Clinic</h1>
-              <p>Password Reset</p>
-            </div>
-            <div class="content">
-              <h2>Hello ${fullName}! 👋</h2>
-              <p>We received a request to reset your password. Please use the verification code below to proceed:</p>
-              
-              <div class="otp-code">${code}</div>
-              
-              <p><strong>This code will expire in 15 minutes.</strong></p>
-              
-              <p>If you didn't request a password reset, please ignore this email or contact support if you have concerns.</p>
-              
-              <p>Best regards,<br>Smart Clinic Team</p>
-            </div>
-            <div class="footer">
-              <p>This is an automated email. Please do not reply.</p>
-              <p>&copy; 2025 Smart Clinic. All rights reserved.</p>
-            </div>
-          </div>
-        </body>
-      </html>
-    `;
+    const subject = 'Yêu cầu khôi phục mật khẩu - Smart Clinic';
+    const html = this.compile('password-reset', {
+      fullName,
+      code,
+      subject,
+      subheader: 'Khôi phục mật khẩu',
+    });
 
     await this.sendMail(email, subject, html, fullName, code);
   }
@@ -158,61 +142,14 @@ export class MailService {
    * Send welcome email after verification
    */
   async sendWelcomeEmail(email: string, fullName: string): Promise<void> {
-    const subject = 'Welcome to Smart Clinic! 🎉';
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-            .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-            .feature { background: white; padding: 15px; margin: 10px 0; border-left: 4px solid #667eea; border-radius: 5px; }
-            .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #888; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>🏥 Welcome to Smart Clinic!</h1>
-            </div>
-            <div class="content">
-              <h2>Hello ${fullName}! 🎉</h2>
-              <p>Your account has been successfully verified. You can now enjoy all the features of Smart Clinic:</p>
-              
-              <div class="feature">
-                <strong>📅 Smart Booking</strong><br>
-                Book appointments with ease using our intelligent scheduling system
-              </div>
-              
-              <div class="feature">
-                <strong>⏱️ Queue Management</strong><br>
-                Track your position in the queue in real-time
-              </div>
-              
-              <div class="feature">
-                <strong>👨‍⚕️ Doctor Selection</strong><br>
-                Choose from our experienced medical professionals
-              </div>
-              
-              <div class="feature">
-                <strong>📱 Notifications</strong><br>
-                Get notified about appointments and queue updates
-              </div>
-              
-              <p>Thank you for choosing Smart Clinic. We look forward to serving you!</p>
-              
-              <p>Best regards,<br>Smart Clinic Team</p>
-            </div>
-            <div class="footer">
-              <p>This is an automated email. Please do not reply.</p>
-              <p>&copy; 2025 Smart Clinic. All rights reserved.</p>
-            </div>
-          </div>
-        </body>
-      </html>
-    `;
+    const subject = 'Chào mừng bạn đến với Smart Clinic! 🎉';
+    const loginUrl = `${this.configService.get('FRONTEND_URL')}/login`;
+    const html = this.compile('welcome', {
+      fullName,
+      loginUrl,
+      subject,
+      subheader: 'Bắt đầu hành trình sức khỏe',
+    });
 
     await this.sendMail(email, subject, html, fullName);
   }

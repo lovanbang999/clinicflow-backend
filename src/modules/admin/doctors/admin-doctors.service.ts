@@ -1,17 +1,24 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Injectable, Inject } from '@nestjs/common';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../../database/interfaces/user.repository.interface';
+import { UsersService } from '../../users/users.service';
 import { Prisma, UserRole, BookingStatus } from '@prisma/client';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { ApiException } from '../../../common/exceptions/api.exception';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
-
 import { FilterDoctorDto } from './dto/filter-doctor.dto';
+import { AdminCreateDoctorDto } from './dto/admin-create-doctor.dto';
 import { AdminUpdateDoctorProfileDto } from './dto/admin-update-doctor-profile.dto';
 import { AdminSuspendUserDto } from '../users/dto/admin-suspend-user.dto';
 
 @Injectable()
 export class AdminDoctorsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+    private readonly usersService: UsersService,
+  ) {}
 
   async getDoctorStatistics() {
     const now = new Date();
@@ -19,17 +26,17 @@ export class AdminDoctorsService {
 
     const [totalDoctors, activeDoctors, newThisMonth, profilesWithSpecialties] =
       await Promise.all([
-        this.prisma.user.count({ where: { role: UserRole.DOCTOR } }),
-        this.prisma.user.count({
+        this.userRepository.count({ where: { role: UserRole.DOCTOR } }),
+        this.userRepository.count({
           where: { role: UserRole.DOCTOR, isActive: true },
         }),
-        this.prisma.user.count({
+        this.userRepository.count({
           where: {
             role: UserRole.DOCTOR,
             createdAt: { gte: startOfMonth },
           },
         }),
-        this.prisma.doctorProfile.findMany({
+        this.userRepository.findManyDoctorProfile({
           select: { specialties: true },
           where: { user: { isActive: true } },
         }),
@@ -38,8 +45,10 @@ export class AdminDoctorsService {
     // Aggregate specialty counts
     const bySpecialty: Record<string, number> = {};
     for (const p of profilesWithSpecialties) {
-      for (const sp of p.specialties) {
-        bySpecialty[sp] = (bySpecialty[sp] ?? 0) + 1;
+      if (Array.isArray(p.specialties)) {
+        for (const sp of p.specialties as string[]) {
+          bySpecialty[sp] = (bySpecialty[sp] ?? 0) + 1;
+        }
       }
     }
 
@@ -75,19 +84,19 @@ export class AdminDoctorsService {
 
     if (search) {
       where.OR = [
-        { fullName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
+        { fullName: { contains: search } },
+        { email: { contains: search } },
       ];
     }
 
     if (specialty) {
       where.doctorProfile = {
-        specialties: { hasSome: [specialty] },
+        specialties: { string_contains: specialty },
       };
     }
 
     const [doctors, total] = await Promise.all([
-      this.prisma.user.findMany({
+      this.userRepository.findMany({
         where,
         select: {
           id: true,
@@ -107,6 +116,7 @@ export class AdminDoctorsService {
               bio: true,
               rating: true,
               reviewCount: true,
+              consultationFee: true,
             },
           },
         },
@@ -114,7 +124,7 @@ export class AdminDoctorsService {
         take: limit,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.user.count({ where }),
+      this.userRepository.count({ where }),
     ]);
 
     return ResponseHelper.success(
@@ -138,7 +148,7 @@ export class AdminDoctorsService {
    * Full detail of a single doctor including bookings stats.
    */
   async findOneDoctor(id: string) {
-    const doctor = await this.prisma.user.findFirst({
+    const doctor = await this.userRepository.findFirst({
       where: { id, role: UserRole.DOCTOR },
       select: {
         id: true,
@@ -160,6 +170,7 @@ export class AdminDoctorsService {
             bio: true,
             rating: true,
             reviewCount: true,
+            consultationFee: true,
           },
         },
         _count: {
@@ -196,7 +207,7 @@ export class AdminDoctorsService {
    */
   async updateDoctorProfile(id: string, dto: AdminUpdateDoctorProfileDto) {
     // Verify the user exists and is a DOCTOR
-    const user = await this.prisma.user.findFirst({
+    const user = await this.userRepository.findFirst({
       where: { id, role: UserRole.DOCTOR },
     });
 
@@ -209,7 +220,7 @@ export class AdminDoctorsService {
       );
     }
 
-    const profile = await this.prisma.doctorProfile.upsert({
+    const profile = await this.userRepository.upsertDoctorProfile({
       where: { userId: id },
       create: {
         userId: id,
@@ -218,6 +229,7 @@ export class AdminDoctorsService {
         yearsOfExperience: dto.yearsOfExperience ?? 0,
         bio: dto.bio ?? null,
         rating: dto.rating ?? 0,
+        consultationFee: dto.consultationFee ?? 0,
       },
       update: {
         ...(dto.specialties !== undefined && { specialties: dto.specialties }),
@@ -229,6 +241,9 @@ export class AdminDoctorsService {
         }),
         ...(dto.bio !== undefined && { bio: dto.bio }),
         ...(dto.rating !== undefined && { rating: dto.rating }),
+        ...(dto.consultationFee !== undefined && {
+          consultationFee: dto.consultationFee,
+        }),
       },
       select: {
         id: true,
@@ -239,6 +254,7 @@ export class AdminDoctorsService {
         bio: true,
         rating: true,
         reviewCount: true,
+        consultationFee: true,
         updatedAt: true,
       },
     });
@@ -256,7 +272,7 @@ export class AdminDoctorsService {
    * Suspend (isActive=false) or reinstate (isActive=true) a doctor account.
    */
   async toggleDoctorActive(id: string, dto: AdminSuspendUserDto) {
-    const doctor = await this.prisma.user.findFirst({
+    const doctor = await this.userRepository.findFirst({
       where: { id, role: UserRole.DOCTOR },
     });
 
@@ -269,16 +285,8 @@ export class AdminDoctorsService {
       );
     }
 
-    const updated = await this.prisma.user.update({
-      where: { id },
-      data: { isActive: dto.isActive },
-      select: {
-        id: true,
-        fullName: true,
-        email: true,
-        isActive: true,
-        updatedAt: true,
-      },
+    const updated = await this.userRepository.update(id, {
+      isActive: dto.isActive,
     });
 
     return ResponseHelper.success(
@@ -287,5 +295,15 @@ export class AdminDoctorsService {
       `Doctor ${dto.isActive ? 'reinstated' : 'suspended'} successfully`,
       200,
     );
+  }
+
+  /**
+   * Create a new doctor user
+   */
+  async createDoctor(dto: AdminCreateDoctorDto) {
+    return this.usersService.create({
+      ...dto,
+      role: UserRole.DOCTOR,
+    });
   }
 }

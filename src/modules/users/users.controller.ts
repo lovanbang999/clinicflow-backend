@@ -20,14 +20,21 @@ import {
 } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import {
+  RegisterPatientDto,
+  CreateGuestPatientDto,
+} from './dto/quick-create-patient.dto';
+import { UpdatePatientProfileDto } from './dto/update-patient-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { FilterUserDto } from './dto/filter-user.dto';
+import { FilterPatientDto } from './dto/filter-patient.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { UserRole } from '@prisma/client';
 
 @ApiTags('users')
@@ -109,6 +116,84 @@ export class UsersController {
     return this.usersService.create(createUserDto);
   }
 
+  @Post('receptionist/patients/account')
+  @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Create a patient with a system account (RECEPTIONIST/ADMIN only)',
+    description:
+      'Creates a full user account and a linked patient profile. If the patient exists as a guest, upgrades them. If they already have an account, returns existing profile.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Patient account created successfully',
+  })
+  registerPatient(@Body() dto: RegisterPatientDto) {
+    return this.usersService.registerPatient(dto);
+  }
+
+  @Post('receptionist/patients/guest')
+  @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Create a guest patient medical record (RECEPTIONIST/ADMIN only)',
+    description:
+      'Creates only a patient profile (guest) without a system account. If the patient already exists, returns the existing profile.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Guest patient record created successfully',
+  })
+  createGuestPatient(@Body() dto: CreateGuestPatientDto) {
+    return this.usersService.createGuestPatient(dto);
+  }
+
+  @Get('receptionist/patients')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ApiOperation({
+    summary:
+      'Get all patient profiles including guests (ADMIN/RECEPTIONIST only)',
+    description:
+      'Retrieve paginated list of patient profiles (both guests and registered users) with search by name, phone, or code',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Patient profiles retrieved successfully',
+  })
+  findAllPatients(@Query() filterDto: FilterPatientDto) {
+    return this.usersService.findAllPatients(filterDto);
+  }
+
+  @Get('receptionist/patients/stats')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ApiOperation({
+    summary: 'Get patient statistics (ADMIN/RECEPTIONIST only)',
+    description:
+      'Returns summary counts: total, new today, and active appointments.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Statistics retrieved successfully',
+  })
+  getPatientsStats() {
+    return this.usersService.getPatientsStats();
+  }
+
+  @Patch('receptionist/patients/:id')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ApiOperation({
+    summary: 'Update patient profile (ADMIN/RECEPTIONIST only)',
+    description: 'Atomically updates User and PatientProfile record.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Patient updated successfully',
+  })
+  updatePatientProfile(
+    @Param('id') id: string,
+    @Body() dto: UpdatePatientProfileDto,
+  ) {
+    return this.usersService.updatePatientProfile(id, dto);
+  }
+
   @Get()
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
   @ApiOperation({
@@ -122,7 +207,7 @@ export class UsersController {
   @ApiQuery({
     name: 'search',
     required: false,
-    description: 'Search by name or email',
+    description: 'Search by name, email, or phone',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 10 })
@@ -149,6 +234,7 @@ export class UsersController {
   }
 
   @Get('me')
+  @Authenticated()
   @ApiOperation({
     summary: 'Get current user profile',
     description: 'Get the profile of the currently authenticated user',
@@ -162,6 +248,7 @@ export class UsersController {
   }
 
   @Patch('me')
+  @Authenticated()
   @ApiOperation({
     summary: 'Update current user profile',
     description: 'Users can update their own profile (excluding role)',
@@ -181,6 +268,7 @@ export class UsersController {
   }
 
   @Patch('me/password')
+  @Authenticated()
   @ApiOperation({
     summary: 'Change password',
     description: 'User can change their own password',

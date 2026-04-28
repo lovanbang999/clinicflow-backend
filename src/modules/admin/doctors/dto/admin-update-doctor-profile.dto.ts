@@ -68,4 +68,15 @@ export class AdminUpdateDoctorProfileDto {
   @Min(0)
   @Max(5)
   rating?: number;
+
+  @ApiProperty({
+    description: 'Consultation fee for this doctor',
+    example: 150000,
+    required: false,
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  consultationFee?: number;
 }

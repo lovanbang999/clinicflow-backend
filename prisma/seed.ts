@@ -1,695 +1,1137 @@
-import { PrismaPg } from '@prisma/adapter-pg';
+import 'dotenv/config';
 import {
   PrismaClient,
   UserRole,
   Gender,
   DayOfWeek,
-  User,
+  RoomType,
+  ServiceCategoryType,
+  PerformerType,
+  ExamFormType,
+  LabFormType,
+  ScheduleSlotStatus,
   Service,
+  Category,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { PrismaMariaDb } from '@prisma/adapter-mariadb';
+import * as fs from 'fs';
+import * as path from 'path';
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  throw new Error(
-    'DATABASE_URL is missing. Make sure .env is in the backend root (be/) or set DOTENV_CONFIG_PATH.',
-  );
-}
-
-console.log('Using database URL:', databaseUrl);
-
-const adapter = new PrismaPg({ connectionString: databaseUrl });
+// ============================================
+// CONFIG & CLIENT
+// ============================================
+const databaseUrl = process.env.DATABASE_URL!;
+const url = new URL(databaseUrl);
+const adapter = new PrismaMariaDb({
+  host: url.hostname,
+  port: parseInt(url.port) || 3306,
+  user: url.username,
+  password: url.password,
+  database: url.pathname.replace('/', ''),
+  allowPublicKeyRetrieval: true,
+});
 const prisma = new PrismaClient({ adapter });
 
+// ============================================
+// SHARED HELPERS
+// ============================================
+let patientCodeCounter = 1;
+function generatePatientCode(): string {
+  const code = `BN-2026-${String(patientCodeCounter).padStart(4, '0')}`;
+  patientCodeCounter++;
+  return code;
+}
+
+const hashPassword = async (password: string) => {
+  return await bcrypt.hash(password, 10);
+};
+
+interface Icd10Item {
+  code: string;
+  name: string;
+}
+
+// ============================================
+// SEED DATA CONSTANTS
+// ============================================
+
+const ROOMS = [
+  {
+    name: 'Phòng khám 101',
+    type: RoomType.CONSULTATION,
+    floor: '1',
+    capacity: 1,
+  },
+  {
+    name: 'Phòng khám 102',
+    type: RoomType.CONSULTATION,
+    floor: '1',
+    capacity: 1,
+  },
+  {
+    name: 'Phòng khám 103',
+    type: RoomType.CONSULTATION,
+    floor: '1',
+    capacity: 1,
+  },
+  {
+    name: 'Phòng khám 201',
+    type: RoomType.CONSULTATION,
+    floor: '2',
+    capacity: 1,
+  },
+  {
+    name: 'Phòng khám 202',
+    type: RoomType.CONSULTATION,
+    floor: '2',
+    capacity: 1,
+  },
+  {
+    name: 'Phòng khám 203',
+    type: RoomType.CONSULTATION,
+    floor: '2',
+    capacity: 1,
+  },
+  {
+    name: 'Phòng siêu âm 1',
+    type: RoomType.ULTRASOUND,
+    floor: '1',
+    capacity: 2,
+  },
+  {
+    name: 'Phòng siêu âm 2',
+    type: RoomType.ULTRASOUND,
+    floor: '2',
+    capacity: 2,
+  },
+  { name: 'Phòng xét nghiệm', type: RoomType.LAB, floor: '1', capacity: 5 },
+  {
+    name: 'Phòng thủ thuật',
+    type: RoomType.PROCEDURE,
+    floor: '2',
+    capacity: 2,
+  },
+  {
+    name: 'Phòng chờ tầng 1',
+    type: RoomType.WAITING,
+    floor: '1',
+    capacity: 20,
+  },
+  {
+    name: 'Phòng chờ tầng 2',
+    type: RoomType.WAITING,
+    floor: '2',
+    capacity: 20,
+  },
+];
+
+const CATEGORIES = [
+  {
+    code: 'CAT_NOIKHOA',
+    name: 'Nội khoa',
+    description: 'Khám nội khoa chung',
+    type: ServiceCategoryType.EXAMINATION,
+  },
+  {
+    code: 'CAT_XETNGHIEM',
+    name: 'Xét nghiệm (Lab)',
+    description: 'Xét nghiệm cận lâm sàng',
+    type: ServiceCategoryType.LAB,
+  },
+  {
+    code: 'CAT_CDHA',
+    name: 'Chẩn đoán hình ảnh',
+    description: 'Siêu âm, X-Quang',
+    type: ServiceCategoryType.IMAGING,
+  },
+  {
+    code: 'CAT_NHIKHOA',
+    name: 'Nhi khoa',
+    description: 'Khám và điều trị cho trẻ em',
+    type: ServiceCategoryType.SPECIALIST,
+  },
+  {
+    code: 'CAT_SANPHUKHOA',
+    name: 'Sản phụ khoa',
+    description: 'Chăm sóc sức khỏe phụ nữ và thai sản',
+    type: ServiceCategoryType.SPECIALIST,
+  },
+  {
+    code: 'CAT_CHINHHINH',
+    name: 'Chấn thương chỉnh hình',
+    description: 'Cơ xương khớp',
+    type: ServiceCategoryType.SPECIALIST,
+  },
+  {
+    code: 'CAT_TAMLY',
+    name: 'Tâm lý',
+    description: 'Tư vấn sức khỏe tâm thần',
+    type: ServiceCategoryType.SPECIALIST,
+  },
+  {
+    code: 'CAT_TMH',
+    name: 'Tai Mũi Họng',
+    description: 'Khám chuyên khoa TMH',
+    type: ServiceCategoryType.SPECIALIST,
+  },
+  {
+    code: 'CAT_DALIEU',
+    name: 'Da liễu',
+    description: 'Khám và điều trị bệnh ngoài da',
+    type: ServiceCategoryType.SPECIALIST,
+  },
+  {
+    code: 'CAT_NHAKHOA',
+    name: 'Nha khoa',
+    description: 'Răng Hàm Mặt',
+    type: ServiceCategoryType.SPECIALIST,
+  },
+  {
+    code: 'CAT_NHANKHOA',
+    name: 'Nhãn khoa',
+    description: 'Khám mắt',
+    type: ServiceCategoryType.SPECIALIST,
+  },
+  {
+    code: 'CAT_THANKINH',
+    name: 'Thần kinh',
+    description: 'Chẩn đoán và điều trị bệnh lý thần kinh',
+    type: ServiceCategoryType.SPECIALIST,
+  },
+];
+
+const DOCTORS = [
+  {
+    email: 'bs.nguyenvana@clinic.com',
+    fullName: 'BS. Nguyễn Văn An',
+    phone: '0901111111',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Nội khoa', 'Khám sức khỏe tổng quát'],
+    qualifications: ['Bác sĩ CK1', 'Thạc sĩ Y khoa'],
+    experience: 15,
+    consultationFee: 0,
+    bio: 'Bác sĩ có 15 năm kinh nghiệm trong lĩnh vực nội tổng quát, tận tâm với bệnh nhân.',
+  },
+  {
+    email: 'bs.lethib@clinic.com',
+    fullName: 'BS. Lê Thị Bình',
+    phone: '0902222222',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Nội khoa', 'Tim mạch'],
+    qualifications: ['Bác sĩ CK2', 'Tiến sĩ Y khoa'],
+    experience: 12,
+    consultationFee: 300000,
+    bio: 'Chuyên gia tim mạch với 12 năm kinh nghiệm, từng tu nghiệp tại Nhật Bản.',
+  },
+  {
+    email: 'bs.hoangquy@clinic.com',
+    fullName: 'BS. Hoàng Quý',
+    phone: '0903333444',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Chấn thương chỉnh hình', 'Cơ xương khớp'],
+    qualifications: ['Bác sĩ CK2'],
+    experience: 20,
+    consultationFee: 400000,
+    bio: 'Chuyên gia đầu ngành về chấn thương chỉnh hình với hơn 20 năm kinh nghiệm phẫu thuật.',
+  },
+  {
+    email: 'bs.minhthu@clinic.com',
+    fullName: 'BS. Đặng Minh Thư',
+    phone: '0904444555',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Nhi khoa'],
+    qualifications: ['Thạc sĩ Nhi khoa'],
+    experience: 8,
+    consultationFee: 0,
+    bio: 'Bác sĩ Nhi khoa tận tâm, yêu trẻ, có kinh nghiệm xử lý các bệnh lý nhi khoa phổ biến.',
+  },
+  {
+    email: 'bs.quanghuy@clinic.com',
+    fullName: 'BS. Trần Quang Huy',
+    phone: '0905555666',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Tâm lý lâm sàng', 'Sức khỏe tâm thần'],
+    qualifications: ['Tiến sĩ Tâm lý'],
+    experience: 15,
+    consultationFee: 500000,
+    bio: 'Chuyên gia tư vấn tâm lý, hỗ trợ điều trị trầm cảm, lo âu và các rối loạn tâm thần.',
+  },
+  {
+    email: 'bs.tuyetmai@clinic.com',
+    fullName: 'BS. Vương Tuyết Mai',
+    phone: '0906666777',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Sản phụ khoa'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 10,
+    consultationFee: 300000,
+    bio: 'Chuyên khám thai định kỳ, tư vấn sức khỏe sinh sản và điều trị phụ khoa.',
+  },
+  {
+    email: 'bs.giabao@clinic.com',
+    fullName: 'BS. Phạm Gia Bảo',
+    phone: '0907777888',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Tiêu hóa', 'Gan mật'],
+    qualifications: ['Thạc sĩ Y khoa'],
+    experience: 12,
+    consultationFee: 250000,
+    bio: 'Chuyên gia nội soi tiêu hóa, điều trị các bệnh lý dạ dày, đại tràng và gan mật.',
+  },
+  {
+    email: 'bs.thanhha@clinic.com',
+    fullName: 'BS. Nguyễn Thanh Hà',
+    phone: '0908888999',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Nội tiết', 'Tiểu đường'],
+    qualifications: ['Bác sĩ CK2'],
+    experience: 18,
+    consultationFee: 350000,
+    bio: 'Chuyên điều trị tiểu đường, cường giáp và các rối loạn nội tiết phức tạp.',
+  },
+  {
+    email: 'bs.huuphuoc@clinic.com',
+    fullName: 'BS. Lê Hữu Phước',
+    phone: '0909999000',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Tai Mũi Họng'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 9,
+    consultationFee: 0,
+    bio: 'Bác sĩ chuyên khoa Tai Mũi Họng, giàu kinh nghiệm điều trị viêm xoang, viêm họng mãn tính.',
+  },
+  {
+    email: 'bs.lananh@clinic.com',
+    fullName: 'BS. Đỗ Lan Anh',
+    phone: '0901112223',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Dị ứng', 'Miễn dịch lâm sàng'],
+    qualifications: ['Thạc sĩ Y khoa'],
+    experience: 7,
+    consultationFee: 250000,
+    bio: 'Chuyên điều trị các bệnh dị ứng, hen suyễn và các vấn đề miễn dịch hệ thống.',
+  },
+  {
+    email: 'bs.minhquan@clinic.com',
+    fullName: 'BS. Ngô Minh Quân',
+    phone: '0902223334',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Thần kinh'],
+    qualifications: ['Bác sĩ CK2'],
+    experience: 22,
+    consultationFee: 450000,
+    bio: 'Chuyên gia thần kinh, điều trị đau đầu, mất ngủ, tiền đình và các bệnh lý não bộ.',
+  },
+  {
+    email: 'bs.thuhuong@clinic.com',
+    fullName: 'BS. Trịnh Thu Hương',
+    phone: '0903334445',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Dinh dưỡng'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 6,
+    consultationFee: 200000,
+    bio: 'Tư vấn chế độ dinh dưỡng cho người bệnh, trẻ em và người muốn giảm cân khoa học.',
+  },
+  {
+    email: 'bs.tiendung@clinic.com',
+    fullName: 'BS. Bùi Tiến Dũng',
+    phone: '0904445556',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Phục hồi chức năng'],
+    qualifications: ['Thạc sĩ Phục hồi chức năng'],
+    experience: 11,
+    consultationFee: 250000,
+    bio: 'Hỗ trợ bệnh nhân hồi phục sau phẫu thuật hoặc sau tai biến mạch máu não.',
+  },
+  {
+    email: 'bs.thaonguyen@clinic.com',
+    fullName: 'BS. Lê Thảo Nguyên',
+    phone: '0905556667',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Hô hấp'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 13,
+    consultationFee: 300000,
+    bio: 'Chuyên điều trị các bệnh lý phổi, viêm phế quản và tắc nghẽn phổi mãn tính COPD.',
+  },
+  {
+    email: 'bs.ngocmai@clinic.com',
+    fullName: 'BS. Phan Ngọc Mai',
+    phone: '0906667778',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Da liễu', 'Thẩm mỹ'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 9,
+    consultationFee: 350000,
+    bio: 'Chuyên da liễu và thẩm mỹ nội khoa, điều trị mụn, nám và trẻ hóa làn da.',
+  },
+  {
+    email: 'bs.mylinh@clinic.com',
+    fullName: 'BS. Trương Mỹ Linh',
+    phone: '0907778889',
+    role: UserRole.DOCTOR,
+    gender: Gender.FEMALE,
+    specialties: ['Nhãn khoa'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 11,
+    consultationFee: 250000,
+    bio: 'Chuyên gia nhãn khoa, chuyên khám và điều trị các bệnh lý về mắt và tật khúc xạ.',
+  },
+  {
+    email: 'bs.hoangnam@clinic.com',
+    fullName: 'BS. Nguyễn Hoàng Nam',
+    phone: '0908889990',
+    role: UserRole.DOCTOR,
+    gender: Gender.MALE,
+    specialties: ['Nha khoa'],
+    qualifications: ['Bác sĩ CK1'],
+    experience: 10,
+    consultationFee: 300000,
+    bio: 'Bác sĩ nha khoa giỏi, chuyên về phục hình răng và nha khoa thẩm mỹ.',
+  },
+];
+
+const MEDICINES = [
+  {
+    code: 'MED-PARA-500',
+    genericName: 'Paracetamol',
+    brandName: 'Hapacol 500mg',
+    concentration: '500mg',
+    dosageForm: 'Viên nén',
+    defaultUnit: 'viên',
+    defaultPrice: 2000,
+    stockQuantity: 1000,
+  },
+  {
+    code: 'MED-AMOX-500',
+    genericName: 'Amoxicillin',
+    brandName: 'Amoxicillin 500mg',
+    concentration: '500mg',
+    dosageForm: 'Viên nang',
+    defaultUnit: 'viên',
+    defaultPrice: 3500,
+    stockQuantity: 500,
+  },
+  {
+    code: 'MED-IBU-400',
+    genericName: 'Ibuprofen',
+    brandName: 'Gofen 400',
+    concentration: '400mg',
+    dosageForm: 'Viên nang mềm',
+    defaultUnit: 'viên',
+    defaultPrice: 5000,
+    stockQuantity: 300,
+  },
+  {
+    code: 'MED-OME-20',
+    genericName: 'Omeprazole',
+    brandName: 'Losec',
+    concentration: '20mg',
+    dosageForm: 'Viên nang',
+    defaultUnit: 'viên',
+    defaultPrice: 8000,
+    stockQuantity: 200,
+  },
+  {
+    code: 'MED-MET-500',
+    genericName: 'Metformin',
+    brandName: 'Glucophage',
+    concentration: '500mg',
+    dosageForm: 'Viên nén',
+    defaultUnit: 'viên',
+    defaultPrice: 4500,
+    stockQuantity: 600,
+  },
+  {
+    code: 'MED-AML-5',
+    genericName: 'Amlodipine',
+    brandName: 'Amlor',
+    concentration: '5mg',
+    dosageForm: 'Viên nén',
+    defaultUnit: 'viên',
+    defaultPrice: 12000,
+    stockQuantity: 400,
+  },
+  {
+    code: 'MED-SAL-2',
+    genericName: 'Salbutamol',
+    brandName: 'Ventolin',
+    concentration: '2mg',
+    dosageForm: 'Viên nén',
+    defaultUnit: 'viên',
+    defaultPrice: 3000,
+    stockQuantity: 250,
+  },
+];
+
+const TECHNICIANS = [
+  {
+    email: 'ktv.phuong@clinic.com',
+    fullName: 'KTV. Trần Thị Phương',
+    phone: '0981111111',
+    role: UserRole.TECHNICIAN,
+    gender: Gender.FEMALE,
+    specialties: ['Xét nghiệm'],
+    qualifications: ['Cử nhân Xét nghiệm'],
+    experience: 6,
+    consultationFee: 0,
+    bio: 'Kỹ thuật viên xét nghiệm tận tâm, chính xác.',
+  },
+  {
+    email: 'ktv.tuan@clinic.com',
+    fullName: 'KTV. Lê Anh Tuấn',
+    phone: '0982222222',
+    role: UserRole.TECHNICIAN,
+    gender: Gender.MALE,
+    specialties: ['Chẩn đoán hình ảnh'],
+    qualifications: ['Cử nhân Chẩn đoán hình ảnh'],
+    experience: 5,
+    consultationFee: 0,
+    bio: 'Kỹ thuật viên chuyên về Siêu âm và X-quang.',
+  },
+];
+
+const RECEPTIONISTS = [
+  {
+    email: 'letan.huong@clinic.com',
+    fullName: 'Nguyễn Thị Hương',
+    phone: '0906666666',
+    gender: Gender.FEMALE,
+  },
+  {
+    email: 'letan.lan@clinic.com',
+    fullName: 'Trần Thị Lan',
+    phone: '0907777777',
+    gender: Gender.FEMALE,
+  },
+];
+
+const PATIENTS = [
+  {
+    email: 'patient.nam@gmail.com',
+    fullName: 'Nguyễn Văn Nam',
+    phone: '0988888888',
+    gender: Gender.MALE,
+    bloodType: 'O+',
+  },
+  {
+    email: 'patient.linh@gmail.com',
+    fullName: 'Lê Thị Linh',
+    phone: '0989999999',
+    gender: Gender.FEMALE,
+    bloodType: 'A+',
+  },
+  {
+    email: 'patient.tuan@gmail.com',
+    fullName: 'Trần Anh Tuấn',
+    phone: '0981111111',
+    gender: Gender.MALE,
+    bloodType: 'B+',
+  },
+  {
+    email: 'patient.mai@gmail.com',
+    fullName: 'Phạm Thị Mai',
+    phone: '0982222222',
+    gender: Gender.FEMALE,
+    bloodType: 'AB+',
+  },
+];
+
+// ============================================
+// MAIN SEED FUNCTION
+// ============================================
 async function main() {
-  console.log('🌱 Starting database seed...');
+  console.log('🌱 Starting database seed v4.0 (Modular & Expanded)...');
 
-  // Hash password helper
-  const hashPassword = async (password: string) => {
-    return await bcrypt.hash(password, 10);
-  };
+  // 1. DELETE ALL DATA
+  console.log('\n🗑️  Clearing existing data...');
 
-  // ============================================
-  // 0. CLEAR ALL DATA (fresh seed)
-  // ============================================
-  console.log('\n�️  Clearing existing data...');
+  // List of functions to delete data in order
+  const deleteActions = [
+    () => prisma.aiChatMessage.deleteMany(),
+    () => prisma.aiChatSession.deleteMany(),
+    () => prisma.payment.deleteMany(),
+    () => prisma.invoiceItem.deleteMany(),
+    () => prisma.invoice.deleteMany(),
+    () => prisma.labResult.deleteMany(),
+    () => prisma.labOrder.deleteMany(),
+    () => prisma.prescriptionItem.deleteMany(),
+    () => prisma.prescription.deleteMany(),
+    () => prisma.visitServiceOrder.deleteMany(),
+    () => prisma.medicalRecord.deleteMany(),
+    () => prisma.bookingStatusHistory.deleteMany(),
+    () => prisma.bookingQueue.deleteMany(),
+    () => prisma.booking.deleteMany(),
+    () => prisma.doctorService.deleteMany(),
+    () => prisma.doctorBreakTime.deleteMany(),
+    () => prisma.doctorOffDay.deleteMany(),
+    () => prisma.doctorScheduleSlot.deleteMany(),
+    () => prisma.doctorWorkingHours.deleteMany(),
+    () => prisma.doctorProfile.deleteMany(),
+    () => prisma.patientProfile.deleteMany(),
+    () => prisma.notification.deleteMany(),
+    () => prisma.auditLog.deleteMany(),
+    () => prisma.systemConfig.deleteMany(),
+    () => prisma.refreshToken.deleteMany(),
+    () => prisma.verificationCode.deleteMany(),
+    () => prisma.icd10Code.deleteMany(),
+    () => prisma.service.deleteMany(),
+    () => prisma.category.deleteMany(),
+    () => prisma.room.deleteMany(),
+    () => prisma.medicine.deleteMany(),
+    () => prisma.slotReservation.deleteMany(),
+    () => prisma.user.deleteMany(),
+  ];
 
-  // Delete in order to avoid FK constraint violations
-  await prisma.payment.deleteMany();
-  await prisma.invoiceItem.deleteMany();
-  await prisma.invoice.deleteMany();
-  await prisma.labResult.deleteMany();
-  await prisma.labOrder.deleteMany();
-  await prisma.prescriptionItem.deleteMany();
-  await prisma.prescription.deleteMany();
-  await prisma.medicalRecord.deleteMany();
-  await prisma.bookingStatusHistory.deleteMany();
-  await prisma.bookingQueue.deleteMany();
-  await prisma.booking.deleteMany();
-  await prisma.doctorService.deleteMany();
-  await prisma.doctorBreakTime.deleteMany();
-  await prisma.doctorOffDay.deleteMany();
-  await prisma.doctorScheduleSlot.deleteMany();
-  await prisma.doctorWorkingHours.deleteMany();
-  await prisma.doctorProfile.deleteMany();
-  await prisma.patientProfile.deleteMany();
-  await prisma.notification.deleteMany();
-  await prisma.auditLog.deleteMany();
-  await prisma.refreshToken.deleteMany();
-  await prisma.verificationCode.deleteMany();
-  await prisma.service.deleteMany();
-  await prisma.user.deleteMany();
-
+  for (const action of deleteActions) {
+    try {
+      await action();
+    } catch {
+      // Ignore if table doesn't exist or other minor issues
+    }
+  }
   console.log('  ✅ All data cleared');
 
-  // ============================================
-  // 1. CREATE USERS
-  // ============================================
-  console.log('\n👥 Creating users...');
+  // 2. SEED ROOMS
+  console.log('\n🏠 Creating rooms...');
+  for (const room of ROOMS) {
+    await prisma.room.create({ data: room });
+  }
+  console.log(`  ✅ Created ${ROOMS.length} rooms`);
 
-  // ADMIN
-  const admin = await prisma.user.create({
+  // 3. SEED CATEGORIES
+  console.log('\n📁 Creating categories...');
+  const categoryMap = new Map<string, string>();
+  for (const cat of CATEGORIES) {
+    const created = await prisma.category.create({ data: cat });
+    categoryMap.set(cat.name, created.id);
+  }
+  console.log(`  ✅ Created ${CATEGORIES.length} categories`);
+
+  // 4. SEED SERVICES
+  console.log('\n🏥 Creating services...');
+  const servicesData = [
+    {
+      name: 'Khám nội tổng quát',
+      description: 'Khám sức khỏe định kỳ, tầm soát bệnh lý nội khoa',
+      category: 'Nội khoa',
+      price: 200000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.GENERAL,
+    },
+    {
+      name: 'Khám tim mạch',
+      description: 'Chuyên khoa tim mạch, huyết áp',
+      category: 'Nội khoa',
+      price: 300000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.CARDIOLOGY,
+    },
+    {
+      name: 'Khám nhi khoa',
+      description: 'Khám và tư vấn sức khỏe cho trẻ em',
+      category: 'Nhi khoa',
+      price: 250000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.GENERAL,
+    },
+    {
+      name: 'Khám xương khớp',
+      description: 'Chẩn đoán các bệnh lý cơ xương khớp',
+      category: 'Chấn thương chỉnh hình',
+      price: 400000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.ORTHOPEDIC,
+    },
+    {
+      name: 'Khám sản phụ khoa',
+      description: 'Khám thai, phụ khoa và tư vấn sức khỏe sinh sản',
+      category: 'Sản phụ khoa',
+      price: 300000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.GYNECOLOGY,
+    },
+    {
+      name: 'Khám tâm lý',
+      description: 'Tư vấn và trị liệu tâm lý',
+      category: 'Tâm lý',
+      price: 500000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.GENERAL,
+    },
+    {
+      name: 'Khám mắt',
+      description: 'Khám tật khúc xạ và các bệnh lý về mắt',
+      category: 'Nhãn khoa',
+      price: 200000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.EYE,
+    },
+    {
+      name: 'Khám tai mũi họng',
+      description: 'Nội soi và khám các bệnh lý TMH',
+      category: 'Tai Mũi Họng',
+      price: 200000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.ENT,
+    },
+    {
+      name: 'Khám da liễu',
+      description: 'Điều trị bệnh ngoài da và thẩm mỹ da',
+      category: 'Da liễu',
+      price: 350000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.DERMATOLOGY,
+    },
+    {
+      name: 'Khám răng hàm mặt',
+      description: 'Khám và điều trị các bệnh lý răng miệng',
+      category: 'Nha khoa',
+      price: 200000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.DENTAL,
+    },
+    {
+      name: 'Khám tiêu hóa',
+      description: 'Chuyên khoa tiêu hóa, gan mật',
+      category: 'Nội khoa',
+      price: 250000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.GASTRO,
+    },
+    {
+      name: 'Khám nội tiết',
+      description: 'Điều trị tiểu đường, bệnh lý tuyến giáp',
+      category: 'Nội khoa',
+      price: 350000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.ENDOCRINE,
+    },
+    {
+      name: 'Khám thần kinh',
+      description: 'Chẩn đoán đau đầu, chóng mặt, rối loạn thần kinh, mất ngủ',
+      category: 'Thần kinh',
+      price: 450000,
+      pType: PerformerType.DOCTOR,
+      eType: ExamFormType.NEUROLOGY,
+    },
+
+    // Lab Services (Nhóm 1 - KTV thực hiện)
+    {
+      name: 'Tổng phân tích tế bào máu (CBC)',
+      description: 'Kiểm tra các thành phần tế bào máu',
+      category: 'Xét nghiệm (Lab)',
+      price: 150000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.BLOOD_LAB,
+    },
+    {
+      name: 'Đường huyết đói (FBS)',
+      description: 'Kiểm tra nồng độ đường trong máu',
+      category: 'Xét nghiệm (Lab)',
+      price: 80000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.BLOOD_LAB,
+    },
+    {
+      name: 'Chức năng gan (AST, ALT, GGT)',
+      description: 'Đánh giá tình trạng viêm gan, tổn thương gan',
+      category: 'Xét nghiệm (Lab)',
+      price: 240000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.BLOOD_LAB,
+    },
+    {
+      name: 'Chức năng thận (Ure, Creatinin)',
+      description: 'Đánh giá khả năng lọc của thận',
+      category: 'Xét nghiệm (Lab)',
+      price: 160000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.BLOOD_LAB,
+    },
+    {
+      name: 'Tổng phân tích nước tiểu (10 chỉ số)',
+      description: 'Kiểm tra các bệnh lý về tiết niệu, thận',
+      category: 'Xét nghiệm (Lab)',
+      price: 100000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.URINE_LAB,
+    },
+    {
+      name: 'Siêu âm ổ bụng tổng quát',
+      description: 'Quan sát các cơ quan nội tạng trong bụng',
+      category: 'Chẩn đoán hình ảnh',
+      price: 250000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.IMAGING,
+    },
+    {
+      name: 'Siêu âm tim Doppler',
+      description: 'Kiểm tra cấu trúc và chức năng tim',
+      category: 'Chẩn đoán hình ảnh',
+      price: 500000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.IMAGING,
+    },
+    {
+      name: 'X-quang ngực thẳng',
+      description: 'Kiểm tra tim, phổi và khung xương sườn',
+      category: 'Chẩn đoán hình ảnh',
+      price: 150000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.IMAGING,
+    },
+    {
+      name: 'Chụp CT-Scanner đầu',
+      description: 'Tầm soát chấn thương hoặc bệnh lý não',
+      category: 'Chẩn đoán hình ảnh',
+      price: 1200000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.IMAGING,
+    },
+    {
+      name: 'Điện tâm đồ (ECG)',
+      description: 'Ghi lại hoạt động điện của tim',
+      category: 'Chẩn đoán hình ảnh',
+      price: 120000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.ECG,
+    },
+    {
+      name: 'Nội soi dạ dày (không gây mê)',
+      description: 'Quan sát trực tiếp thực quản và dạ dày',
+      category: 'Chẩn đoán hình ảnh',
+      price: 600000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.ENDOSCOPY,
+    },
+    {
+      name: 'Đo chức năng hô hấp',
+      description: 'Tầm soát bệnh lý phổi tắc nghẽn',
+      category: 'Chẩn đoán hình ảnh',
+      price: 200000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.SPIROMETRY,
+    },
+    {
+      name: 'Đo loãng xương (DEXA)',
+      description: 'Kiểm tra mật độ xương',
+      category: 'Chẩn đoán hình ảnh',
+      price: 350000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.BONE_DENSITY,
+    },
+    {
+      name: 'Dịch vụ kỹ thuật khác',
+      description: 'Các thủ thuật kỹ thuật chung',
+      category: 'Chẩn đoán hình ảnh',
+      price: 100000,
+      pType: PerformerType.TECHNICIAN,
+      lType: LabFormType.GENERAL,
+    },
+  ];
+
+  const createdServices: (Service & { category: Category | null })[] = [];
+  for (const s of servicesData) {
+    const created = await prisma.service.create({
+      data: {
+        name: s.name,
+        description: s.description,
+        price: s.price,
+        durationMinutes: 30,
+        categoryId: categoryMap.get(s.category)!,
+        performerType: s.pType,
+        examFormType: s.eType || ExamFormType.GENERAL,
+        labFormType: s.lType || LabFormType.GENERAL,
+      },
+      include: { category: true },
+    });
+    createdServices.push(created);
+  }
+  console.log(`  ✅ Created ${servicesData.length} services`);
+
+  // 5. SEED ADMIN
+  console.log('\n👥 Creating users...');
+  await prisma.user.create({
     data: {
       email: 'admin@clinic.com',
       password: await hashPassword('admin123'),
       role: UserRole.ADMIN,
       fullName: 'Quản Trị Viên Hệ Thống',
-      phone: '0900000000',
-      dateOfBirth: new Date('1985-01-15'),
-      gender: Gender.MALE,
-      address: '100 Nguyễn Huệ, Quận 1, TP.HCM',
       isActive: true,
       isVerified: true,
     },
   });
-  console.log('  ✅ Admin created:', admin.email);
+  console.log('  ✅ Admin created');
 
-  // DOCTORS WITH PROFILES
-  // serviceKeys: tên các service sẽ được map sau khi tạo services
-  const doctorsData = [
-    {
-      user: {
-        email: 'bs.nguyenvana@clinic.com',
-        fullName: 'BS. Nguyễn Văn An',
-        phone: '0901111111',
-        dateOfBirth: new Date('1975-03-20'),
-        gender: Gender.MALE,
-        address: '456 Lê Lợi, Quận 3, TP.HCM',
-      },
-      profile: {
-        specialties: ['Nội tổng quát', 'Khám sức khỏe định kỳ'],
-        qualifications: ['Bác sĩ CK1', 'Thạc sĩ Y khoa'],
-        yearsOfExperience: 15,
-        rating: 4.8,
-        reviewCount: 120,
-        bio: 'Bác sĩ có 15 năm kinh nghiệm trong lĩnh vực nội tổng quát, tận tâm với bệnh nhân',
-      },
-      // Tên services (phải khớp với trường name bên dưới)
-      serviceNames: [
-        'Khám tổng quát',
-        'Xét nghiệm',
-        'Siêu âm tổng quát',
-        'Nội soi',
-      ],
-    },
-    {
-      user: {
-        email: 'bs.lethib@clinic.com',
-        fullName: 'BS. Lê Thị Bình',
-        phone: '0902222222',
-        dateOfBirth: new Date('1980-07-10'),
-        gender: Gender.FEMALE,
-        address: '789 Trần Hưng Đạo, Quận 5, TP.HCM',
-      },
-      profile: {
-        specialties: ['Tim mạch', 'Điều trị bệnh mạch vành'],
-        qualifications: ['Bác sĩ CK2', 'Tiến sĩ Y khoa'],
-        yearsOfExperience: 12,
-        rating: 4.9,
-        reviewCount: 89,
-        bio: 'Chuyên gia tim mạch với 12 năm kinh nghiệm, từng tu nghiệp tại Nhật Bản',
-      },
-      serviceNames: ['Khám tim mạch', 'Xét nghiệm', 'Siêu âm tổng quát'],
-    },
-    {
-      user: {
-        email: 'bs.tranthic@clinic.com',
-        fullName: 'BS. Trần Thị Cẩm',
-        phone: '0903333333',
-        dateOfBirth: new Date('1982-11-25'),
-        gender: Gender.FEMALE,
-        address: '321 Hai Bà Trưng, Quận 1, TP.HCM',
-      },
-      profile: {
-        specialties: ['Da liễu', 'Thẩm mỹ da'],
-        qualifications: ['Bác sĩ CK1', 'Chứng chỉ Thẩm mỹ Da'],
-        yearsOfExperience: 10,
-        rating: 4.7,
-        reviewCount: 156,
-        bio: 'Bác sĩ da liễu với chuyên môn sâu về điều trị mụn và thẩm mỹ da',
-      },
-      serviceNames: ['Khám da liễu', 'Xét nghiệm'],
-    },
-    {
-      user: {
-        email: 'bs.phamvand@clinic.com',
-        fullName: 'BS. Phạm Văn Dũng',
-        phone: '0904444444',
-        dateOfBirth: new Date('1986-04-08'),
-        gender: Gender.MALE,
-        address: '555 Võ Văn Tần, Quận 3, TP.HCM',
-      },
-      profile: {
-        specialties: ['Răng hàm mặt', 'Nha khoa thẩm mỹ'],
-        qualifications: ['Bác sĩ CK1', 'Bác sĩ nội trú'],
-        yearsOfExperience: 8,
-        rating: 4.6,
-        reviewCount: 95,
-        bio: 'Chuyên gia răng hàm mặt, tập trung vào nha khoa thẩm mỹ và implant',
-      },
-      serviceNames: ['Khám răng hàm mặt'],
-    },
-    {
-      user: {
-        email: 'bs.hoangthie@clinic.com',
-        fullName: 'BS. Hoàng Thị Em',
-        phone: '0905555555',
-        dateOfBirth: new Date('1978-09-15'),
-        gender: Gender.FEMALE,
-        address: '888 Pasteur, Quận 1, TP.HCM',
-      },
-      profile: {
-        specialties: ['Mắt', 'Phẫu thuật khúc xạ'],
-        qualifications: ['Bác sĩ CK2', 'Thạc sĩ Nhãn khoa'],
-        yearsOfExperience: 14,
-        rating: 4.9,
-        reviewCount: 203,
-        bio: 'Bác sĩ mắt giàu kinh nghiệm, chuyên về phẫu thuật khúc xạ và điều trị bệnh lý võng mạc',
-      },
-      serviceNames: ['Khám mắt', 'Xét nghiệm'],
-    },
-    {
-      user: {
-        email: 'bs.nguyenvantai@clinic.com',
-        fullName: 'BS. Nguyễn Văn Tài',
-        phone: '0908111111',
-        dateOfBirth: new Date('1977-06-12'),
-        gender: Gender.MALE,
-        address: '200 Nam Kỳ Khởi Nghĩa, Quận 3, TP.HCM',
-      },
-      profile: {
-        specialties: ['Tai mũi họng'],
-        qualifications: ['Bác sĩ CK2', 'Thạc sĩ Y khoa'],
-        yearsOfExperience: 16,
-        rating: 4.8,
-        reviewCount: 175,
-        bio: 'Chuyên gia tai mũi họng với hơn 16 năm kinh nghiệm điều trị các bệnh lý tai mũi họng phức tạp',
-      },
-      serviceNames: ['Khám tai mũi họng', 'Xét nghiệm'],
-    },
-    {
-      user: {
-        email: 'bs.tranthimylinh@clinic.com',
-        fullName: 'BS. Trần Thị Mỹ Linh',
-        phone: '0908222222',
-        dateOfBirth: new Date('1983-02-28'),
-        gender: Gender.FEMALE,
-        address: '300 Cộng Hòa, Tân Bình, TP.HCM',
-      },
-      profile: {
-        specialties: ['Sản phụ khoa'],
-        qualifications: ['Bác sĩ CK1', 'Chứng chỉ Siêu âm sản khoa'],
-        yearsOfExperience: 11,
-        rating: 4.85,
-        reviewCount: 210,
-        bio: 'Bác sĩ sản phụ khoa tận tâm, có kinh nghiệm chăm sóc sức khỏe phụ nữ và theo dõi thai kỳ',
-      },
-      serviceNames: ['Khám sản phụ khoa', 'Siêu âm tổng quát', 'Xét nghiệm'],
-    },
-  ];
-
-  const createdDoctors: User[] = [];
-  for (const doctorData of doctorsData) {
-    const doctor = await prisma.user.create({
+  // 6. SEED DOCTORS & TECHNICIANS
+  const allProviders = [...DOCTORS, ...TECHNICIANS];
+  for (const p of allProviders) {
+    const user = await prisma.user.create({
       data: {
-        email: doctorData.user.email,
-        password: await hashPassword('doctor123'),
-        role: UserRole.DOCTOR,
-        fullName: doctorData.user.fullName,
-        phone: doctorData.user.phone,
-        dateOfBirth: doctorData.user.dateOfBirth,
-        gender: doctorData.user.gender,
-        address: doctorData.user.address,
+        email: p.email,
+        password: await hashPassword(
+          p.role === UserRole.DOCTOR ? 'doctor123' : 'technician123',
+        ),
+        role: p.role,
+        fullName: p.fullName,
+        phone: p.phone,
+        gender: p.gender,
         isActive: true,
         isVerified: true,
         doctorProfile: {
-          create: doctorData.profile,
+          create: {
+            specialties: p.specialties,
+            qualifications: p.qualifications,
+            yearsOfExperience: p.experience,
+            bio: p.bio,
+            consultationFee: p.consultationFee,
+            rating: 4.5 + Math.random() * 0.5,
+            reviewCount: Math.floor(Math.random() * 200),
+          },
         },
       },
     });
 
-    createdDoctors.push(doctor);
-    console.log(
-      `  ✅ Doctor created: ${doctor.fullName} (${doctorData.profile.specialties[0]})`,
-    );
-  }
-
-  // RECEPTIONISTS
-  const receptionistsData = [
-    {
-      email: 'letan.huong@clinic.com',
-      fullName: 'Nguyễn Thị Hương',
-      phone: '0906666666',
-      dateOfBirth: new Date('1992-06-10'),
-      gender: Gender.FEMALE,
-      address: '234 Lý Thái Tổ, Quận 10, TP.HCM',
-    },
-    {
-      email: 'letan.lan@clinic.com',
-      fullName: 'Trần Thị Lan',
-      phone: '0907777777',
-      dateOfBirth: new Date('1994-03-22'),
-      gender: Gender.FEMALE,
-      address: '567 Nguyễn Thị Minh Khai, Quận 3, TP.HCM',
-    },
-  ];
-
-  for (const receptionist of receptionistsData) {
-    const created = await prisma.user.create({
-      data: {
-        email: receptionist.email,
-        password: await hashPassword('receptionist123'),
-        role: UserRole.RECEPTIONIST,
-        fullName: receptionist.fullName,
-        phone: receptionist.phone,
-        dateOfBirth: receptionist.dateOfBirth,
-        gender: receptionist.gender,
-        address: receptionist.address,
-        isActive: true,
-        isVerified: true,
-      },
-    });
-    console.log(`  ✅ Receptionist created: ${created.fullName}`);
-  }
-
-  // PATIENTS
-  const patientsData = [
-    {
-      email: 'patient.nam@gmail.com',
-      fullName: 'Nguyễn Văn Nam',
-      phone: '0908888888',
-      dateOfBirth: new Date('1988-12-05'),
-      gender: Gender.MALE,
-      address: '111 Cách Mạng Tháng 8, Quận 10, TP.HCM',
-    },
-    {
-      email: 'patient.linh@gmail.com',
-      fullName: 'Lê Thị Linh',
-      phone: '0909999999',
-      dateOfBirth: new Date('1995-08-20'),
-      gender: Gender.FEMALE,
-      address: '222 Phan Xích Long, Phú Nhuận, TP.HCM',
-    },
-    {
-      email: 'patient.tuan@gmail.com',
-      fullName: 'Trần Anh Tuấn',
-      phone: '0911111111',
-      dateOfBirth: new Date('1990-02-14'),
-      gender: Gender.MALE,
-      address: '333 Hoàng Văn Thụ, Tân Bình, TP.HCM',
-    },
-    {
-      email: 'patient.mai@gmail.com',
-      fullName: 'Phạm Thị Mai',
-      phone: '0912222222',
-      dateOfBirth: new Date('1993-05-18'),
-      gender: Gender.FEMALE,
-      address: '444 Điện Biên Phủ, Bình Thạnh, TP.HCM',
-    },
-    {
-      email: 'patient.hung@gmail.com',
-      fullName: 'Hoàng Văn Hùng',
-      phone: '0913333333',
-      dateOfBirth: new Date('1987-11-30'),
-      gender: Gender.MALE,
-      address: '555 Lý Thường Kiệt, Quận 11, TP.HCM',
-    },
-    {
-      email: 'patient.thu@gmail.com',
-      fullName: 'Võ Thị Thu',
-      phone: '0914444444',
-      dateOfBirth: new Date('1991-07-25'),
-      gender: Gender.FEMALE,
-      address: '666 Trường Chinh, Tân Bình, TP.HCM',
-    },
-    {
-      email: 'patient.dat@gmail.com',
-      fullName: 'Đặng Minh Đạt',
-      phone: '0915555555',
-      dateOfBirth: new Date('1989-04-12'),
-      gender: Gender.MALE,
-      address: '777 Xô Viết Nghệ Tĩnh, Bình Thạnh, TP.HCM',
-    },
-    {
-      email: 'patient.nhi@gmail.com',
-      fullName: 'Bùi Thị Nhi',
-      phone: '0916666666',
-      dateOfBirth: new Date('1996-09-08'),
-      gender: Gender.FEMALE,
-      address: '888 Ba Tháng Hai, Quận 10, TP.HCM',
-    },
-  ];
-
-  for (const patient of patientsData) {
-    const created = await prisma.user.create({
-      data: {
-        email: patient.email,
-        password: await hashPassword('patient123'),
-        role: UserRole.PATIENT,
-        fullName: patient.fullName,
-        phone: patient.phone,
-        dateOfBirth: patient.dateOfBirth,
-        gender: patient.gender,
-        address: patient.address,
-        isActive: true,
-        isVerified: true,
-      },
-    });
-    console.log(`  ✅ Patient created: ${created.fullName}`);
-  }
-
-  // ============================================
-  // 2. CREATE SERVICES
-  // ============================================
-  console.log('\n🏥 Creating services...');
-
-  const servicesData = [
-    {
-      name: 'Khám tổng quát',
-      description: 'Khám sức khỏe định kỳ, tư vấn các vấn đề sức khỏe chung',
-      category: 'Nội khoa',
-      durationMinutes: 30,
-      price: 200000,
-      maxSlotsPerHour: 3,
-    },
-    {
-      name: 'Khám tim mạch',
-      description: 'Siêu âm tim, điện tâm đồ, tư vấn điều trị bệnh tim mạch',
-      category: 'Nội khoa',
-      durationMinutes: 45,
-      price: 300000,
-      maxSlotsPerHour: 2,
-    },
-    {
-      name: 'Khám da liễu',
-      description: 'Điều trị mụn, nám, viêm da, dị ứng da',
-      category: 'Da liễu',
-      durationMinutes: 30,
-      price: 250000,
-      maxSlotsPerHour: 2,
-    },
-    {
-      name: 'Khám răng hàm mặt',
-      description: 'Khám tổng quát, lấy cao răng, nhổ răng, trám răng',
-      category: 'Nha khoa',
-      durationMinutes: 45,
-      price: 350000,
-      maxSlotsPerHour: 2,
-    },
-    {
-      name: 'Khám mắt',
-      description: 'Đo thị lực, khám bệnh về mắt, kê đơn kính',
-      category: 'Nhãn khoa',
-      durationMinutes: 30,
-      price: 200000,
-      maxSlotsPerHour: 3,
-    },
-    {
-      name: 'Xét nghiệm',
-      description: 'Xét nghiệm máu, nước tiểu, các xét nghiệm chuyên sâu',
-      category: 'Xét nghiệm',
-      durationMinutes: 15,
-      price: 150000,
-      maxSlotsPerHour: 4,
-    },
-    {
-      name: 'Siêu âm tổng quát',
-      description: 'Siêu âm bụng, siêu âm tuyến giáp, siêu âm vú',
-      category: 'Chẩn đoán hình ảnh',
-      durationMinutes: 30,
-      price: 280000,
-      maxSlotsPerHour: 2,
-    },
-    {
-      name: 'Nội soi',
-      description: 'Nội soi dạ dày, nội soi đại tràng',
-      category: 'Nội khoa',
-      durationMinutes: 60,
-      price: 500000,
-      maxSlotsPerHour: 1,
-    },
-    {
-      name: 'Khám tai mũi họng',
-      description: 'Khám và điều trị bệnh tai mũi họng',
-      category: 'Tai mũi họng',
-      durationMinutes: 30,
-      price: 220000,
-      maxSlotsPerHour: 2,
-    },
-    {
-      name: 'Khám sản phụ khoa',
-      description: 'Khám thai, tư vấn sức khỏe phụ nữ',
-      category: 'Sản phụ khoa',
-      durationMinutes: 45,
-      price: 300000,
-      maxSlotsPerHour: 2,
-    },
-  ];
-
-  const createdServices: Service[] = [];
-  for (const service of servicesData) {
-    const created = await prisma.service.create({ data: service });
-    createdServices.push(created);
-    console.log(
-      `  ✅ Service created: ${created.name} — ${created.category} (${created.price.toString()}đ)`,
-    );
-  }
-
-  // Build lookup map: serviceName → Service object
-  const serviceMap = new Map<string, Service>();
-  for (const s of createdServices) {
-    serviceMap.set(s.name, s);
-  }
-
-  // ============================================
-  // 3. LINK DOCTORS ↔ SERVICES (DoctorService)
-  // ============================================
-  console.log('\n🔗 Linking doctors to services...');
-
-  let doctorServiceCount = 0;
-  for (let i = 0; i < doctorsData.length; i++) {
-    const doctorData = doctorsData[i];
-    const doctor = createdDoctors[i];
-
-    // Fetch the doctorProfile id
-    const profile = await prisma.doctorProfile.findUnique({
-      where: { userId: doctor.id },
-      select: { id: true },
-    });
-
-    if (!profile) {
-      console.warn(
-        `  ⚠️  No profile found for ${doctor.fullName}, skipping...`,
-      );
-      continue;
-    }
-
-    for (const serviceName of doctorData.serviceNames) {
-      const service = serviceMap.get(serviceName);
-      if (!service) {
-        console.warn(`  ⚠️  Service "${serviceName}" not found, skipping...`);
-        continue;
-      }
-
-      await prisma.doctorService.create({
-        data: {
-          doctorProfileId: profile.id,
-          serviceId: service.id,
-        },
+    // Link doctor to services matching their specialties
+    if (p.role === UserRole.DOCTOR) {
+      const doctorProfile = await prisma.doctorProfile.findUnique({
+        where: { userId: user.id },
       });
-      doctorServiceCount++;
+
+      if (doctorProfile) {
+        for (const service of createdServices) {
+          // Check if doctor specialty matches service category or service name
+          const isMatch = p.specialties.some(
+            (spec) =>
+              spec.toLowerCase() === service.category?.name.toLowerCase() ||
+              service.name.toLowerCase().includes(spec.toLowerCase()),
+          );
+
+          if (isMatch) {
+            await prisma.doctorService.create({
+              data: {
+                doctorProfileId: doctorProfile.id,
+                serviceId: service.id,
+              },
+            });
+          }
+        }
+      }
     }
 
-    console.log(
-      `  ✅ ${doctor.fullName} → [${doctorData.serviceNames.join(', ')}]`,
-    );
-  }
-
-  console.log(`  ✅ Total DoctorService records: ${doctorServiceCount}`);
-
-  // ============================================
-  // 4. CREATE DOCTOR WORKING HOURS
-  // ============================================
-  console.log('\n⏰ Creating doctor working hours...');
-
-  const workingDays = [
-    DayOfWeek.MONDAY,
-    DayOfWeek.TUESDAY,
-    DayOfWeek.WEDNESDAY,
-    DayOfWeek.THURSDAY,
-    DayOfWeek.FRIDAY,
-  ];
-
-  let workingHoursCount = 0;
-  for (const doctor of createdDoctors) {
-    // Weekdays: 8:00 - 17:00
-    for (const day of workingDays) {
+    // Create Working Hours (T2-T7, 08:00 - 17:00)
+    for (const day of [
+      DayOfWeek.MONDAY,
+      DayOfWeek.TUESDAY,
+      DayOfWeek.WEDNESDAY,
+      DayOfWeek.THURSDAY,
+      DayOfWeek.FRIDAY,
+      DayOfWeek.SATURDAY,
+      DayOfWeek.SUNDAY,
+    ]) {
       await prisma.doctorWorkingHours.create({
         data: {
-          doctorId: doctor.id,
+          doctorId: user.id,
           dayOfWeek: day,
           startTime: '08:00',
           endTime: '17:00',
         },
       });
-      workingHoursCount++;
+    }
+  }
+  console.log(
+    `  ✅ Created ${allProviders.length} providers with profiles and working hours`,
+  );
+
+  // 6b. SEED SCHEDULE SLOTS — 30 days of demo slots for every doctor
+  console.log('\n📅 Creating schedule slots...');
+  const allDoctors = await prisma.user.findMany({
+    where: { role: UserRole.DOCTOR, isActive: true },
+    select: { id: true },
+  });
+  const consultationRooms = await prisma.room.findMany({
+    where: { type: RoomType.CONSULTATION, isActive: true },
+    select: { id: true },
+  });
+
+  if (allDoctors.length > 0 && consultationRooms.length > 0) {
+    const timeBlocks = [
+      { start: '08:00', end: '09:00' },
+      { start: '09:00', end: '10:00' },
+      { start: '10:00', end: '11:00' },
+      { start: '13:30', end: '14:30' },
+      { start: '14:30', end: '15:30' },
+      { start: '15:30', end: '16:30' },
+    ];
+
+    // Use VN timezone to get the correct "today" date string, then construct
+    // a UTC midnight Date so MySQL @db.Date stores the correct VN date.
+    const todayVN = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+    }).format(new Date()); // e.g. "2026-04-20"
+    const today = new Date(todayVN + 'T00:00:00.000Z');
+
+    const slotData: {
+      doctorId: string;
+      roomId: string;
+      date: Date;
+      startTime: string;
+      endTime: string;
+      maxPatients: number;
+      bookedCount: number;
+      status: ScheduleSlotStatus;
+      isActive: boolean;
+      maxPreBookings: number;
+      maxQueueSize: number;
+      preBookedCount: number;
+      queueCount: number;
+    }[] = [];
+    for (let dayOffset = 0; dayOffset < 30; dayOffset++) {
+      const slotDate = new Date(today);
+      slotDate.setDate(today.getDate() + dayOffset);
+
+      for (let di = 0; di < allDoctors.length; di++) {
+        const room = consultationRooms[di % consultationRooms.length];
+        for (const block of timeBlocks) {
+          slotData.push({
+            doctorId: allDoctors[di].id,
+            roomId: room.id,
+            date: slotDate,
+            startTime: block.start,
+            endTime: block.end,
+            maxPatients: 1,
+            bookedCount: 0,
+            status: ScheduleSlotStatus.SCHEDULED,
+            isActive: true,
+            maxPreBookings: 1,
+            maxQueueSize: 5,
+            preBookedCount: 0,
+            queueCount: 0,
+          });
+        }
+      }
     }
 
-    // Saturday: 8:00 - 12:00 (half day)
-    await prisma.doctorWorkingHours.create({
+    await prisma.doctorScheduleSlot.createMany({ data: slotData });
+    console.log(
+      `  ✅ Created ${slotData.length} schedule slots across ${allDoctors.length} doctors for 30 days`,
+    );
+  } else {
+    console.warn(
+      '  ⚠️ No doctors or consultation rooms found — skipping slot generation',
+    );
+  }
+
+  // 7. SEED RECEPTIONISTS
+  for (const r of RECEPTIONISTS) {
+    await prisma.user.create({
       data: {
-        doctorId: doctor.id,
-        dayOfWeek: DayOfWeek.SATURDAY,
-        startTime: '08:00',
-        endTime: '12:00',
+        email: r.email,
+        password: await hashPassword('receptionist123'),
+        role: UserRole.RECEPTIONIST,
+        fullName: r.fullName,
+        phone: r.phone,
+        gender: r.gender,
+        isActive: true,
+        isVerified: true,
       },
     });
-    workingHoursCount++;
   }
+  console.log('  ✅ Receptionists created');
 
-  console.log(`  ✅ Created ${workingHoursCount} working hour records`);
-
-  // ============================================
-  // 5. CREATE BREAK TIMES (Lunch breaks)
-  // ============================================
-  console.log('\n🍽️ Creating break times...');
-
-  const today = new Date();
-  const dateOnly = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-  );
-
-  // Create lunch breaks for all doctors for the next 7 days
-  let breakTimeCount = 0;
-  for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
-    const breakDate = new Date(dateOnly);
-    breakDate.setDate(dateOnly.getDate() + dayOffset);
-
-    // Skip Sunday
-    if (breakDate.getDay() === 0) continue;
-
-    for (const doctor of createdDoctors) {
-      await prisma.doctorBreakTime.create({
-        data: {
-          doctorId: doctor.id,
-          breakDate: breakDate,
-          startTime: '12:00',
-          endTime: '13:00',
-          reason: 'Nghỉ trưa',
+  // 8. SEED PATIENTS
+  for (const p of PATIENTS) {
+    await prisma.user.create({
+      data: {
+        email: p.email,
+        password: await hashPassword('patient123'),
+        role: UserRole.PATIENT,
+        fullName: p.fullName,
+        phone: p.phone,
+        gender: p.gender,
+        isActive: true,
+        isVerified: true,
+        patientProfile: {
+          create: {
+            fullName: p.fullName,
+            phone: p.phone,
+            email: p.email,
+            gender: p.gender,
+            bloodType: p.bloodType,
+            patientCode: generatePatientCode(),
+          },
         },
-      });
-      breakTimeCount++;
+      },
+    });
+  }
+  console.log('  ✅ Patients created');
+
+  // 12. SEED ICD10 CODES
+  console.log('\n🩺 Seeding ICD-10 codes...');
+  const icd10Path = path.join(__dirname, '../../Tools/icd10_vietnamese.json');
+  if (fs.existsSync(icd10Path)) {
+    try {
+      const icd10Data = JSON.parse(
+        fs.readFileSync(icd10Path, 'utf8'),
+      ) as Icd10Item[];
+      console.log(`  Found ${icd10Data.length} ICD-10 codes. Importing...`);
+
+      const chunkSize = 1000;
+      for (let i = 0; i < icd10Data.length; i += chunkSize) {
+        const chunk = icd10Data
+          .slice(i, i + chunkSize)
+          .map((item: Icd10Item) => ({
+            code: item.code,
+            name: item.name,
+          }));
+        await prisma.icd10Code.createMany({
+          data: chunk,
+          skipDuplicates: true,
+        });
+        if (i % 5000 === 0) {
+          console.log(
+            `    Imported ${i + chunk.length}/${icd10Data.length}...`,
+          );
+        }
+      }
+      console.log('  ✅ ICD-10 codes seeded successfully');
+    } catch (error) {
+      console.error('  ❌ Error seeding ICD-10 codes:', error);
     }
+  } else {
+    console.warn('  ⚠️ ICD-10 file not found at', icd10Path);
   }
 
-  console.log(`  ✅ Created ${breakTimeCount} break time records`);
+  // 13. SEED MEDICINES
+  console.log('\n💊 Seeding medicines...');
+  for (const med of MEDICINES) {
+    await prisma.medicine.create({ data: med });
+  }
+  console.log(`  ✅ Created ${MEDICINES.length} medicines`);
 
-  // ============================================
-  // SUMMARY
-  // ============================================
-  console.log('\n📊 Seed Summary:');
-  console.log('==========================================');
-
-  const userCount = await prisma.user.count();
-  const serviceCount = await prisma.service.count();
-  const doctorServiceTotal = await prisma.doctorService.count();
-  const workingHoursTotal = await prisma.doctorWorkingHours.count();
-  const breakTimeTotal = await prisma.doctorBreakTime.count();
-  const doctorProfileCount = await prisma.doctorProfile.count();
-
-  const adminCount = await prisma.user.count({
-    where: { role: UserRole.ADMIN },
-  });
-  const doctorCount = await prisma.user.count({
-    where: { role: UserRole.DOCTOR },
-  });
-  const receptionistCount = await prisma.user.count({
-    where: { role: UserRole.RECEPTIONIST },
-  });
-  const patientCount = await prisma.user.count({
-    where: { role: UserRole.PATIENT },
-  });
-
-  console.log(`👥 Total Users: ${userCount}`);
-  console.log(`   - Admins: ${adminCount}`);
-  console.log(`   - Doctors: ${doctorCount}`);
-  console.log(`   - Receptionists: ${receptionistCount}`);
-  console.log(`   - Patients: ${patientCount}`);
-  console.log(`👨‍⚕️ Doctor Profiles: ${doctorProfileCount}`);
-  console.log(`🏥 Services: ${serviceCount}`);
-  console.log(`🔗 Doctor-Service Links: ${doctorServiceTotal}`);
-  console.log(`⏰ Working Hours: ${workingHoursTotal}`);
-  console.log(`🍽️ Break Times: ${breakTimeTotal}`);
-  console.log('==========================================');
-
-  console.log('\n📝 Demo Credentials:');
-  console.log('==========================================');
-  console.log('ADMIN:');
-  console.log('  admin@clinic.com / admin123');
-  console.log('\nDOCTORS:');
-  console.log(
-    '  bs.nguyenvana@clinic.com     / doctor123 → Khám tổng quát, Xét nghiệm, Siêu âm, Nội soi',
-  );
-  console.log(
-    '  bs.lethib@clinic.com          / doctor123 → Khám tim mạch, Xét nghiệm, Siêu âm',
-  );
-  console.log(
-    '  bs.tranthic@clinic.com        / doctor123 → Khám da liễu, Xét nghiệm',
-  );
-  console.log(
-    '  bs.phamvand@clinic.com        / doctor123 → Khám răng hàm mặt',
-  );
-  console.log(
-    '  bs.hoangthie@clinic.com       / doctor123 → Khám mắt, Xét nghiệm',
-  );
-  console.log(
-    '  bs.nguyenvantai@clinic.com    / doctor123 → Khám tai mũi họng, Xét nghiệm',
-  );
-  console.log(
-    '  bs.tranthimylinh@clinic.com   / doctor123 → Khám sản phụ khoa, Siêu âm, Xét nghiệm',
-  );
-  console.log('\nRECEPTIONISTS:');
-  console.log('  letan.huong@clinic.com / receptionist123');
-  console.log('  letan.lan@clinic.com   / receptionist123');
-  console.log('\nPATIENTS:');
-  console.log('  patient.nam@gmail.com   / patient123');
-  console.log('  patient.linh@gmail.com  / patient123');
-  console.log('  patient.tuan@gmail.com  / patient123');
-  console.log('  patient.mai@gmail.com   / patient123');
-  console.log('  patient.hung@gmail.com  / patient123');
-  console.log('  patient.thu@gmail.com   / patient123');
-  console.log('  patient.dat@gmail.com   / patient123');
-  console.log('  patient.nhi@gmail.com   / patient123');
-  console.log('==========================================');
-
-  console.log('\n🎉 Seed completed successfully!');
+  console.log('\n🚀 Database seeding completed successfully!');
 }
 
 main()
   .catch((e) => {
-    console.error('❌ Seeding failed:');
     console.error(e);
     process.exit(1);
   })

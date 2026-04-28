@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { APP_GUARD } from '@nestjs/core';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -13,6 +14,14 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { UploadModule } from './modules/upload/upload.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { MedicalRecordsModule } from './modules/medical-records/medical-records.module';
+import { LabOrdersModule } from './modules/lab-orders/lab-orders.module';
+import { BillingModule } from './modules/billing/billing.module';
+import { ReceptionistAnalyticsModule } from './modules/receptionist/analytics/receptionist-analytics.module';
+import { VisitServiceOrdersModule } from './modules/visit-service-orders/visit-service-orders.module';
+import { CategoriesModule } from './modules/categories/categories.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { AiModule } from './modules/ai/ai.module';
 
 @Module({
   imports: [
@@ -21,6 +30,7 @@ import { AdminModule } from './modules/admin/admin.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    ScheduleModule.forRoot(),
 
     // Global modules
     PrismaModule,
@@ -36,6 +46,14 @@ import { AdminModule } from './modules/admin/admin.module';
     SuggestionsModule,
     NotificationsModule,
     AdminModule,
+    MedicalRecordsModule,
+    LabOrdersModule,
+    BillingModule,
+    ReceptionistAnalyticsModule,
+    VisitServiceOrdersModule,
+    CategoriesModule,
+    AnalyticsModule,
+    AiModule,
   ],
   providers: [
     // Global guard - apply JWT auth to all routes by default

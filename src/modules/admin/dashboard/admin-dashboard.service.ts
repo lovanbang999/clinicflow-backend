@@ -1,97 +1,156 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
-import { BookingStatus, UserRole } from '@prisma/client';
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../../database/interfaces/booking.repository.interface';
+import {
+  IFinanceRepository,
+  I_FINANCE_REPOSITORY,
+} from '../../database/interfaces/finance.repository.interface';
+import {
+  IProfileRepository,
+  I_PROFILE_REPOSITORY,
+} from '../../database/interfaces/profile.repository.interface';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../../database/interfaces/user.repository.interface';
+import { Inject } from '@nestjs/common';
 import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
+import { UserRole, BookingStatus } from '@prisma/client';
+import { DateRangeQueryDto } from '../analytics/dto/date-range.query.dto';
 
 @Injectable()
 export class AdminDashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+    @Inject(I_FINANCE_REPOSITORY)
+    private readonly financeRepository: IFinanceRepository,
+    @Inject(I_PROFILE_REPOSITORY)
+    private readonly profileRepository: IProfileRepository,
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+  ) {}
 
-  private async fetchCompletedBookingsWithPrice(filter: {
-    gte?: Date;
-    lte?: Date;
-  }) {
-    return this.prisma.booking.findMany({
+  private async fetchPaidInvoices(filter: { gte?: Date; lte?: Date }) {
+    return this.financeRepository.findManyInvoice({
       where: {
-        status: BookingStatus.COMPLETED,
+        status: 'PAID',
         ...(filter.gte || filter.lte
-          ? { createdAt: { gte: filter.gte, lte: filter.lte } }
+          ? { paidAt: { gte: filter.gte, lte: filter.lte } }
           : {}),
       },
       select: {
-        service: { select: { price: true } },
-        createdAt: true,
-        doctorId: true,
+        totalAmount: true,
+        paidAt: true,
+        booking: {
+          select: { doctorId: true },
+        },
       },
     });
   }
 
-  async getDashboardOverview() {
+  async getDashboardOverview(query: DateRangeQueryDto) {
+    const { from, to } = query;
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+    const filterGte = from ? new Date(from) : undefined;
+    const filterLte = to ? new Date(to) : undefined;
+
+    const currentPeriodInvoices = await this.fetchPaidInvoices({
+      gte: filterGte || startOfMonth,
+      lte: filterLte,
+    });
 
     const [
       totalPatients,
       totalDoctors,
       totalBookings,
-      currentMonthPatients,
-      lastMonthPatients,
+      periodPatients,
+      comparisonPatients,
     ] = await Promise.all([
-      this.prisma.user.count({
-        where: { role: UserRole.PATIENT, isActive: true },
-      }),
-      this.prisma.user.count({
+      this.profileRepository.countPatientProfile({}),
+      this.userRepository.count({
         where: { role: UserRole.DOCTOR, isActive: true },
       }),
-      this.prisma.booking.count(),
-      // New patients this month
-      this.prisma.user.count({
+      this.bookingRepository.countBooking({}),
+      // New patient profiles in selected period OR this month
+      this.profileRepository.countPatientProfile({
         where: {
-          role: UserRole.PATIENT,
-          createdAt: { gte: startOfMonth },
+          createdAt: {
+            gte: filterGte || startOfMonth,
+            lte: filterLte,
+          },
         },
       }),
-      // New patients last month (for trend)
-      this.prisma.user.count({
-        where: {
-          role: UserRole.PATIENT,
-          createdAt: { gte: startOfLastMonth, lt: startOfMonth },
-        },
-      }),
+      // Comparison: if no filter, use last month
+      !from
+        ? this.profileRepository.countPatientProfile({
+            where: {
+              createdAt: { gte: startOfLastMonth, lt: startOfMonth },
+            },
+          })
+        : Promise.resolve(0),
     ]);
 
-    // Revenue: SUM(service.price) of all COMPLETED bookings
-    const allCompleted = await this.fetchCompletedBookingsWithPrice({});
-    const totalRevenue = allCompleted.reduce(
-      (sum, b) => sum + Number(b.service.price),
+    // Total Revenue (all time for KPI, unless we want it filtered?)
+    // Usually "Total Revenue" KPI is all time, but "Revenue this period" is filtered.
+    const allPaid = await this.fetchPaidInvoices({});
+    const totalRevenue = allPaid.reduce(
+      (sum, inv) => sum + Number(inv.totalAmount),
       0,
     );
 
-    // This month's bookings (for trend)
-    const currentMonthBookings = await this.prisma.booking.count({
-      where: { createdAt: { gte: startOfMonth } },
-    });
-    const lastMonthBookings = await this.prisma.booking.count({
-      where: { createdAt: { gte: startOfLastMonth, lt: startOfMonth } },
+    // Filtered revenue
+    const periodRevenue = currentPeriodInvoices.reduce(
+      (sum, inv) => sum + Number(inv.totalAmount),
+      0,
+    );
+
+    // Period Bookings
+    const periodBookings = await this.bookingRepository.countBooking({
+      where: {
+        createdAt: {
+          gte: filterGte || startOfMonth,
+          lte: filterLte,
+        },
+      },
     });
 
-    // Month-on-month revenue
-    const currentMonthRevenue = allCompleted
-      .filter((b) => b.createdAt >= startOfMonth)
-      .reduce((sum, b) => sum + Number(b.service.price), 0);
-    const lastMonthRevenue = allCompleted
-      .filter(
-        (b) => b.createdAt >= startOfLastMonth && b.createdAt < startOfMonth,
-      )
-      .reduce((sum, b) => sum + Number(b.service.price), 0);
+    // Trend calculation (only if no custom filter, otherwise trend might not make sense without same-duration comparison)
+    let revenueGrowthPct = 0;
+    let lastMonthRevenue = 0;
+    let lastMonthBookings = 0;
 
-    const revenueGrowthPct =
-      lastMonthRevenue > 0
-        ? Math.round(
-            ((currentMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100,
-          )
-        : 0;
+    if (!from) {
+      const [lmRev, lmBookings] = await Promise.all([
+        Promise.resolve(
+          allPaid
+            .filter(
+              (inv) =>
+                inv.paidAt &&
+                inv.paidAt >= startOfLastMonth &&
+                inv.paidAt < startOfMonth,
+            )
+            .reduce((sum, inv) => sum + Number(inv.totalAmount), 0),
+        ),
+        this.bookingRepository.countBooking({
+          where: { createdAt: { gte: startOfLastMonth, lt: startOfMonth } },
+        }),
+      ]);
+
+      lastMonthRevenue = lmRev;
+      lastMonthBookings = lmBookings;
+
+      revenueGrowthPct =
+        lastMonthRevenue > 0
+          ? Math.round(
+              ((periodRevenue - lastMonthRevenue) / lastMonthRevenue) * 100,
+            )
+          : 0;
+    }
 
     return ResponseHelper.success(
       {
@@ -100,11 +159,11 @@ export class AdminDashboardService {
         totalBookings,
         totalRevenue,
         trends: {
-          newPatientsThisMonth: currentMonthPatients,
-          newPatientsLastMonth: lastMonthPatients,
-          newBookingsThisMonth: currentMonthBookings,
-          newBookingsLastMonth: lastMonthBookings,
-          currentMonthRevenue,
+          newPatientsThisMonth: periodPatients,
+          newPatientsLastMonth: comparisonPatients,
+          newBookingsThisMonth: periodBookings,
+          newBookingsLastMonth: from ? 0 : lastMonthBookings,
+          currentMonthRevenue: periodRevenue,
           lastMonthRevenue,
           revenueGrowthPct,
         },
@@ -133,16 +192,16 @@ export class AdminDashboardService {
     const end = new Date(year, monthIndex + 1, 0, 23, 59, 59);
 
     const [bookingCount, completedCount, newPatients] = await Promise.all([
-      this.prisma.booking.count({
+      this.bookingRepository.countBooking({
         where: { createdAt: { gte: start, lte: end } },
       }),
-      this.prisma.booking.count({
+      this.bookingRepository.countBooking({
         where: {
           status: BookingStatus.COMPLETED,
           createdAt: { gte: start, lte: end },
         },
       }),
-      this.prisma.user.count({
+      this.userRepository.count({
         where: {
           role: UserRole.PATIENT,
           createdAt: { gte: start, lte: end },
@@ -150,12 +209,12 @@ export class AdminDashboardService {
       }),
     ]);
 
-    const completedWithPrice = await this.fetchCompletedBookingsWithPrice({
+    const paidInvoices = await this.fetchPaidInvoices({
       gte: start,
       lte: end,
     });
-    const revenue = completedWithPrice.reduce(
-      (sum, b) => sum + Number(b.service.price),
+    const revenue = paidInvoices.reduce(
+      (sum, inv) => sum + Number(inv.totalAmount),
       0,
     );
 
@@ -172,128 +231,6 @@ export class AdminDashboardService {
       },
       'ADMIN.DASHBOARD.MONTHLY_STATS',
       'Monthly statistics retrieved successfully',
-      200,
-    );
-  }
-
-  // GET /admin/dashboard/top-doctors?limit=5
-  // Panel: top doctors ranked by completed visit count
-  async getTopDoctors(limit: number = 5) {
-    const topRaw = await this.prisma.booking.groupBy({
-      by: ['doctorId'],
-      where: { status: BookingStatus.COMPLETED },
-      _count: { id: true },
-      orderBy: { _count: { id: 'desc' } },
-      take: limit,
-    });
-
-    const ids = topRaw.map((d) => d.doctorId);
-    const users = await this.prisma.user.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, fullName: true, avatar: true },
-    });
-
-    const userMap = new Map(users.map((u) => [u.id, u]));
-    const topDoctors = topRaw.map((d) => ({
-      id: d.doctorId,
-      fullName: userMap.get(d.doctorId)?.fullName ?? 'Unknown',
-      avatar: userMap.get(d.doctorId)?.avatar ?? null,
-      visitCount: d._count.id,
-    }));
-
-    return ResponseHelper.success(
-      { topDoctors },
-      'ADMIN.DASHBOARD.TOP_DOCTORS',
-      'Top doctors retrieved successfully',
-      200,
-    );
-  }
-
-  // GET /admin/dashboard/revenue-chart?months=6
-  // Chart: monthly revenue for the last N months
-  async getRevenueChart(months: number = 6) {
-    const now = new Date();
-    const since = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1);
-
-    const completedBookings = await this.fetchCompletedBookingsWithPrice({
-      gte: since,
-    });
-
-    // Build map with all N months pre-filled at 0
-    const revenueByMonth = new Map<string, number>();
-    for (let i = months - 1; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      revenueByMonth.set(key, 0);
-    }
-
-    for (const b of completedBookings) {
-      const key = `${b.createdAt.getFullYear()}-${String(b.createdAt.getMonth() + 1).padStart(2, '0')}`;
-      if (revenueByMonth.has(key)) {
-        revenueByMonth.set(
-          key,
-          revenueByMonth.get(key)! + Number(b.service.price),
-        );
-      }
-    }
-
-    const chart = Array.from(revenueByMonth.entries()).map(
-      ([month, revenue]) => ({
-        date: `${month}-01`,
-        revenue,
-      }),
-    );
-
-    return ResponseHelper.success(
-      { months, chart },
-      'ADMIN.DASHBOARD.REVENUE_CHART',
-      'Revenue chart data retrieved successfully',
-      200,
-    );
-  }
-
-  // GET /admin/dashboard/booking-overview
-  // Panel: completed / upcoming / cancelled / total counts
-  async getBookingOverview() {
-    const now = new Date();
-
-    const [total, completed, upcoming, cancelled, inProgress] =
-      await Promise.all([
-        this.prisma.booking.count(),
-        this.prisma.booking.count({
-          where: { status: BookingStatus.COMPLETED },
-        }),
-        this.prisma.booking.count({
-          where: {
-            status: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
-            bookingDate: { gte: now },
-          },
-        }),
-        this.prisma.booking.count({
-          where: { status: BookingStatus.CANCELLED },
-        }),
-        this.prisma.booking.count({
-          where: {
-            status: {
-              in: [BookingStatus.CHECKED_IN, BookingStatus.IN_PROGRESS],
-            },
-          },
-        }),
-      ]);
-
-    return ResponseHelper.success(
-      {
-        total,
-        completed,
-        upcoming,
-        cancelled,
-        inProgress,
-        completedPct: total > 0 ? Math.round((completed / total) * 100) : 0,
-        upcomingPct: total > 0 ? Math.round((upcoming / total) * 100) : 0,
-        cancelledPct: total > 0 ? Math.round((cancelled / total) * 100) : 0,
-      },
-      'ADMIN.DASHBOARD.BOOKING_OVERVIEW',
-      'Booking overview retrieved successfully',
       200,
     );
   }

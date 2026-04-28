@@ -59,4 +59,28 @@ export class CreateUserDto {
   @IsEnum(UserRole)
   @IsNotEmpty()
   role: UserRole;
+
+  // Optional Doctor Profile fields (if role is DOCTOR)
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString({ each: true })
+  specialties?: string[];
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString({ each: true })
+  qualifications?: string[];
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  bio?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  yearsOfExperience?: number;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  consultationFee?: number;
 }

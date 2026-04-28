@@ -1,9 +1,9 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Inject, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
-import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../notifications/mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
@@ -12,11 +12,23 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
-import { UserRole, VerificationType } from '@prisma/client';
+import { VerificationType } from '@prisma/client';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import type { StringValue } from 'ms';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../database/interfaces/user.repository.interface';
+import {
+  ITokenRepository,
+  I_TOKEN_REPOSITORY,
+} from '../database/interfaces/token.repository.interface';
+import {
+  IVerificationRepository,
+  I_VERIFICATION_REPOSITORY,
+} from '../database/interfaces/verification.repository.interface';
 
 export interface TokenPair {
   accessToken: string;
@@ -31,10 +43,15 @@ interface JwtPayload {
 @Injectable()
 export class AuthService {
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
+    @Inject(I_TOKEN_REPOSITORY)
+    private readonly tokenRepository: ITokenRepository,
+    @Inject(I_VERIFICATION_REPOSITORY)
+    private readonly verificationRepository: IVerificationRepository,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -55,13 +72,11 @@ export class AuthService {
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + 15); // Expires in 15 minutes
 
-    await this.prisma.verificationCode.create({
-      data: {
-        userId,
-        code,
-        type,
-        expiresAt,
-      },
+    await this.verificationRepository.create({
+      userId,
+      code,
+      type,
+      expiresAt,
     });
 
     return code;
@@ -99,12 +114,10 @@ export class AuthService {
     expiresAt.setDate(expiresAt.getDate() + 30);
 
     // Store refresh token in database
-    await this.prisma.refreshToken.create({
-      data: {
-        userId,
-        token: refreshToken,
-        expiresAt,
-      },
+    await this.tokenRepository.create({
+      userId,
+      token: refreshToken,
+      expiresAt,
     });
 
     return { accessToken, refreshToken };
@@ -117,9 +130,7 @@ export class AuthService {
     const { email, password, fullName, phone } = registerDto;
 
     // Check if user already exists
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email },
-    });
+    const existingUser = await this.userRepository.findByEmail(email);
 
     if (existingUser) {
       throw new ApiException(
@@ -134,16 +145,18 @@ export class AuthService {
     const hashedPassword = await this.hashPassword(password);
 
     // Create user with isActive = false
-    const user = await this.prisma.user.create({
-      data: {
+    const patientCode = `PT-${Date.now().toString().slice(-6)}-${phone ? phone.slice(-4) : Math.floor(1000 + Math.random() * 9000)}`;
+    const user = await this.userRepository.createRegisteredPatient(
+      {
         email,
         password: hashedPassword,
         fullName,
         phone,
-        role: UserRole.PATIENT,
+        role: 'PATIENT',
         isActive: false,
       },
-    });
+      { patientCode, fullName },
+    );
 
     // Generate OTP code
     const otpCode = await this.createVerificationCode(
@@ -153,6 +166,13 @@ export class AuthService {
 
     // Send verification email
     await this.mailService.sendVerificationEmail(email, fullName, otpCode);
+
+    // Notify admins of new registration
+    await this.notificationsService.notifyAdmins({
+      title: 'Thành viên mới',
+      content: `${fullName} vừa đăng ký tài khoản bệnh nhân.`,
+      metadata: { userId: user.id },
+    });
 
     return ResponseHelper.success(
       { email },
@@ -169,9 +189,7 @@ export class AuthService {
     const { email, code } = verifyEmailDto;
 
     // Find user
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-    });
+    const user = await this.userRepository.findByEmailWithProfile(email);
 
     if (!user) {
       throw new ApiException(
@@ -183,15 +201,12 @@ export class AuthService {
     }
 
     // Find verification code
-    const verificationCode = await this.prisma.verificationCode.findFirst({
-      where: {
-        userId: user.id,
+    const verificationCode =
+      await this.verificationRepository.findLatestValidCode(
+        user.id,
         code,
-        type: VerificationType.EMAIL_VERIFICATION,
-        isUsed: false,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        VerificationType.EMAIL_VERIFICATION,
+      );
 
     if (!verificationCode) {
       throw new ApiException(
@@ -212,17 +227,11 @@ export class AuthService {
       );
     }
 
-    // Mark code as used and activate user
-    await this.prisma.$transaction([
-      this.prisma.verificationCode.update({
-        where: { id: verificationCode.id },
-        data: { isUsed: true },
-      }),
-      this.prisma.user.update({
-        where: { id: user.id },
-        data: { isActive: true, isVerified: true },
-      }),
-    ]);
+    // Mark code as used and activate user inside a transaction hidden in the repository
+    await this.userRepository.verifyEmailTransaction(
+      user.id,
+      verificationCode.id,
+    );
 
     // Send welcome email
     await this.mailService.sendWelcomeEmail(email, user.fullName);
@@ -251,9 +260,7 @@ export class AuthService {
   async resendOtp(resendOtpDto: ResendOtpDto) {
     const { email } = resendOtpDto;
 
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-    });
+    const user = await this.userRepository.findByEmail(email);
 
     if (!user) {
       throw new ApiException(
@@ -296,9 +303,7 @@ export class AuthService {
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
     const { email } = forgotPasswordDto;
 
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-    });
+    const user = await this.userRepository.findByEmail(email);
 
     if (!user) {
       // Don't throw error to prevent email enumeration, just return success
@@ -337,7 +342,7 @@ export class AuthService {
   async verifyResetOtp(dto: VerifyOtpDto) {
     const { email, code } = dto;
 
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.userRepository.findByEmail(email);
 
     if (!user) {
       throw new ApiException(
@@ -348,15 +353,12 @@ export class AuthService {
       );
     }
 
-    const verificationCode = await this.prisma.verificationCode.findFirst({
-      where: {
-        userId: user.id,
+    const verificationCode =
+      await this.verificationRepository.findLatestValidCode(
+        user.id,
         code,
-        type: VerificationType.PASSWORD_RESET,
-        isUsed: false,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        VerificationType.PASSWORD_RESET,
+      );
 
     if (!verificationCode) {
       throw new ApiException(
@@ -391,7 +393,7 @@ export class AuthService {
   async resetPassword(dto: ResetPasswordDto) {
     const { email, code, newPassword } = dto;
 
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.userRepository.findByEmail(email);
 
     if (!user) {
       throw new ApiException(
@@ -402,15 +404,12 @@ export class AuthService {
       );
     }
 
-    const verificationCode = await this.prisma.verificationCode.findFirst({
-      where: {
-        userId: user.id,
+    const verificationCode =
+      await this.verificationRepository.findLatestValidCode(
+        user.id,
         code,
-        type: VerificationType.PASSWORD_RESET,
-        isUsed: false,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        VerificationType.PASSWORD_RESET,
+      );
 
     if (!verificationCode) {
       throw new ApiException(
@@ -433,16 +432,11 @@ export class AuthService {
     const hashedPassword = await this.hashPassword(newPassword);
 
     // Mark code as used and update the password in one atomic transaction
-    await this.prisma.$transaction([
-      this.prisma.verificationCode.update({
-        where: { id: verificationCode.id },
-        data: { isUsed: true },
-      }),
-      this.prisma.user.update({
-        where: { id: user.id },
-        data: { password: hashedPassword },
-      }),
-    ]);
+    await this.userRepository.resetPasswordTransaction(
+      user.id,
+      verificationCode.id,
+      hashedPassword,
+    );
 
     return ResponseHelper.success(
       { email },
@@ -459,9 +453,7 @@ export class AuthService {
     const { email, password } = loginDto;
 
     // Find user
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-    });
+    const user = await this.userRepository.findByEmailWithProfile(email);
 
     if (!user) {
       throw new ApiException(
@@ -537,10 +529,8 @@ export class AuthService {
       });
 
       // Check if refresh token exists in database and not revoked
-      const storedToken = await this.prisma.refreshToken.findUnique({
-        where: { token: refreshToken },
-        include: { user: true },
-      });
+      const storedToken =
+        await this.tokenRepository.findByTokenWithUser(refreshToken);
 
       if (!storedToken || storedToken.isRevoked) {
         throw new ApiException(
@@ -565,10 +555,7 @@ export class AuthService {
       const tokens = await this.generateTokenPair(payload.sub, payload.email);
 
       // Revoke old refresh token
-      await this.prisma.refreshToken.update({
-        where: { token: refreshToken },
-        data: { isRevoked: true },
-      });
+      await this.tokenRepository.revokeToken(refreshToken);
 
       return ResponseHelper.success(
         tokens,
@@ -590,10 +577,7 @@ export class AuthService {
    * Logout - revoke refresh token
    */
   async logout(refreshToken: string) {
-    await this.prisma.refreshToken.updateMany({
-      where: { token: refreshToken },
-      data: { isRevoked: true },
-    });
+    await this.tokenRepository.revokeToken(refreshToken);
 
     return ResponseHelper.success(
       null,
@@ -607,20 +591,7 @@ export class AuthService {
    * Validate user (used by JWT strategy)
    */
   async validateUser(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        role: true,
-        avatar: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    const user = await this.userRepository.findByIdWithProfile(userId);
 
     if (!user) {
       throw new UnauthorizedException('User not found');

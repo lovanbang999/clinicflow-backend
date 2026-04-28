@@ -5,15 +5,19 @@ import {
   IsString,
   IsOptional,
   Matches,
+  IsEnum,
+  IsBoolean,
 } from 'class-validator';
+import { BookingSource, BookingPriority } from '@prisma/client';
 
 export class CreateBookingDto {
   @ApiProperty({
-    description: 'Patient ID',
-    example: 'uuid-patient-id',
+    description:
+      'Patient Profile ID (hỗ trợ cả bệnh nhân có tài khoản và vãng lai)',
+    example: 'uuid-patient-profile-id',
   })
-  @IsUUID('4', { message: 'Invalid patient ID format' })
-  patientId: string;
+  @IsUUID('4', { message: 'Invalid patient profile ID format' })
+  patientProfileId: string;
 
   @ApiProperty({
     description: 'Doctor ID',
@@ -23,11 +27,14 @@ export class CreateBookingDto {
   doctorId: string;
 
   @ApiProperty({
-    description: 'Service ID',
+    description:
+      'Service ID — optional cho walk-in (BS tư vấn sẽ xác định sau)',
     example: 'uuid-service-id',
+    required: false,
   })
+  @IsOptional()
   @IsUUID('4', { message: 'Invalid service ID format' })
-  serviceId: string;
+  serviceId?: string;
 
   @ApiProperty({
     description: 'Booking date (YYYY-MM-DD)',
@@ -37,14 +44,47 @@ export class CreateBookingDto {
   bookingDate: string;
 
   @ApiProperty({
-    description: 'Start time (HH:mm format)',
+    description: 'Start time (HH:mm format) — required for pre-bookings',
     example: '09:00',
+    required: false,
   })
+  @IsOptional()
   @IsString()
   @Matches(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/, {
     message: 'Invalid time format. Use HH:mm (24-hour)',
   })
-  startTime: string;
+  startTime?: string;
+
+  @ApiProperty({
+    description:
+      'Whether this is a pre-booking (slot reserved) or walk-in (queue)',
+    example: true,
+    required: false,
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isPreBooked?: boolean;
+
+  @ApiProperty({
+    description: 'Booking source',
+    enum: BookingSource,
+    example: BookingSource.ONLINE,
+    required: false,
+  })
+  @IsOptional()
+  @IsEnum(BookingSource)
+  source?: BookingSource;
+
+  @ApiProperty({
+    description: 'Priority level',
+    enum: BookingPriority,
+    example: BookingPriority.NORMAL,
+    required: false,
+  })
+  @IsOptional()
+  @IsEnum(BookingPriority)
+  priority?: BookingPriority;
 
   @ApiProperty({
     description: 'Patient notes (optional)',

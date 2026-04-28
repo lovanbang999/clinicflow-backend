@@ -19,6 +19,7 @@ import {
 } from '@nestjs/swagger';
 import { SchedulesService } from './schedules.service';
 import { CreateWorkingHoursDto } from './dto/create-working-hours.dto';
+import { BulkUpdateWorkingHoursDto } from './dto/bulk-update-working-hours.dto';
 import { CreateBreakTimeDto } from './dto/create-break-time.dto';
 import { CreateOffDayDto } from './dto/create-off-day.dto';
 import { AvailableSlotsQueryDto } from './dto/available-slots-query.dto';
@@ -190,37 +191,34 @@ export class SchedulesController {
 
   @Post('off-days')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR)
-  @ApiOperation({
-    summary: 'Create off day (ADMIN/DOCTOR only)',
-  })
+  @ApiOperation({ summary: 'Create off day (ADMIN/DOCTOR only)' })
   @ApiResponse({
     status: 201,
-    description: 'Off day created successfully',
-    schema: {
-      example: {
-        success: true,
-        statusCode: 201,
-        message: 'Off day created successfully',
-        messageCode: 'SCHEDULE.CREATE.SUCCESS',
-        data: {
-          id: 'uuid',
-          doctorId: 'uuid',
-          date: '2024-12-26',
-          reason: 'Holiday',
-        },
-      },
-    },
+    description:
+      'Off day created successfully. If cancelAffected=true, affected appointments are also cancelled.',
   })
-  @ApiResponse({
-    status: 400,
-    description: 'Invalid data or past date',
-  })
-  @ApiResponse({
-    status: 409,
-    description: 'Off day already exists',
-  })
+  @ApiResponse({ status: 400, description: 'Invalid data or past date' })
+  @ApiResponse({ status: 409, description: 'Off day already exists' })
   createOffDay(@Body() dto: CreateOffDayDto) {
     return this.schedulesService.createOffDay(dto);
+  }
+
+  @Get('off-days/preview')
+  @Roles(UserRole.ADMIN, UserRole.DOCTOR)
+  @ApiOperation({
+    summary:
+      'Preview affected appointments for a potential off day (ADMIN/DOCTOR only).',
+    description:
+      'Returns all active appointments that would be affected. Does NOT create an off day.',
+  })
+  @ApiQuery({ name: 'doctorId', required: true })
+  @ApiQuery({ name: 'date', required: true, example: '2024-12-26' })
+  @ApiResponse({ status: 200, description: 'Affected appointments returned' })
+  previewOffDay(
+    @Query('doctorId') doctorId: string,
+    @Query('date') date: string,
+  ) {
+    return this.schedulesService.previewOffDay(doctorId, date);
   }
 
   @Get('off-days/:doctorId')
@@ -272,7 +270,7 @@ export class SchedulesController {
       'Returns available time slots considering working hours, break times, off days, and existing bookings. Optionally excludes slots already booked by a specific patient.',
   })
   @ApiQuery({ name: 'doctorId', required: true })
-  @ApiQuery({ name: 'serviceId', required: true })
+  @ApiQuery({ name: 'serviceId', required: false })
   @ApiQuery({ name: 'date', required: true, example: '2024-12-26' })
   @ApiQuery({
     name: 'patientId',
@@ -301,5 +299,58 @@ export class SchedulesController {
   })
   getAvailableSlots(@Query() queryDto: AvailableSlotsQueryDto) {
     return this.schedulesService.getAvailableSlots(queryDto);
+  }
+
+  @Post('reserve-slot')
+  @Public()
+  @ApiOperation({ summary: 'Temporarily lock a time slot for 5 minutes' })
+  reserveSlot(
+    @Body()
+    dto: {
+      doctorId: string;
+      date: string;
+      startTime: string;
+      patientProfileId: string;
+    },
+  ) {
+    return this.schedulesService.reserveSlot(
+      dto.doctorId,
+      dto.date,
+      dto.startTime,
+      dto.patientProfileId,
+    );
+  }
+
+  @Post('release-slot')
+  @Public()
+  @ApiOperation({ summary: 'Release a temporarily locked time slot' })
+  releaseSlot(
+    @Body()
+    dto: {
+      doctorId: string;
+      date: string;
+      startTime: string;
+      patientProfileId: string;
+    },
+  ) {
+    return this.schedulesService.releaseSlot(
+      dto.doctorId,
+      dto.date,
+      dto.startTime,
+      dto.patientProfileId,
+    );
+  }
+
+  @Post('working-hours/bulk')
+  @Roles(UserRole.ADMIN, UserRole.DOCTOR)
+  @ApiOperation({
+    summary: 'Bulk create/update/delete working hours (ADMIN/DOCTOR only)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Bulk working hours updated successfully',
+  })
+  bulkUpdateWorkingHours(@Body() dto: BulkUpdateWorkingHoursDto) {
+    return this.schedulesService.bulkUpdateWorkingHours(dto);
   }
 }
