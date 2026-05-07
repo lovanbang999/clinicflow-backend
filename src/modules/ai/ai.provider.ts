@@ -10,6 +10,22 @@ export interface PatientContext {
   chronicConditions?: string | null;
 }
 
+// ─── Prompt Injection Sanitizer ───────────────────────────────────────────────
+
+/**
+ * Strip control characters and prompt-breaking sequences from user-supplied
+ * strings before embedding them into the system prompt.
+ */
+function sanitizeForPrompt(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  return value
+    .replace(/[\r\n\t]+/g, ' ') // collapse line breaks / tabs into spaces
+    .replace(/[`#*[\]<>]/g, '') // strip markdown/injection chars
+    .replace(/\binstructions?\b/gi, '') // strip instruction-override keywords
+    .trim()
+    .slice(0, 200); // cap length to limit injection surface
+}
+
 // ─── System Prompt Builder ─────────────────────────────────────────────────────
 
 /**
@@ -40,12 +56,12 @@ export function buildSystemPrompt(patient?: PatientContext): string {
   const patientBlock = patient
     ? `
 ### THÔNG TIN BỆNH NHÂN HIỆN TẠI:
-- Tên: ${patient.fullName ?? 'Không rõ'}
+- Tên: ${sanitizeForPrompt(patient.fullName) ?? 'Không rõ'}
 - Giới tính: ${patient.gender === 'MALE' ? 'Nam' : patient.gender === 'FEMALE' ? 'Nữ' : 'Không rõ'}
 - Tuổi: ${age !== null ? `${age} tuổi` : 'Không rõ'}
-- Nhóm máu: ${patient.bloodType ?? 'Không có thông tin'}
-- Dị ứng đã biết: ${patient.allergies ?? 'Không có'}
-- Bệnh mãn tính: ${patient.chronicConditions ?? 'Không có'}
+- Nhóm máu: ${sanitizeForPrompt(patient.bloodType) ?? 'Không có thông tin'}
+- Dị ứng đã biết: ${sanitizeForPrompt(patient.allergies) ?? 'Không có'}
+- Bệnh mãn tính: ${sanitizeForPrompt(patient.chronicConditions) ?? 'Không có'}
 
 Hãy ghi nhớ thông tin này khi tư vấn. Ví dụ: nếu bệnh nhân có dị ứng, hãy lưu ý khi gợi ý xét nghiệm hay dịch vụ.
 `
