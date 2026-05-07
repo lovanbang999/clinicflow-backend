@@ -1145,6 +1145,15 @@ export class BillingService {
     }
 
     const insuranceCovered = dto.insuranceCovered ?? 0;
+
+    if (insuranceCovered > dto.amountPaid) {
+      throw new ApiException(
+        'BILLING.INSURANCE_EXCEEDS_PAYMENT',
+        'Insurance covered amount cannot exceed the total amount paid',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     const patientPaid = dto.amountPaid - insuranceCovered;
 
     // Calculate total paid after this payment
