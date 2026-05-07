@@ -22,6 +22,7 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
@@ -32,6 +33,10 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
+  @Throttle({
+    short: { ttl: 60000, limit: 5 },
+    medium: { ttl: 3600000, limit: 20 },
+  })
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
@@ -82,6 +87,10 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({
+    short: { ttl: 60000, limit: 3 },
+    medium: { ttl: 3600000, limit: 10 },
+  })
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Request password reset' })
@@ -94,6 +103,10 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({
+    short: { ttl: 60000, limit: 5 },
+    medium: { ttl: 3600000, limit: 15 },
+  })
   @Post('verify-reset-otp')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -139,6 +152,10 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({
+    short: { ttl: 60000, limit: 10 },
+    medium: { ttl: 3600000, limit: 30 },
+  })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login user (email must be verified)' })
