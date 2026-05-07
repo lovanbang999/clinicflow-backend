@@ -30,9 +30,8 @@ export class PrismaExceptionFilter extends BaseExceptionFilter {
         message = 'Foreign key constraint failed';
         break;
       default:
-        // Unknown Prisma error
         status = HttpStatus.INTERNAL_SERVER_ERROR;
-        message = exception.message;
+        message = 'A database error occurred';
     }
 
     response.status(status).json({
