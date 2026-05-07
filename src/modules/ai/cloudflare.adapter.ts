@@ -49,6 +49,31 @@ export function convertToOpenAiTools(): OpenAiTool[] {
   }));
 }
 
+/**
+ * Cloudflare Workers AI native format — flat, not wrapped in { type, function }.
+ * Used for the /ai/run/{model} endpoint which differs from OpenAI's format.
+ */
+type CloudflareTool = {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+};
+
+function convertToCloudflareTools(): CloudflareTool[] {
+  const declarations = CHATBOT_TOOLS[0]?.functionDeclarations ?? [];
+  return (
+    declarations as Array<{
+      name: string;
+      description?: string;
+      parameters?: unknown;
+    }>
+  ).map((fn) => ({
+    name: fn.name,
+    description: fn.description ?? '',
+    parameters: convertSchema(fn.parameters),
+  }));
+}
+
 function convertSchema(schema: unknown): Record<string, unknown> {
   if (!schema || typeof schema !== 'object')
     return { type: 'object', properties: {} };
@@ -119,11 +144,24 @@ export class CloudflareAdapter {
       }
       messages.push({ role: 'user', content: userMessage });
 
-      const tools = executeTool ? convertToOpenAiTools() : undefined;
+      // Cloudflare native endpoint uses flat tool format, not OpenAI { type, function } wrapper
+      const tools = executeTool ? convertToCloudflareTools() : undefined;
       const MAX_TOOL_TURNS = 6;
 
       for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
-        const data = await this.callCloudflare(messages, tools);
+        // On 400 (format error), gracefully retry without tools so user still gets a text reply
+        let data: { result?: { response?: string; tool_calls?: OpenAiToolCall[] } };
+        try {
+          data = await this.callCloudflare(messages, tools);
+        } catch (err) {
+          const msg = (err as Error).message ?? '';
+          if (msg.includes('400') && tools && tools.length > 0) {
+            this.logger.warn('Cloudflare 400 with tools — retrying without tools');
+            data = await this.callCloudflare(messages, undefined);
+          } else {
+            throw err;
+          }
+        }
 
         const toolCalls = data.result?.tool_calls;
         const text: string = data.result?.response ?? '';
@@ -203,7 +241,7 @@ export class CloudflareAdapter {
 
   private async callCloudflare(
     messages: OpenAiMessage[],
-    tools?: OpenAiTool[],
+    tools?: CloudflareTool[],
   ): Promise<{
     result?: { response?: string; tool_calls?: OpenAiToolCall[] };
   }> {

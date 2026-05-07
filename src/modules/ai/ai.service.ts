@@ -181,8 +181,10 @@ export class AiService {
           try {
             this.logger.warn('Retry failed. Trying Groq fallback...');
             await this.groqAdapter.processFallbackChat(...fallbackArgs);
-          } catch {
-            this.logger.warn('Groq failed. Triggering Cloudflare fallback...');
+          } catch (groqErr) {
+            this.logger.warn(
+              `Groq failed (${(groqErr as Error).message}). Triggering Cloudflare fallback...`,
+            );
             await this.cloudflareAdapter.processFallbackChat(...fallbackArgs);
           }
         }
@@ -258,7 +260,6 @@ export class AiService {
       if (functionCallsInTurn.length > 0) {
         const toolResults = await Promise.all(
           functionCallsInTurn.map(async (call) => {
-            console.log(`[AiService] TOOL EXECUTION: ${call.name}`, call.args);
             const rawResult = await this.executeTool(
               call.name || '',
               call.args || {},
