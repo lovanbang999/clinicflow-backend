@@ -525,8 +525,8 @@ const RECEPTIONISTS = [
 
 const PATIENTS = [
   {
-    email: 'patient.nam@gmail.com',
-    fullName: 'Nguyễn Văn Nam',
+    email: 'patient.khang@gmail.com',
+    fullName: 'Nguyễn Tuấn Khang',
     phone: '0988888888',
     gender: Gender.MALE,
     bloodType: 'O+',

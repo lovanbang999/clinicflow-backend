@@ -1393,7 +1393,7 @@ export class BookingsService {
     };
 
     if (status) {
-      where.status = status as BookingStatus;
+      if (status === "upcoming") where.status = { in: ["PENDING", "CONFIRMED", "CHECKED_IN", "QUEUED", "IN_PROGRESS"] }; else if (status === "completed") where.status = "COMPLETED"; else if (status === "cancelled") where.status = { in: ["CANCELLED", "NO_SHOW"] }; else if (status !== "all") where.status = status as import("@prisma/client").BookingStatus;
     }
 
     const [bookings, total] = await Promise.all([
