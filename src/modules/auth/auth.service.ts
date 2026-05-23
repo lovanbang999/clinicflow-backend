@@ -68,6 +68,35 @@ export class AuthService {
     userId: string,
     type: VerificationType,
   ): Promise<string> {
+    const latestCode = await this.verificationRepository.findLatestCode(userId, type);
+    if (latestCode) {
+      const timeSinceLastCode = Date.now() - latestCode.createdAt.getTime();
+      if (timeSinceLastCode < 60000) {
+        throw new ApiException(
+          'AUTH.OTP.COOLDOWN',
+          'Vui lòng đợi 60 giây trước khi yêu cầu mã OTP mới.',
+          429,
+          'Rate limit exceeded',
+        );
+      }
+    }
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const countToday = await this.verificationRepository.countCodesSince(
+      userId,
+      type,
+      startOfDay,
+    );
+    if (countToday >= 5) {
+      throw new ApiException(
+        'AUTH.OTP.DAILY_LIMIT',
+        'Bạn đã vượt quá số lần yêu cầu OTP trong ngày (tối đa 5 lần).',
+        429,
+        'Daily limit exceeded',
+      );
+    }
+
     const code = this.generateOtpCode();
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + 15); // Expires in 15 minutes
@@ -200,28 +229,57 @@ export class AuthService {
       );
     }
 
-    // Find verification code
-    const verificationCode =
-      await this.verificationRepository.findLatestValidCode(
-        user.id,
-        code,
-        VerificationType.EMAIL_VERIFICATION,
-      );
+    // Find latest verification code
+    const latestCode = await this.verificationRepository.findLatestCode(
+      user.id,
+      VerificationType.EMAIL_VERIFICATION,
+    );
 
-    if (!verificationCode) {
+    if (!latestCode) {
       throw new ApiException(
         MessageCodes.INVALID_OTP,
-        'Invalid verification code',
+        'Không tìm thấy mã OTP nào',
+        400,
+        'Verification failed',
+      );
+    }
+
+    if (latestCode.isUsed) {
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        'Mã OTP đã được sử dụng hoặc đã bị vô hiệu hóa',
         400,
         'Verification failed',
       );
     }
 
     // Check if code is expired
-    if (new Date() > verificationCode.expiresAt) {
+    if (new Date() > latestCode.expiresAt) {
       throw new ApiException(
         MessageCodes.OTP_EXPIRED,
-        'Verification code has expired',
+        'Mã OTP đã hết hạn',
+        400,
+        'Verification failed',
+      );
+    }
+
+    if (latestCode.code !== code) {
+      const newAttempts = latestCode.attempts + 1;
+      await this.verificationRepository.updateAttempts(latestCode.id, newAttempts);
+
+      if (newAttempts >= 5) {
+        await this.verificationRepository.invalidateCode(latestCode.id);
+        throw new ApiException(
+          'AUTH.OTP.BLOCKED',
+          'Mã OTP đã bị khóa do nhập sai quá 5 lần. Vui lòng yêu cầu gửi lại mã mới.',
+          400,
+          'Verification failed',
+        );
+      }
+
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        `Mã OTP không đúng. Bạn còn ${5 - newAttempts} lần thử.`,
         400,
         'Verification failed',
       );
@@ -230,7 +288,7 @@ export class AuthService {
     // Mark code as used and activate user inside a transaction hidden in the repository
     await this.userRepository.verifyEmailTransaction(
       user.id,
-      verificationCode.id,
+      latestCode.id,
     );
 
     // Send welcome email
@@ -353,26 +411,55 @@ export class AuthService {
       );
     }
 
-    const verificationCode =
-      await this.verificationRepository.findLatestValidCode(
-        user.id,
-        code,
-        VerificationType.PASSWORD_RESET,
-      );
+    const latestCode = await this.verificationRepository.findLatestCode(
+      user.id,
+      VerificationType.PASSWORD_RESET,
+    );
 
-    if (!verificationCode) {
+    if (!latestCode) {
       throw new ApiException(
         MessageCodes.INVALID_OTP,
-        'Invalid OTP code',
+        'Không tìm thấy mã OTP nào',
         400,
         'OTP verification failed',
       );
     }
 
-    if (new Date() > verificationCode.expiresAt) {
+    if (latestCode.isUsed) {
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        'Mã OTP đã được sử dụng hoặc đã bị vô hiệu hóa',
+        400,
+        'OTP verification failed',
+      );
+    }
+
+    if (new Date() > latestCode.expiresAt) {
       throw new ApiException(
         MessageCodes.OTP_EXPIRED,
-        'OTP code has expired',
+        'Mã OTP đã hết hạn',
+        400,
+        'OTP verification failed',
+      );
+    }
+
+    if (latestCode.code !== code) {
+      const newAttempts = latestCode.attempts + 1;
+      await this.verificationRepository.updateAttempts(latestCode.id, newAttempts);
+
+      if (newAttempts >= 5) {
+        await this.verificationRepository.invalidateCode(latestCode.id);
+        throw new ApiException(
+          'AUTH.OTP.BLOCKED',
+          'Mã OTP đã bị khóa do nhập sai quá 5 lần. Vui lòng yêu cầu gửi lại mã mới.',
+          400,
+          'OTP verification failed',
+        );
+      }
+
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        `Mã OTP không đúng. Bạn còn ${5 - newAttempts} lần thử.`,
         400,
         'OTP verification failed',
       );
@@ -404,26 +491,55 @@ export class AuthService {
       );
     }
 
-    const verificationCode =
-      await this.verificationRepository.findLatestValidCode(
-        user.id,
-        code,
-        VerificationType.PASSWORD_RESET,
-      );
+    const latestCode = await this.verificationRepository.findLatestCode(
+      user.id,
+      VerificationType.PASSWORD_RESET,
+    );
 
-    if (!verificationCode) {
+    if (!latestCode) {
       throw new ApiException(
         MessageCodes.INVALID_OTP,
-        'Invalid OTP code',
+        'Không tìm thấy mã OTP nào',
         400,
         'Password reset failed',
       );
     }
 
-    if (new Date() > verificationCode.expiresAt) {
+    if (latestCode.isUsed) {
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        'Mã OTP đã được sử dụng hoặc đã bị vô hiệu hóa',
+        400,
+        'Password reset failed',
+      );
+    }
+
+    if (new Date() > latestCode.expiresAt) {
       throw new ApiException(
         MessageCodes.OTP_EXPIRED,
-        'OTP code has expired',
+        'Mã OTP đã hết hạn',
+        400,
+        'Password reset failed',
+      );
+    }
+
+    if (latestCode.code !== code) {
+      const newAttempts = latestCode.attempts + 1;
+      await this.verificationRepository.updateAttempts(latestCode.id, newAttempts);
+
+      if (newAttempts >= 5) {
+        await this.verificationRepository.invalidateCode(latestCode.id);
+        throw new ApiException(
+          'AUTH.OTP.BLOCKED',
+          'Mã OTP đã bị khóa do nhập sai quá 5 lần. Vui lòng yêu cầu gửi lại mã mới.',
+          400,
+          'Password reset failed',
+        );
+      }
+
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        `Mã OTP không đúng. Bạn còn ${5 - newAttempts} lần thử.`,
         400,
         'Password reset failed',
       );
@@ -434,7 +550,7 @@ export class AuthService {
     // Mark code as used and update the password in one atomic transaction
     await this.userRepository.resetPasswordTransaction(
       user.id,
-      verificationCode.id,
+      latestCode.id,
       hashedPassword,
     );
 
@@ -602,6 +718,20 @@ export class AuthService {
     }
 
     return user;
+  }
+
+  /**
+   * Verify access token (used by websockets)
+   */
+  async verifyAccessToken(token: string): Promise<JwtPayload> {
+    try {
+      const payload = await this.jwtService.verifyAsync<JwtPayload>(token, {
+        secret: this.configService.getOrThrow<string>('JWT_SECRET'),
+      });
+      return payload;
+    } catch {
+      throw new UnauthorizedException('Invalid token');
+    }
   }
 
   /**

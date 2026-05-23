@@ -373,6 +373,7 @@ model SlotReservation {
   expiresAt        DateTime
   createdAt        DateTime @default(now())
 
+  @@unique([doctorId, bookingDate, startTime])
   @@index([doctorId, bookingDate, startTime])
   @@index([expiresAt])
   @@map("slot_reservations")
@@ -1016,4 +1017,13 @@ enum AiMessageRole {
   USER
   MODEL
   TOOL
+}
+
+model SequenceCounter {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@map("sequence_counters")
 }

@@ -9,10 +9,12 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Injectable, Logger } from '@nestjs/common';
+import { AuthService } from '../auth/auth.service';
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    credentials: true,
   },
   namespace: '/queue',
 })
@@ -23,8 +25,29 @@ export class QueueGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private logger: Logger = new Logger('QueueGateway');
 
-  handleConnection(client: Socket) {
-    this.logger.debug(`Client connected: ${client.id}`);
+  constructor(private readonly authService: AuthService) {}
+
+  async handleConnection(client: Socket) {
+    try {
+      const token =
+        client.handshake.auth?.token ||
+        client.handshake.headers?.authorization?.split(' ')[1];
+      
+      if (!token) {
+        throw new Error('No token provided');
+      }
+
+      const payload = await this.authService.verifyAccessToken(token);
+      const user = await this.authService.validateUser(payload.sub);
+      
+      client.data.user = user;
+      this.logger.debug(
+        `Client connected: ${client.id}, User: ${user.email}, Role: ${user.role}`,
+      );
+    } catch (e) {
+      this.logger.debug(`Client connection rejected: ${(e as Error).message}`);
+      client.disconnect(true);
+    }
   }
 
   handleDisconnect(client: Socket) {
@@ -40,6 +63,21 @@ export class QueueGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() doctorId: string,
   ) {
     if (!doctorId) return;
+
+    const user = client.data.user;
+    if (!user) {
+      return { event: 'error', data: 'Unauthorized' };
+    }
+
+    // Role Validation
+    if (user.role === 'DOCTOR' && user.id !== doctorId) {
+      return { event: 'error', data: 'Forbidden: You can only join your own queue' };
+    }
+    
+    if (user.role === 'PATIENT') {
+      return { event: 'error', data: 'Forbidden: Patients cannot join doctor queue room' };
+    }
+
     const roomName = `doctor_${doctorId}`;
     void client.join(roomName);
     this.logger.debug(`Client ${client.id} joined room ${roomName}`);

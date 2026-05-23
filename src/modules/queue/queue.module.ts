@@ -4,9 +4,10 @@ import { QueueController } from './queue.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { QueueGateway } from './queue.gateway';
 import { DatabaseModule } from '../database/database.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [DatabaseModule, NotificationsModule],
+  imports: [DatabaseModule, NotificationsModule, AuthModule],
   controllers: [QueueController],
   providers: [QueueService, QueueGateway],
   exports: [QueueService, QueueGateway],

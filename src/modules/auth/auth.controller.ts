@@ -71,6 +71,10 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({
+    short: { ttl: 60000, limit: 1 },
+    medium: { ttl: 3600000, limit: 5 },
+  })
   @Post('resend-otp')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Resend OTP verification code' })

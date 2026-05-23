@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { LabOrdersService } from './lab-orders.service';
-import { PrismaService } from '../prisma/prisma.service';
 
 describe('LabOrdersService', () => {
   let service: LabOrdersService;
@@ -10,7 +9,27 @@ describe('LabOrdersService', () => {
       providers: [
         LabOrdersService,
         {
-          provide: PrismaService,
+          provide: 'IClinicalRepository',
+          useValue: {},
+        },
+        {
+          provide: 'IBookingRepository',
+          useValue: {},
+        },
+        {
+          provide: 'IProfileRepository',
+          useValue: {},
+        },
+        {
+          provide: 'LabOrdersGateway',
+          useValue: {},
+        },
+        {
+          provide: 'BillingService',
+          useValue: {},
+        },
+        {
+          provide: 'MedicalRecordsService',
           useValue: {},
         },
       ],

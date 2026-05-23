@@ -9,7 +9,7 @@ import { BulkUpdateWorkingHoursDto } from './dto/bulk-update-working-hours.dto';
 import { CreateBreakTimeDto } from './dto/create-break-time.dto';
 import { CreateOffDayDto } from './dto/create-off-day.dto';
 import { AvailableSlotsQueryDto } from './dto/available-slots-query.dto';
-import { DayOfWeek, UserRole } from '@prisma/client';
+import { DayOfWeek, UserRole, User } from '@prisma/client';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
@@ -640,7 +640,20 @@ export class SchedulesService {
     date: string,
     startTime: string,
     patientProfileId: string,
+    user: User,
   ) {
+    // Auth check
+    if (user.role === UserRole.PATIENT) {
+      const userWithProfile = await this.userRepository.findByIdWithProfile(user.id);
+      if (!userWithProfile?.patientProfile || userWithProfile.patientProfile.id !== patientProfileId) {
+        throw new ApiException(
+          'SCHEDULE.FORBIDDEN',
+          'You can only reserve slots for your own profile',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+    }
+
     // 0. Check if reserving a past slot
     const now = new Date();
     const todayStr = format(now, 'yyyy-MM-dd');
@@ -678,24 +691,31 @@ export class SchedulesService {
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + 5);
 
-    if (existingReservation) {
-      // Refresh expiration if it's the same patient
-      return this.bookingRepository.createSlotReservation({
+    try {
+      if (existingReservation) {
+        // Refresh expiration if it's the same patient
+        // We delete the existing one first to avoid P2002 if we create, or just let it update if repo supports it.
+        // Actually, if we just delete and recreate:
+        await this.bookingRepository.deleteSlotReservation(existingReservation.id);
+      }
+
+      return await this.bookingRepository.createSlotReservation({
         doctorId,
         bookingDate: new Date(date),
         startTime,
         patientProfileId,
         expiresAt,
       });
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        throw new ApiException(
+          'SCHEDULE.SLOT_LOCKED',
+          'Slot is temporarily locked by another user',
+          409,
+        );
+      }
+      throw error;
     }
-
-    return this.bookingRepository.createSlotReservation({
-      doctorId,
-      bookingDate: new Date(date),
-      startTime,
-      patientProfileId,
-      expiresAt,
-    });
   }
 
   async releaseSlot(
@@ -703,7 +723,20 @@ export class SchedulesService {
     date: string,
     startTime: string,
     patientProfileId: string,
+    user: User,
   ) {
+    // Auth check
+    if (user.role === UserRole.PATIENT) {
+      const userWithProfile = await this.userRepository.findByIdWithProfile(user.id);
+      if (!userWithProfile?.patientProfile || userWithProfile.patientProfile.id !== patientProfileId) {
+        throw new ApiException(
+          'SCHEDULE.FORBIDDEN',
+          'You can only release slots for your own profile',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+    }
+
     return this.bookingRepository.deleteSlotReservationByDetails(
       doctorId,
       new Date(date),

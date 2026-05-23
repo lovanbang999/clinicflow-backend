@@ -39,6 +39,7 @@ import { LabOrdersGateway } from '../lab-orders/lab-orders.gateway';
 import { QueueGateway } from '../queue/queue.gateway';
 import { format } from 'date-fns';
 import { QueueService } from '../queue/queue.service';
+import { SequenceService } from '../database/services/sequence.service';
 
 @Injectable()
 export class BillingService {
@@ -56,6 +57,7 @@ export class BillingService {
     private readonly labOrdersGateway: LabOrdersGateway,
     private readonly queueGateway: QueueGateway,
     private readonly queueService: QueueService,
+    private readonly sequenceService: SequenceService,
   ) {}
 
   private formatVNCurrency(amount: number): string {
@@ -285,8 +287,10 @@ export class BillingService {
     }
 
     // Generate invoice number: INV-YYYYMMDD-XXXX
-    const count = await this.financeRepository.countInvoice({});
-    const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const prefix = `INV-${dateStr}-`;
+    const count = await this.sequenceService.generateNextSequence(prefix);
+    const invoiceNumber = `${prefix}${String(count).padStart(4, '0')}`;
 
     const result = await this.financeRepository.transaction(async (tx) => {
       const seedSubtotal =
@@ -1252,17 +1256,9 @@ export class BillingService {
               const startOfDay = new Date();
               startOfDay.setHours(0, 0, 0, 0);
 
+              const dateStr = startOfDay.toISOString().slice(0, 10).replace(/-/g, '');
               for (const vsoId of vsoIds) {
-                const lastOrder = await tx.visitServiceOrder.findFirst({
-                  where: {
-                    createdAt: { gte: startOfDay },
-                    queueNumber: { not: null },
-                  },
-                  orderBy: { queueNumber: 'desc' },
-                  select: { queueNumber: true },
-                });
-                const nextQueueNumber: number =
-                  (Number(lastOrder?.queueNumber) || 0) + 1;
+                const nextQueueNumber: number = await this.sequenceService.generateNextSequence(`QUEUE_VSO_${dateStr}`);
 
                 await tx.visitServiceOrder.update({
                   where: { id: vsoId },
@@ -1279,17 +1275,9 @@ export class BillingService {
             const startOfDay = new Date();
             startOfDay.setHours(0, 0, 0, 0);
 
+            const dateStrLab = startOfDay.toISOString().slice(0, 10).replace(/-/g, '');
             for (const labOrderId of labOrderIds) {
-              const lastOrder = await tx.labOrder.findFirst({
-                where: {
-                  createdAt: { gte: startOfDay },
-                  queueNumber: { not: null },
-                },
-                orderBy: { queueNumber: 'desc' },
-                select: { queueNumber: true },
-              });
-              const nextQueueNumber: number =
-                (Number(lastOrder?.queueNumber) || 0) + 1;
+              const nextQueueNumber: number = await this.sequenceService.generateNextSequence(`QUEUE_LAB_${dateStrLab}`);
 
               await tx.labOrder.update({
                 where: { id: labOrderId },
@@ -1418,17 +1406,9 @@ export class BillingService {
             const startOfDayVso = new Date();
             startOfDayVso.setHours(0, 0, 0, 0);
 
+            const dateStrVso = startOfDayVso.toISOString().slice(0, 10).replace(/-/g, '');
             for (const vsoId of directVsoIds) {
-              const lastVsoOrder = await tx.visitServiceOrder.findFirst({
-                where: {
-                  createdAt: { gte: startOfDayVso },
-                  queueNumber: { not: null },
-                },
-                orderBy: { queueNumber: 'desc' },
-                select: { queueNumber: true },
-              });
-              const nextVsoQueueNumber =
-                (Number(lastVsoOrder?.queueNumber) || 0) + 1;
+              const nextVsoQueueNumber = await this.sequenceService.generateNextSequence(`QUEUE_VSO_${dateStrVso}`);
 
               await tx.visitServiceOrder.update({
                 where: { id: vsoId },

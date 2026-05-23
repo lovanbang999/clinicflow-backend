@@ -860,10 +860,11 @@ async function main() {
         performerType: s.pType,
         examFormType: s.eType || ExamFormType.GENERAL,
         labFormType: s.lType || LabFormType.GENERAL,
+        tags: [],
       },
       include: { category: true },
     });
-    createdServices.push(created);
+    createdServices.push(created as Service & { category: Category | null });
   }
   console.log(`  ✅ Created ${servicesData.length} services`);
 

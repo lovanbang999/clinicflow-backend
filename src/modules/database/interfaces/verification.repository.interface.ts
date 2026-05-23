@@ -14,4 +14,19 @@ export interface IVerificationRepository {
     code: string,
     type: VerificationType,
   ): Promise<VerificationCode | null>;
+
+  findLatestCode(
+    userId: string,
+    type: VerificationType,
+  ): Promise<VerificationCode | null>;
+
+  updateAttempts(id: string, attempts: number): Promise<void>;
+
+  invalidateCode(id: string): Promise<void>;
+
+  countCodesSince(
+    userId: string,
+    type: VerificationType,
+    since: Date,
+  ): Promise<number>;
 }
