@@ -22,6 +22,7 @@ import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { FilterBookingDto } from './dto/filter-booking.dto';
 import { QueueGateway } from '../queue/queue.gateway';
 import { QueueService } from '../queue/queue.service';
+import { SequenceService } from '../database/services/sequence.service';
 import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { ApiException } from 'src/common/exceptions/api.exception';
 import {
@@ -82,6 +83,7 @@ export class BookingsService {
     @Inject(I_CLINICAL_REPOSITORY)
     private readonly clinicalRepository: IClinicalRepository,
     private readonly notificationsService: NotificationsService,
+    private readonly sequenceService: SequenceService,
   ) {}
 
   /**
@@ -151,7 +153,7 @@ export class BookingsService {
       throw new ApiException(
         MessageCodes.BOOKING_INVALID_TIME,
         'Time slot is no longer available or is temporarily locked',
-        400,
+        409,
         'Booking validation failed',
       );
     }
@@ -159,6 +161,32 @@ export class BookingsService {
     const bookingCode = await this.generateBookingCode(bookingDate);
 
     const booking = await this.bookingRepository.transaction(async (tx) => {
+      // DB-level double check inside transaction
+      const confirmedBookings = await tx.booking.count({
+        where: {
+          doctorId,
+          bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
+          startTime,
+          status: {
+            in: [
+              BookingStatus.PENDING,
+              BookingStatus.CONFIRMED,
+              BookingStatus.CHECKED_IN,
+              BookingStatus.IN_PROGRESS,
+              BookingStatus.AWAITING_RESULTS,
+            ],
+          },
+        },
+      });
+
+      if (confirmedBookings >= maxSlotsPerHour) {
+        throw new ApiException(
+          MessageCodes.BOOKING_INVALID_TIME,
+          'Time slot is no longer available (Race condition prevented)',
+          409,
+        );
+      }
+
       const newBooking = await tx.booking.create({
         data: {
           patientProfileId,
@@ -337,6 +365,36 @@ export class BookingsService {
     const bookingCode = await this.generateBookingCode(bookingDate);
 
     const booking = (await this.bookingRepository.transaction(async (tx) => {
+      if (isPreBooked && startTime) {
+        // DB-level double check inside transaction
+        const confirmedBookings = await tx.booking.count({
+          where: {
+            doctorId,
+            bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
+            startTime,
+            status: {
+              in: [
+                BookingStatus.PENDING,
+                BookingStatus.CONFIRMED,
+                BookingStatus.CHECKED_IN,
+                BookingStatus.IN_PROGRESS,
+                BookingStatus.AWAITING_RESULTS,
+              ],
+            },
+          },
+        });
+
+        const maxSlotsPerHour =
+          service?.maxSlotsPerHour ?? slot?.maxPatients ?? 1;
+        if (confirmedBookings >= maxSlotsPerHour) {
+          throw new ApiException(
+            MessageCodes.BOOKING_INVALID_TIME,
+            'Time slot is no longer available (Race condition prevented)',
+            409,
+          );
+        }
+      }
+
       const newBooking = await tx.booking.create({
         data: {
           patientProfileId,
@@ -507,6 +565,36 @@ export class BookingsService {
     }
 
     const result = await this.bookingRepository.transaction(async (tx) => {
+      if (isPreBooked && startTime) {
+        // DB-level double check inside transaction
+        const confirmedBookings = await tx.booking.count({
+          where: {
+            doctorId,
+            bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
+            startTime,
+            status: {
+              in: [
+                BookingStatus.PENDING,
+                BookingStatus.CONFIRMED,
+                BookingStatus.CHECKED_IN,
+                BookingStatus.IN_PROGRESS,
+                BookingStatus.AWAITING_RESULTS,
+              ],
+            },
+          },
+        });
+
+        const maxSlotsPerHour =
+          primaryService.maxSlotsPerHour ?? slot?.maxPatients ?? 1;
+        if (confirmedBookings >= maxSlotsPerHour) {
+          throw new ApiException(
+            MessageCodes.BOOKING_INVALID_TIME,
+            'Time slot is no longer available (Race condition prevented)',
+            409,
+          );
+        }
+      }
+
       // 1. Create Booking
       const newBooking = await tx.booking.create({
         data: {
@@ -617,12 +705,13 @@ export class BookingsService {
       }
 
       // 4. Create Invoices (split by type: LAB and CONSULTATION)
-      let currentInvoiceCount = await tx.invoice.count();
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const prefix = `INV-${dateStr}-`;
 
       // Create LAB invoice
       if (labOrdersToInvoice.length > 0) {
-        const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(currentInvoiceCount + 1).padStart(4, '0')}`;
-        currentInvoiceCount++;
+        const count = await this.sequenceService.generateNextSequence(prefix);
+        const invoiceNumber = `${prefix}${String(count).padStart(4, '0')}`;
         const totalAmount = labOrdersToInvoice.reduce(
           (sum, item) => sum + Number(item.service.price),
           0,
@@ -659,8 +748,8 @@ export class BookingsService {
 
       // Create SERVICE (Specialist) invoice
       if (visitOrdersToInvoice.length > 0) {
-        const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(currentInvoiceCount + 1).padStart(4, '0')}`;
-        currentInvoiceCount++;
+        const count = await this.sequenceService.generateNextSequence(prefix);
+        const invoiceNumber = `${prefix}${String(count).padStart(4, '0')}`;
         const totalAmount = visitOrdersToInvoice.reduce(
           (sum, item) => sum + Number(item.service.price),
           0,
@@ -1393,7 +1482,15 @@ export class BookingsService {
     };
 
     if (status) {
-      if (status === "upcoming") where.status = { in: ["PENDING", "CONFIRMED", "CHECKED_IN", "QUEUED", "IN_PROGRESS"] }; else if (status === "completed") where.status = "COMPLETED"; else if (status === "cancelled") where.status = { in: ["CANCELLED", "NO_SHOW"] }; else if (status !== "all") where.status = status as import("@prisma/client").BookingStatus;
+      if (status === 'upcoming')
+        where.status = {
+          in: ['PENDING', 'CONFIRMED', 'CHECKED_IN', 'QUEUED', 'IN_PROGRESS'],
+        };
+      else if (status === 'completed') where.status = 'COMPLETED';
+      else if (status === 'cancelled')
+        where.status = { in: ['CANCELLED', 'NO_SHOW'] };
+      else if (status !== 'all')
+        where.status = status as import('@prisma/client').BookingStatus;
     }
 
     const [bookings, total] = await Promise.all([
@@ -1652,20 +1749,7 @@ export class BookingsService {
     const compact = bookingDate.replace(/-/g, '');
     const prefix = `BK-${compact}-`;
 
-    const lastBooking = await this.bookingRepository.findFirst({
-      where: { bookingCode: { startsWith: prefix } },
-      orderBy: { bookingCode: 'desc' },
-      select: { bookingCode: true },
-    });
-
-    let nextNumber = 1;
-    if (lastBooking) {
-      const parts = lastBooking.bookingCode.split('-');
-      const lastNumber = parseInt(parts[parts.length - 1], 10);
-      if (!isNaN(lastNumber)) {
-        nextNumber = lastNumber + 1;
-      }
-    }
+    const nextNumber = await this.sequenceService.generateNextSequence(prefix);
 
     return `${prefix}${String(nextNumber).padStart(4, '0')}`;
   }

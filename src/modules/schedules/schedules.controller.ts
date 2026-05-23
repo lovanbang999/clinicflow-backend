@@ -27,7 +27,8 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
-import { UserRole, DayOfWeek } from '@prisma/client';
+import { UserRole, DayOfWeek, User } from '@prisma/client';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('schedules')
 @Controller('schedules')
@@ -302,9 +303,9 @@ export class SchedulesController {
   }
 
   @Post('reserve-slot')
-  @Public()
   @ApiOperation({ summary: 'Temporarily lock a time slot for 5 minutes' })
   reserveSlot(
+    @CurrentUser() user: User,
     @Body()
     dto: {
       doctorId: string;
@@ -318,13 +319,14 @@ export class SchedulesController {
       dto.date,
       dto.startTime,
       dto.patientProfileId,
+      user,
     );
   }
 
   @Post('release-slot')
-  @Public()
   @ApiOperation({ summary: 'Release a temporarily locked time slot' })
   releaseSlot(
+    @CurrentUser() user: User,
     @Body()
     dto: {
       doctorId: string;
@@ -338,6 +340,7 @@ export class SchedulesController {
       dto.date,
       dto.startTime,
       dto.patientProfileId,
+      user,
     );
   }
 
