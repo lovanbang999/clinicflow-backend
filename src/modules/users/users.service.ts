@@ -15,6 +15,7 @@ import {
   CreateGuestPatientDto,
 } from './dto/quick-create-patient.dto';
 import { Injectable, Inject } from '@nestjs/common';
+import { SequenceService } from '../database/services/sequence.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -35,6 +36,7 @@ export class UsersService {
     private readonly profileRepository: IProfileRepository,
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
+    private readonly sequenceService: SequenceService,
   ) {}
 
   /**
@@ -124,8 +126,10 @@ export class UsersService {
    * Internal helper to generate a unique patient code (BN-YYYY-NNNN)
    */
   private async generatePatientCode(): Promise<string> {
-    const count = await this.profileRepository.countTotalPatients();
-    return `BN-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
+    const year = new Date().getFullYear();
+    const prefix = `BN-${year}-`;
+    const count = await this.sequenceService.generateNextSequence(prefix);
+    return `${prefix}${String(count).padStart(4, '0')}`;
   }
 
   /**
