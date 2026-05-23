@@ -39,6 +39,21 @@ export class ScheduleTool {
   }) {
     const { serviceId, specialtyName, doctorId, date, limit = 5 } = args;
 
+    const isValidUuid = (v?: string) =>
+      !!v &&
+      v !== 'unknown' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+
+    if (doctorId && !isValidUuid(doctorId)) {
+      return {
+        slots: [],
+        metadata: {
+          message:
+            'SYSTEM_INSTRUCTION: doctorId được truyền vào không hợp lệ (không phải UUID). BẠN KHÔNG ĐƯỢC TỰ ĐIỀN TÊN BÁC SĨ VÀO TRƯỜNG NÀY. Hãy gọi [getDoctorInfo] để lấy UUID chính xác của bác sĩ trước, hoặc bỏ trống doctorId nếu chỉ muốn tìm theo chuyên khoa.',
+        },
+      };
+    }
+
     // Compute Vietnam time constants once (Vietnam is fixed UTC+7, no DST)
     const nowUTC = new Date();
     const todayVN = new Intl.DateTimeFormat('en-CA', {

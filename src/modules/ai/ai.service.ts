@@ -83,6 +83,7 @@ export class AiService {
         args as {
           serviceId?: string;
           specialtyName?: string;
+          doctorId?: string;
           date?: string;
           limit?: number;
         },
