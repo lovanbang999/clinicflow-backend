@@ -958,13 +958,10 @@ export class BookingsService {
     ]);
 
     return {
-      bookings,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
+      items: bookings,
+      total,
+      page,
+      limit,
     };
   }
 

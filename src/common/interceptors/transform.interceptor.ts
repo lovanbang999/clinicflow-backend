@@ -103,13 +103,18 @@ export class TransformInterceptor<T> implements NestInterceptor<
           const page = Number(data.page);
           const limit = Number(data.limit);
           const totalPages = Math.ceil(total / limit) || 1;
+          
+          // Separate items, total, page, limit from other potential keys
+          const { items, total: _, page: __, limit: ___, ...extraKeys } = data as any;
+          
           return {
             success: true,
             statusCode,
             message,
             messageCode,
             data: {
-              items: data.items,
+              ...extraKeys,
+              items: items,
               pagination: {
                 total,
                 page,

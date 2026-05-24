@@ -404,13 +404,10 @@ export class UsersService {
     });
 
     return {
-      users,
-      pagination: {
-        total,
-        page: pPage,
-        limit: pLimit,
-        totalPages: Math.ceil(total / pLimit),
-      },
+      items: users,
+      total,
+      page: pPage,
+      limit: pLimit,
     };
   }
 

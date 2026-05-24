@@ -870,13 +870,10 @@ export class BillingService {
     ]);
 
     return {
-      invoices,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
+      items: invoices,
+      total,
+      page,
+      limit,
     };
   }
 
