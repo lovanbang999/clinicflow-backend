@@ -32,7 +32,7 @@ import { AiModule } from './modules/ai/ai.module';
       envFilePath: '.env',
     }),
     ThrottlerModule.forRoot([
-      { name: 'short', ttl: 1000, limit: 10 },   // max 10 req/sec per IP
+      { name: 'short', ttl: 1000, limit: 10 }, // max 10 req/sec per IP
       { name: 'medium', ttl: 60000, limit: 100 }, // max 100 req/min per IP
     ]),
     ScheduleModule.forRoot(),

@@ -4,7 +4,7 @@ services:
   # ──────────────────────────────────────────────
   mysql:
     image: mysql:8.0
-    container_name: mysql-container
+    container_name: smartclinic-mysql
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
@@ -44,8 +44,29 @@ services:
     networks:
       - smartclinic_backend_net
 
+  # ──────────────────────────────────────────────
+  # Redis Cache Store
+  # ──────────────────────────────────────────────
+  redis:
+    image: redis:alpine
+    container_name: smartclinic-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    environment:
+      - REDIS_PASSWORD=smartclinic_secure_pass
+    command: redis-server --requirepass smartclinic_secure_pass
+    networks:
+      - smartclinic_backend_net
+
 volumes:
+  mysql_data:
+    driver: local
   postgres_data:
+    driver: local
+  redis_data:
     driver: local
 
 networks:
