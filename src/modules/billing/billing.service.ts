@@ -259,7 +259,11 @@ export class BillingService {
       const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
       const nowVN = new Date(Date.now() + VN_OFFSET_MS);
       const todayUTC = new Date(
-        Date.UTC(nowVN.getUTCFullYear(), nowVN.getUTCMonth(), nowVN.getUTCDate()),
+        Date.UTC(
+          nowVN.getUTCFullYear(),
+          nowVN.getUTCMonth(),
+          nowVN.getUTCDate(),
+        ),
       );
       // bookingDate is stored as UTC midnight of the Vietnam local date
       const bookingDayUTC = new Date(
@@ -1256,9 +1260,15 @@ export class BillingService {
               const startOfDay = new Date();
               startOfDay.setHours(0, 0, 0, 0);
 
-              const dateStr = startOfDay.toISOString().slice(0, 10).replace(/-/g, '');
+              const dateStr = startOfDay
+                .toISOString()
+                .slice(0, 10)
+                .replace(/-/g, '');
               for (const vsoId of vsoIds) {
-                const nextQueueNumber: number = await this.sequenceService.generateNextSequence(`QUEUE_VSO_${dateStr}`);
+                const nextQueueNumber: number =
+                  await this.sequenceService.generateNextSequence(
+                    `QUEUE_VSO_${dateStr}`,
+                  );
 
                 await tx.visitServiceOrder.update({
                   where: { id: vsoId },
@@ -1275,9 +1285,15 @@ export class BillingService {
             const startOfDay = new Date();
             startOfDay.setHours(0, 0, 0, 0);
 
-            const dateStrLab = startOfDay.toISOString().slice(0, 10).replace(/-/g, '');
+            const dateStrLab = startOfDay
+              .toISOString()
+              .slice(0, 10)
+              .replace(/-/g, '');
             for (const labOrderId of labOrderIds) {
-              const nextQueueNumber: number = await this.sequenceService.generateNextSequence(`QUEUE_LAB_${dateStrLab}`);
+              const nextQueueNumber: number =
+                await this.sequenceService.generateNextSequence(
+                  `QUEUE_LAB_${dateStrLab}`,
+                );
 
               await tx.labOrder.update({
                 where: { id: labOrderId },
@@ -1406,9 +1422,15 @@ export class BillingService {
             const startOfDayVso = new Date();
             startOfDayVso.setHours(0, 0, 0, 0);
 
-            const dateStrVso = startOfDayVso.toISOString().slice(0, 10).replace(/-/g, '');
+            const dateStrVso = startOfDayVso
+              .toISOString()
+              .slice(0, 10)
+              .replace(/-/g, '');
             for (const vsoId of directVsoIds) {
-              const nextVsoQueueNumber = await this.sequenceService.generateNextSequence(`QUEUE_VSO_${dateStrVso}`);
+              const nextVsoQueueNumber =
+                await this.sequenceService.generateNextSequence(
+                  `QUEUE_VSO_${dateStrVso}`,
+                );
 
               await tx.visitServiceOrder.update({
                 where: { id: vsoId },

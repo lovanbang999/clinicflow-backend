@@ -3,15 +3,16 @@ import {
   I_BOOKING_REPOSITORY,
   IBookingRepository,
 } from '../../database/interfaces/booking.repository.interface';
+import { BookingStatus } from '@prisma/client';
 
-const ACTIVE_STATUSES = [
-  'PENDING',
-  'CONFIRMED',
-  'CHECKED_IN',
-  'IN_PROGRESS',
-  'AWAITING_RESULTS',
-  'QUEUED',
-] as const;
+const ACTIVE_STATUSES: BookingStatus[] = [
+  BookingStatus.PENDING,
+  BookingStatus.CONFIRMED,
+  BookingStatus.CHECKED_IN,
+  BookingStatus.IN_PROGRESS,
+  BookingStatus.AWAITING_RESULTS,
+  BookingStatus.QUEUED,
+];
 
 @Injectable()
 export class MyBookingsTool {
@@ -29,9 +30,7 @@ export class MyBookingsTool {
     const bookings = await this.bookingRepository.findManyBooking({
       where: {
         patientProfileId,
-        ...(includeAll
-          ? {}
-          : { status: { in: ACTIVE_STATUSES as unknown as any } }),
+        ...(includeAll ? {} : { status: { in: ACTIVE_STATUSES } }),
         bookingDate: { gte: todayStart },
       },
       select: {
@@ -61,7 +60,7 @@ export class MyBookingsTool {
     return {
       found: true,
       count: bookings.length,
-      bookings: (bookings as any[]).map((b) => ({
+      bookings: bookings.map((b) => ({
         bookingId: b.id,
         bookingCode: b.bookingCode,
         date: new Intl.DateTimeFormat('vi-VN', {

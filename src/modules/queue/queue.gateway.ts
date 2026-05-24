@@ -10,6 +10,26 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Injectable, Logger } from '@nestjs/common';
 import { AuthService } from '../auth/auth.service';
+import { UserRole } from '@prisma/client';
+
+interface AuthenticatedUser {
+  id: string;
+  email: string;
+  fullName: string;
+  phone: string | null;
+  role: UserRole;
+  avatar: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  patientProfile?: { id: string; patientCode: string } | null;
+}
+
+interface AuthenticatedSocket extends Socket {
+  data: {
+    user?: AuthenticatedUser;
+  };
+}
 
 @WebSocketGateway({
   cors: {
@@ -29,18 +49,24 @@ export class QueueGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleConnection(client: Socket) {
     try {
+      const auth = client.handshake.auth as Record<string, unknown> | undefined;
+      const authHeader = client.handshake.headers?.authorization;
       const token =
-        client.handshake.auth?.token ||
-        client.handshake.headers?.authorization?.split(' ')[1];
-      
+        typeof auth?.token === 'string'
+          ? auth.token
+          : typeof authHeader === 'string'
+            ? authHeader.split(' ')[1]
+            : undefined;
+
       if (!token) {
         throw new Error('No token provided');
       }
 
       const payload = await this.authService.verifyAccessToken(token);
       const user = await this.authService.validateUser(payload.sub);
-      
-      client.data.user = user;
+
+      const authSocket = client as AuthenticatedSocket;
+      authSocket.data.user = user;
       this.logger.debug(
         `Client connected: ${client.id}, User: ${user.email}, Role: ${user.role}`,
       );
@@ -64,18 +90,25 @@ export class QueueGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     if (!doctorId) return;
 
-    const user = client.data.user;
+    const authSocket = client as AuthenticatedSocket;
+    const user = authSocket.data.user;
     if (!user) {
       return { event: 'error', data: 'Unauthorized' };
     }
 
     // Role Validation
     if (user.role === 'DOCTOR' && user.id !== doctorId) {
-      return { event: 'error', data: 'Forbidden: You can only join your own queue' };
+      return {
+        event: 'error',
+        data: 'Forbidden: You can only join your own queue',
+      };
     }
-    
+
     if (user.role === 'PATIENT') {
-      return { event: 'error', data: 'Forbidden: Patients cannot join doctor queue room' };
+      return {
+        event: 'error',
+        data: 'Forbidden: Patients cannot join doctor queue room',
+      };
     }
 
     const roomName = `doctor_${doctorId}`;
