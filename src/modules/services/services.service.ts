@@ -14,6 +14,7 @@ import { Prisma } from '@prisma/client';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
+import { RedisService } from '../database/services/redis.service';
 
 @Injectable()
 export class ServicesService {
@@ -23,7 +24,14 @@ export class ServicesService {
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
     private readonly uploadService: UploadService,
+    private readonly redisService: RedisService,
   ) {}
+
+  private async clearServicesCache() {
+    if (this.redisService.isReady()) {
+      await this.redisService.delPattern('cache:services:list:*');
+    }
+  }
 
   /**
    * Create a new service
@@ -87,6 +95,9 @@ export class ServicesService {
       tags: [],
     });
 
+    // Evict cache
+    await this.clearServicesCache();
+
     return ResponseHelper.success(
       service,
       MessageCodes.SERVICE_CREATED,
@@ -105,6 +116,34 @@ export class ServicesService {
     categoryType?: 'EXAMINATION' | 'LAB';
     performedBy?: 'TECHNICIAN' | 'DOCTOR';
   }) {
+    const cacheKey = `cache:services:list:${JSON.stringify(filters || {})}`;
+
+    // Try to get from Redis cache first
+    if (this.redisService.isReady()) {
+      const cached = await this.redisService.getJson<
+        Prisma.ServiceGetPayload<{
+          include: {
+            category: true;
+            doctorServices: {
+              include: {
+                doctorProfile: {
+                  include: { user: { select: { id: true; fullName: true } } };
+                };
+              };
+            };
+          };
+        }>[]
+      >(cacheKey);
+      if (cached) {
+        return ResponseHelper.success(
+          cached,
+          MessageCodes.SERVICE_LIST_RETRIEVED,
+          'Services retrieved successfully (cached)',
+          200,
+        );
+      }
+    }
+
     const where: Prisma.ServiceWhereInput = {};
 
     if (filters?.category && filters.category !== 'all') {
@@ -157,6 +196,11 @@ export class ServicesService {
       },
       orderBy: { name: 'asc' },
     });
+
+    // Save to Redis cache (TTL: 12 hours = 43200 seconds)
+    if (this.redisService.isReady()) {
+      await this.redisService.setJson(cacheKey, services, 43200);
+    }
 
     return ResponseHelper.success(
       services,
@@ -272,6 +316,9 @@ export class ServicesService {
       updateServiceDto,
     );
 
+    // Evict cache
+    await this.clearServicesCache();
+
     return ResponseHelper.success(
       updatedService,
       MessageCodes.SERVICE_UPDATED,
@@ -321,6 +368,9 @@ export class ServicesService {
       isActive: false,
     });
 
+    // Evict cache
+    await this.clearServicesCache();
+
     return ResponseHelper.success(
       deletedService,
       MessageCodes.SERVICE_DELETED,
@@ -351,6 +401,9 @@ export class ServicesService {
     const restoredService = await this.catalogRepository.updateService(id, {
       isActive: true,
     });
+
+    // Evict cache
+    await this.clearServicesCache();
 
     return ResponseHelper.success(
       restoredService,

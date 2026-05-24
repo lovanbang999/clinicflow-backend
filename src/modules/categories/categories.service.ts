@@ -9,13 +9,22 @@ import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { CategoryQueryDto } from './dto/category-query.dto';
+import { RedisService } from '../database/services/redis.service';
+import { Category } from '@prisma/client';
 
 @Injectable()
 export class CategoriesService {
   constructor(
     @Inject(I_CATALOG_REPOSITORY)
     private readonly catalogRepository: ICatalogRepository,
+    private readonly redisService: RedisService,
   ) {}
+
+  private async clearCategoriesCache() {
+    if (this.redisService.isReady()) {
+      await this.redisService.delPattern('cache:categories:list:*');
+    }
+  }
 
   async create(createCategoryDto: CreateCategoryDto) {
     const existing = await this.catalogRepository.findCategoryByCode(
@@ -31,6 +40,10 @@ export class CategoriesService {
 
     const category =
       await this.catalogRepository.createCategory(createCategoryDto);
+
+    // Evict cache
+    await this.clearCategoriesCache();
+
     return ResponseHelper.success(
       category,
       'CATEGORY_CREATED',
@@ -41,14 +54,39 @@ export class CategoriesService {
 
   async findAll(query: CategoryQueryDto) {
     const { isActive, page = 1, limit = 10 } = query;
-    const where = isActive !== undefined ? { isActive } : {};
+    const cacheKey = `cache:categories:list:${JSON.stringify(query)}`;
 
+    // Try to get from Redis cache first
+    if (this.redisService.isReady()) {
+      const cached = await this.redisService.getJson<{
+        items: Category[];
+        total: number;
+      }>(cacheKey);
+      if (cached) {
+        return ResponseHelper.successPagination(
+          cached.items,
+          cached.total,
+          page,
+          limit,
+          'CATEGORIES_RETRIEVED',
+          'Categories retrieved (cached)',
+          200,
+        );
+      }
+    }
+
+    const where = isActive !== undefined ? { isActive } : {};
     const skip = (page - 1) * limit;
     const { total, items } = await this.catalogRepository.findCategories(
       where,
       skip,
       limit,
     );
+
+    // Save to Redis cache (TTL: 12 hours = 43200 seconds)
+    if (this.redisService.isReady()) {
+      await this.redisService.setJson(cacheKey, { items, total }, 43200);
+    }
 
     return ResponseHelper.successPagination(
       items,
@@ -105,6 +143,10 @@ export class CategoriesService {
       id,
       updateCategoryDto,
     );
+
+    // Evict cache
+    await this.clearCategoriesCache();
+
     return ResponseHelper.success(
       updated,
       'CATEGORY_UPDATED',
@@ -134,6 +176,10 @@ export class CategoriesService {
     }
 
     await this.catalogRepository.deleteCategory(id);
+
+    // Evict cache
+    await this.clearCategoriesCache();
+
     return ResponseHelper.success(
       null,
       'CATEGORY_DELETED',

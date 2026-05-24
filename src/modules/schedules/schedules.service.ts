@@ -27,6 +27,7 @@ import {
   ICatalogRepository,
   I_CATALOG_REPOSITORY,
 } from '../database/interfaces/catalog.repository.interface';
+import { RedisService } from '../database/services/redis.service';
 
 @Injectable()
 export class SchedulesService {
@@ -36,6 +37,7 @@ export class SchedulesService {
     @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
     @Inject(I_CATALOG_REPOSITORY)
     private readonly catalogRepository: ICatalogRepository,
+    private readonly redisService: RedisService,
   ) {}
 
   /**
@@ -78,6 +80,8 @@ export class SchedulesService {
         endTime,
       });
     }
+
+    await this.invalidateAllDoctorSlotsCache(doctorId);
 
     return ResponseHelper.success(
       workingHours,
@@ -122,6 +126,8 @@ export class SchedulesService {
 
     await this.bookingRepository.deleteDoctorWorkingHours(doctorId, dayOfWeek);
 
+    await this.invalidateAllDoctorSlotsCache(doctorId);
+
     return ResponseHelper.success(
       null,
       MessageCodes.SCHEDULE_DELETED,
@@ -162,6 +168,8 @@ export class SchedulesService {
       data: { doctorId, breakDate: new Date(date), startTime, endTime, reason },
     });
 
+    await this.invalidateDoctorSlotsCache(doctorId, date);
+
     return ResponseHelper.success(
       breakTime,
       MessageCodes.SCHEDULE_CREATED,
@@ -196,14 +204,19 @@ export class SchedulesService {
    */
   async deleteBreakTime(id: string) {
     // Ideally check existence, but keeping logic consistent
-    await this.bookingRepository.deleteDoctorBreakTime(id).catch(() => {
-      throw new ApiException(
-        MessageCodes.SCHEDULE_NOT_FOUND,
-        'Break time not found',
-        404,
-        'Deletion failed',
-      );
-    });
+    const deletedBreakTime = await this.bookingRepository
+      .deleteDoctorBreakTime(id)
+      .catch(() => {
+        throw new ApiException(
+          MessageCodes.SCHEDULE_NOT_FOUND,
+          'Break time not found',
+          404,
+          'Deletion failed',
+        );
+      });
+
+    const dateStr = format(deletedBreakTime.breakDate, 'yyyy-MM-dd');
+    await this.invalidateDoctorSlotsCache(deletedBreakTime.doctorId, dateStr);
 
     return ResponseHelper.success(
       null,
@@ -322,6 +335,8 @@ export class SchedulesService {
       affectedAppointments.map((b) => b.id),
     );
 
+    await this.invalidateDoctorSlotsCache(doctorId, date);
+
     return ResponseHelper.success(
       {
         id: offDay.id,
@@ -390,6 +405,8 @@ export class SchedulesService {
 
     await this.bookingRepository.deleteDoctorOffDay(doctorId, new Date(date));
 
+    await this.invalidateDoctorSlotsCache(doctorId, date);
+
     return ResponseHelper.success(
       null,
       MessageCodes.SCHEDULE_DELETED,
@@ -403,6 +420,25 @@ export class SchedulesService {
    */
   async getAvailableSlots(queryDto: AvailableSlotsQueryDto) {
     const { doctorId, date, serviceId } = queryDto;
+    const cacheKey = `cache:slots:${doctorId}:${date}:${serviceId ?? ''}:${queryDto.patientId ?? ''}`;
+
+    // Try to get from Redis cache first
+    if (this.redisService.isReady()) {
+      const cachedData = await this.redisService.getJson<{
+        availableSlots: any[];
+        total: number;
+        message?: string;
+      }>(cacheKey);
+      if (cachedData) {
+        return ResponseHelper.success(
+          cachedData,
+          MessageCodes.AVAILABLE_SLOTS_RETRIEVED,
+          'Available slots retrieved successfully (cached)',
+          200,
+        );
+      }
+    }
+
     let durationMinutes = 30; // Default: 30 minutes
     let maxSlotsPerHour = 1; // Default: 1 slot per slot (usually matching doctor availability)
 
@@ -429,11 +465,19 @@ export class SchedulesService {
     );
 
     if (!workingHours) {
+      const resultData = {
+        availableSlots: [],
+        message: 'Doctor does not work on this day',
+        total: 0,
+      };
+
+      // Cache this result too for 5 minutes
+      if (this.redisService.isReady()) {
+        await this.redisService.setJson(cacheKey, resultData, 300);
+      }
+
       return ResponseHelper.success(
-        {
-          availableSlots: [],
-          message: 'Doctor does not work on this day',
-        },
+        resultData,
         MessageCodes.AVAILABLE_SLOTS_RETRIEVED,
         'No available slots',
         200,
@@ -446,11 +490,19 @@ export class SchedulesService {
     );
 
     if (offDay) {
+      const resultData = {
+        availableSlots: [],
+        message: `Doctor is not available: ${offDay.reason || 'Off day'}`,
+        total: 0,
+      };
+
+      // Cache this result too for 5 minutes
+      if (this.redisService.isReady()) {
+        await this.redisService.setJson(cacheKey, resultData, 300);
+      }
+
       return ResponseHelper.success(
-        {
-          availableSlots: [],
-          message: `Doctor is not available: ${offDay.reason || 'Off day'}`,
-        },
+        resultData,
         MessageCodes.AVAILABLE_SLOTS_RETRIEVED,
         'No available slots',
         200,
@@ -488,11 +540,18 @@ export class SchedulesService {
       queryDto.patientId,
     );
 
+    const resultData = {
+      availableSlots,
+      total: availableSlots.length,
+    };
+
+    // Cache the calculated slots in Redis for 5 minutes (300 seconds)
+    if (this.redisService.isReady()) {
+      await this.redisService.setJson(cacheKey, resultData, 300);
+    }
+
     return ResponseHelper.success(
-      {
-        availableSlots,
-        total: availableSlots.length,
-      },
+      resultData,
       MessageCodes.AVAILABLE_SLOTS_RETRIEVED,
       'Available slots retrieved successfully',
       200,
@@ -644,8 +703,13 @@ export class SchedulesService {
   ) {
     // Auth check
     if (user.role === UserRole.PATIENT) {
-      const userWithProfile = await this.userRepository.findByIdWithProfile(user.id);
-      if (!userWithProfile?.patientProfile || userWithProfile.patientProfile.id !== patientProfileId) {
+      const userWithProfile = await this.userRepository.findByIdWithProfile(
+        user.id,
+      );
+      if (
+        !userWithProfile?.patientProfile ||
+        userWithProfile.patientProfile.id !== patientProfileId
+      ) {
         throw new ApiException(
           'SCHEDULE.FORBIDDEN',
           'You can only reserve slots for your own profile',
@@ -696,18 +760,29 @@ export class SchedulesService {
         // Refresh expiration if it's the same patient
         // We delete the existing one first to avoid P2002 if we create, or just let it update if repo supports it.
         // Actually, if we just delete and recreate:
-        await this.bookingRepository.deleteSlotReservation(existingReservation.id);
+        await this.bookingRepository.deleteSlotReservation(
+          existingReservation.id,
+        );
       }
 
-      return await this.bookingRepository.createSlotReservation({
+      const reservation = await this.bookingRepository.createSlotReservation({
         doctorId,
         bookingDate: new Date(date),
         startTime,
         patientProfileId,
         expiresAt,
       });
-    } catch (error: any) {
-      if (error.code === 'P2002') {
+
+      await this.invalidateDoctorSlotsCache(doctorId, date);
+
+      return reservation;
+    } catch (error: unknown) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        (error as { code: string }).code === 'P2002'
+      ) {
         throw new ApiException(
           'SCHEDULE.SLOT_LOCKED',
           'Slot is temporarily locked by another user',
@@ -727,8 +802,13 @@ export class SchedulesService {
   ) {
     // Auth check
     if (user.role === UserRole.PATIENT) {
-      const userWithProfile = await this.userRepository.findByIdWithProfile(user.id);
-      if (!userWithProfile?.patientProfile || userWithProfile.patientProfile.id !== patientProfileId) {
+      const userWithProfile = await this.userRepository.findByIdWithProfile(
+        user.id,
+      );
+      if (
+        !userWithProfile?.patientProfile ||
+        userWithProfile.patientProfile.id !== patientProfileId
+      ) {
         throw new ApiException(
           'SCHEDULE.FORBIDDEN',
           'You can only release slots for your own profile',
@@ -737,12 +817,33 @@ export class SchedulesService {
       }
     }
 
-    return this.bookingRepository.deleteSlotReservationByDetails(
+    const result = await this.bookingRepository.deleteSlotReservationByDetails(
       doctorId,
       new Date(date),
       startTime,
       patientProfileId,
     );
+
+    await this.invalidateDoctorSlotsCache(doctorId, date);
+
+    return result;
+  }
+
+  private async invalidateDoctorSlotsCache(
+    doctorId: string,
+    date: string,
+  ): Promise<void> {
+    if (this.redisService.isReady()) {
+      const pattern = `cache:slots:${doctorId}:${date}:*`;
+      await this.redisService.delPattern(pattern);
+    }
+  }
+
+  private async invalidateAllDoctorSlotsCache(doctorId: string): Promise<void> {
+    if (this.redisService.isReady()) {
+      const pattern = `cache:slots:${doctorId}:*`;
+      await this.redisService.delPattern(pattern);
+    }
   }
 
   private getDayOfWeek(date: Date): DayOfWeek {
