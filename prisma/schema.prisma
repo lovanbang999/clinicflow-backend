@@ -184,6 +184,7 @@ model DoctorScheduleSlot {
 
   @@index([doctorId, date])
   @@index([roomId, date])
+  @@index([status, date])
   @@map("doctor_schedule_slots")
 }
 
@@ -357,6 +358,8 @@ model Booking {
   @@index([doctorId, bookingDate, isPreBooked])
   @@index([doctorId, bookingDate, startTime])
   @@index([doctorId, bookingDate, status])
+  @@index([patientProfileId, status])
+  @@index([bookingDate, status])
   @@index([bookedBy], map: "bookings_bookedBy_fkey")
   @@index([cancelledBy], map: "bookings_cancelledBy_fkey")
   @@index([roomId], map: "bookings_roomId_fkey")
@@ -664,6 +667,7 @@ model Invoice {
   @@index([status])
   @@index([paidAt])
   @@index([einvoiceStatus])
+  @@index([status, createdAt])
   @@map("invoices")
 }
 
