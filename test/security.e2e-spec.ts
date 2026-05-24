@@ -13,7 +13,7 @@ describe('Security & OTP Policy (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    await app.init();
+    await app.listen(0);
   });
 
   afterAll(async () => {
@@ -24,17 +24,17 @@ describe('Security & OTP Policy (e2e)', () => {
     const email = 'test.cooldown@example.com';
 
     // First request should succeed or return user not found
-    const res1 = await request(app.getHttpServer())
+    const res1 = (await request(app.getHttpServer())
       .post('/auth/resend-otp')
-      .send({ email });
+      .send({ email })) as request.Response;
 
     expect(res1.status).not.toBe(500);
 
     // Immediate second request should hit rate limit (429) if it was throttled by IP
     // Or hit 429 by our custom logic if user exists
-    const res2 = await request(app.getHttpServer())
+    const res2 = (await request(app.getHttpServer())
       .post('/auth/resend-otp')
-      .send({ email });
+      .send({ email })) as request.Response;
 
     // Tùy thuộc vào Throttler, status có thể là 429
     // Vì không có mock DB, nếu user không tồn tại nó sẽ trả 404
@@ -43,18 +43,15 @@ describe('Security & OTP Policy (e2e)', () => {
   });
 
   it('should block OTP after 5 failed attempts (Brute-force protection)', async () => {
-    // Send 6 invalid requests
-    const requests = Array.from({ length: 6 }).map(() =>
-      request(app.getHttpServer())
+    // Send 6 invalid requests sequentially to prevent Supertest race conditions
+    const email = 'bruteforce@example.com';
+    for (let i = 0; i < 6; i++) {
+      const res = (await request(app.getHttpServer())
         .post('/auth/verify-email')
         .send({
-          email: 'bruteforce@example.com',
+          email,
           code: '000000',
-        }),
-    );
-
-    for (const req of requests) {
-      const res = await req;
+        })) as request.Response;
       expect([404, 400]).toContain(res.status);
     }
   });
