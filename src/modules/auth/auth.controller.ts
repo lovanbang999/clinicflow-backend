@@ -26,6 +26,8 @@ import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import { ResponseMessage } from '../../common/decorators/response-message.decorator';
+import { MessageCodes } from '../../common/constants/message-codes.const';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -39,6 +41,10 @@ export class AuthController {
   })
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
+  @ResponseMessage(
+    MessageCodes.REGISTER_SUCCESS,
+    'Registration successful! Please check your email for verification code.',
+  )
   @ApiOperation({
     summary: 'Register a new user (PATIENT role) - Sends OTP to email',
   })
@@ -57,6 +63,7 @@ export class AuthController {
   @Public()
   @Post('verify-email')
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(MessageCodes.VERIFY_SUCCESS, 'Email verified successfully!')
   @ApiOperation({ summary: 'Verify email with OTP code' })
   @ApiResponse({
     status: 200,
@@ -77,6 +84,10 @@ export class AuthController {
   })
   @Post('resend-otp')
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.RESEND_OTP_SUCCESS,
+    'Verification code sent successfully!',
+  )
   @ApiOperation({ summary: 'Resend OTP verification code' })
   @ApiResponse({
     status: 200,
@@ -97,6 +108,10 @@ export class AuthController {
   })
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.FORGOT_PASSWORD_SUCCESS,
+    'If an account exists, a password reset OTP has been sent.',
+  )
   @ApiOperation({ summary: 'Request password reset' })
   @ApiResponse({
     status: 200,
@@ -113,6 +128,10 @@ export class AuthController {
   })
   @Post('verify-reset-otp')
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.VERIFY_RESET_OTP_SUCCESS,
+    'OTP verified successfully. You can now reset your password.',
+  )
   @ApiOperation({
     summary: 'Verify password-reset OTP (step 2 of forgot-password flow)',
   })
@@ -135,6 +154,10 @@ export class AuthController {
   @Public()
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.RESET_PASSWORD_SUCCESS,
+    'Password reset successfully. You can now log in with your new password.',
+  )
   @ApiOperation({
     summary:
       'Set new password using verified OTP (step 3 of forgot-password flow)',
@@ -162,6 +185,7 @@ export class AuthController {
   })
   @Post('login')
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(MessageCodes.LOGIN_SUCCESS, 'Login successful!')
   @ApiOperation({ summary: 'Login user (email must be verified)' })
   @ApiResponse({
     status: 200,
@@ -178,6 +202,7 @@ export class AuthController {
   @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(MessageCodes.REFRESH_SUCCESS, 'Token refreshed successfully')
   @ApiOperation({ summary: 'Refresh access token using refresh token' })
   @ApiResponse({
     status: 200,
@@ -194,6 +219,7 @@ export class AuthController {
   @Public()
   @Post('logout')
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(MessageCodes.LOGOUT_SUCCESS, 'Logged out successfully')
   @ApiOperation({ summary: 'Logout user (revoke refresh token)' })
   @ApiResponse({
     status: 200,
@@ -206,6 +232,10 @@ export class AuthController {
   @Get('profile')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @ResponseMessage(
+    MessageCodes.PROFILE_RETRIEVED,
+    'Profile retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get current user profile' })
   @ApiResponse({
     status: 200,

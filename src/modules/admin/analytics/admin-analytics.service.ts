@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
-import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { UserRole, BookingStatus } from '@prisma/client';
 import { DateRangeQueryDto } from './dto/date-range.query.dto';
 import { GetRevenueChartQueryDto } from './dto/get-revenue-chart.query.dto';
@@ -146,26 +145,21 @@ export class AdminAnalyticsService {
           : 0;
     }
 
-    return ResponseHelper.success(
-      {
-        totalUsers: totalPatients,
-        totalDoctors,
-        totalBookings,
-        totalRevenue,
-        trends: {
-          newPatientsThisMonth: periodPatients,
-          newPatientsLastMonth: comparisonPatients,
-          newBookingsThisMonth: periodBookings,
-          newBookingsLastMonth: from ? 0 : lastMonthBookings,
-          currentMonthRevenue: periodRevenue,
-          lastMonthRevenue,
-          revenueGrowthPct,
-        },
+    return {
+      totalUsers: totalPatients,
+      totalDoctors,
+      totalBookings,
+      totalRevenue,
+      trends: {
+        newPatientsThisMonth: periodPatients,
+        newPatientsLastMonth: comparisonPatients,
+        newBookingsThisMonth: periodBookings,
+        newBookingsLastMonth: from ? 0 : lastMonthBookings,
+        currentMonthRevenue: periodRevenue,
+        lastMonthRevenue,
+        revenueGrowthPct,
       },
-      'ADMIN.ANALYTICS.OVERVIEW',
-      'Analytics overview retrieved successfully',
-      200,
-    );
+    };
   }
 
   async getTopDoctors(limit: number = 5, dateRange?: DateRangeQueryDto) {
@@ -252,12 +246,7 @@ export class AdminAnalyticsService {
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, limit);
 
-    return ResponseHelper.success(
-      { topDoctors },
-      'ADMIN.ANALYTICS.TOP_DOCTORS',
-      'Top doctors retrieved successfully',
-      200,
-    );
+    return { topDoctors };
   }
 
   async getRevenueChart(query: GetRevenueChartQueryDto) {
@@ -351,12 +340,7 @@ export class AdminAnalyticsService {
       }),
     );
 
-    return ResponseHelper.success(
-      { period, months: isDaily ? undefined : months, chart },
-      'ADMIN.ANALYTICS.REVENUE_CHART',
-      'Revenue chart data retrieved successfully',
-      200,
-    );
+    return { period, months: isDaily ? undefined : months, chart };
   }
 
   async getBookingOverview(query?: DateRangeQueryDto) {
@@ -395,21 +379,16 @@ export class AdminAnalyticsService {
         }),
       ]);
 
-    return ResponseHelper.success(
-      {
-        total,
-        completed,
-        upcoming,
-        cancelled,
-        inProgress,
-        completedPct: total > 0 ? Math.round((completed / total) * 100) : 0,
-        upcomingPct: total > 0 ? Math.round((upcoming / total) * 100) : 0,
-        cancelledPct: total > 0 ? Math.round((cancelled / total) * 100) : 0,
-      },
-      'ADMIN.ANALYTICS.BOOKING_OVERVIEW',
-      'Booking overview retrieved successfully',
-      200,
-    );
+    return {
+      total,
+      completed,
+      upcoming,
+      cancelled,
+      inProgress,
+      completedPct: total > 0 ? Math.round((completed / total) * 100) : 0,
+      upcomingPct: total > 0 ? Math.round((upcoming / total) * 100) : 0,
+      cancelledPct: total > 0 ? Math.round((cancelled / total) * 100) : 0,
+    };
   }
 
   async getTopServices(limit: number = 5, query?: DateRangeQueryDto) {
@@ -468,11 +447,6 @@ export class AdminAnalyticsService {
       .sort((a, b) => b.estimatedRevenue - a.estimatedRevenue)
       .slice(0, limit);
 
-    return ResponseHelper.success(
-      { topServices },
-      'ADMIN.ANALYTICS.TOP_SERVICES',
-      'Top services retrieved successfully',
-      200,
-    );
+    return { topServices };
   }
 }

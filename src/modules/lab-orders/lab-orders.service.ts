@@ -16,10 +16,6 @@ import { MessageCodes } from '../../common/constants/message-codes.const';
 import { CreateLabOrderDto } from './dto/create-lab-order.dto';
 import { UploadLabResultDto } from './dto/upload-lab-result.dto';
 import {
-  ResponseHelper,
-  ApiResponse,
-} from '../../common/interfaces/api-response.interface';
-import {
   LabOrderStatus,
   InvoiceStatus,
   User,
@@ -230,12 +226,7 @@ export class LabOrdersService {
     // Automatically sync to draft invoice
     await this.billingService.syncLabInvoice(dto.bookingId);
 
-    return ResponseHelper.success(
-      labOrder,
-      'LAB.ORDER_CREATED',
-      'Lab order created. Receptionist must create a LAB invoice to collect payment.',
-      201,
-    );
+    return labOrder;
   }
 
   async getOrdersByBooking(bookingId: string, currentUser?: Express.User) {
@@ -277,7 +268,7 @@ export class LabOrdersService {
       orderBy: { createdAt: 'desc' },
     })) as unknown as InternalLabOrder[];
 
-    return ResponseHelper.success(orders, 'LAB.FETCHED', '', 200);
+    return orders;
   }
 
   /**
@@ -306,12 +297,7 @@ export class LabOrdersService {
       },
       orderBy: { createdAt: 'asc' },
     });
-    return ResponseHelper.success(
-      orders,
-      'LAB.PENDING_UNBILLED_FETCHED',
-      '',
-      200,
-    );
+    return orders;
   }
 
   async getPendingOrders() {
@@ -355,7 +341,7 @@ export class LabOrdersService {
       };
     });
 
-    return ResponseHelper.success(orders, 'LAB.FETCHED_PENDING', '', 200);
+    return orders;
   }
 
   async getOrderById(id: string, currentUser?: Express.User) {
@@ -416,12 +402,7 @@ export class LabOrdersService {
       patientProfile: booking?.patientProfile,
     };
 
-    return ResponseHelper.success(
-      order,
-      'LAB.FETCHED_BY_ID',
-      'Lab order fetched successfully',
-      200,
-    );
+    return order;
   }
 
   /**
@@ -468,12 +449,7 @@ export class LabOrdersService {
       };
     });
 
-    return ResponseHelper.success(
-      orders,
-      'LAB.FETCHED_READY',
-      'Ready to perform orders',
-      200,
-    );
+    return orders;
   }
 
   async getTechnicianStats() {
@@ -501,12 +477,7 @@ export class LabOrdersService {
       }),
     ]);
 
-    return ResponseHelper.success(
-      { pending, inProgress, completedToday },
-      'LAB.TECHNICIAN_STATS',
-      'Technician stats fetched',
-      200,
-    );
+    return { pending, inProgress, completedToday };
   }
 
   async getTechnicianHistory() {
@@ -545,12 +516,7 @@ export class LabOrdersService {
       };
     });
 
-    return ResponseHelper.success(
-      orders,
-      'LAB.TECHNICIAN_HISTORY',
-      'Technician history fetched',
-      200,
-    );
+    return orders;
   }
 
   async addResult(
@@ -622,19 +588,14 @@ export class LabOrdersService {
       order.medicalRecordId,
     );
 
-    return ResponseHelper.success(
-      updatedOrder,
-      'LAB.RESULT_ADDED',
-      'Lab result saved',
-      200,
-    );
+    return updatedOrder;
   }
 
   async updateStatus(
     labOrderId: string,
     status: LabOrderStatus,
     currentUser?: User,
-  ): Promise<ApiResponse<any>> {
+  ): Promise<any> {
     if (
       currentUser?.role !== 'TECHNICIAN' &&
       currentUser?.role !== 'ADMIN' &&
@@ -681,12 +642,7 @@ export class LabOrdersService {
       );
     }
 
-    return ResponseHelper.success(
-      updatedOrder,
-      'LAB.STATUS_UPDATED',
-      'Lab order status updated',
-      200,
-    );
+    return updatedOrder;
   }
 
   async deleteOrder(
@@ -760,11 +716,6 @@ export class LabOrdersService {
       order.medicalRecordId,
     );
 
-    return ResponseHelper.success(
-      null,
-      'LAB.ORDER_DELETED',
-      'Lab order deleted',
-      200,
-    );
+    return null;
   }
 }

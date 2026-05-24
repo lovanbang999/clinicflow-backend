@@ -19,7 +19,6 @@ import { BookingStatus, Gender, Prisma, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { ApiException } from 'src/common/exceptions/api.exception';
-import { ResponseHelper } from 'src/common/interfaces/api-response.interface';
 
 // Sequential counter helper — in production this should use DB sequence or redis
 // Here we just count existing profiles to generate the next code
@@ -82,12 +81,7 @@ export class AdminPatientsService {
         },
       });
 
-      return ResponseHelper.success(
-        { profile },
-        MessageCodes.PATIENT_CREATED,
-        'Guest patient profile created successfully',
-        201,
-      );
+      return { profile };
     }
 
     // Check unique email / phone on User table
@@ -152,12 +146,7 @@ export class AdminPatientsService {
       profile: userCreateResult.patientProfile,
     };
 
-    return ResponseHelper.success(
-      result,
-      MessageCodes.PATIENT_CREATED,
-      'Patient created successfully',
-      201,
-    );
+    return result;
   }
 
   // CREATE GUEST — walk-in patient (PatientProfile only, no User)
@@ -186,12 +175,7 @@ export class AdminPatientsService {
       },
     });
 
-    return ResponseHelper.success(
-      profile,
-      MessageCodes.PATIENT_CREATED,
-      'Guest patient created successfully',
-      201,
-    );
+    return profile;
   }
 
   // UPGRADE GUEST → registered patient
@@ -249,12 +233,7 @@ export class AdminPatientsService {
       profile: { ...profile, ...userCreateResult.patientProfile },
     };
 
-    return ResponseHelper.success(
-      result,
-      MessageCodes.PATIENT_UPDATED,
-      'Guest patient upgraded to registered account successfully',
-      200,
-    );
+    return result;
   }
 
   // LIST / SEARCH — query on PatientProfile (includes both registered + guests)
@@ -420,15 +399,10 @@ export class AdminPatientsService {
       };
     });
 
-    return ResponseHelper.success(
-      {
-        data: rows,
-        meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
-      },
-      MessageCodes.PATIENT_LIST_RETRIEVED,
-      'Patients retrieved successfully',
-      200,
-    );
+    return {
+      data: rows,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async exportToExcel(query: PatientSearchQueryDto) {
@@ -635,38 +609,28 @@ export class AdminPatientsService {
     const trendPct = (current: number, prev: number): number | null =>
       prev === 0 ? null : Math.round(((current - prev) / prev) * 100);
 
-    return ResponseHelper.success(
-      {
-        totalPatients,
-        newThisMonth,
-        patientsToday: patientsTodayCount,
+    return {
+      totalPatients,
+      newThisMonth,
+      patientsToday: patientsTodayCount,
+      activeAppointments,
+      totalPatientsTrend: trendPct(totalPatients, totalPatientsLastMonthEnd),
+      newThisMonthTrend: trendPct(newThisMonth, newLastMonth),
+      patientsTodayTrend: trendPct(
+        patientsTodayCount,
+        patientsLastWeekDayCount,
+      ),
+      activeAppointmentsTrend: trendPct(
         activeAppointments,
-        totalPatientsTrend: trendPct(totalPatients, totalPatientsLastMonthEnd),
-        newThisMonthTrend: trendPct(newThisMonth, newLastMonth),
-        patientsTodayTrend: trendPct(
-          patientsTodayCount,
-          patientsLastWeekDayCount,
-        ),
-        activeAppointmentsTrend: trendPct(
-          activeAppointments,
-          activeAppointmentsLastMonth,
-        ),
-      },
-      MessageCodes.PATIENT_STATS_RETRIEVED,
-      'Patient statistics retrieved successfully',
-      200,
-    );
+        activeAppointmentsLastMonth,
+      ),
+    };
   }
 
   // FIND ONE
   async findOne(id: string) {
     const patient = await this.findById(id);
-    return ResponseHelper.success(
-      patient,
-      MessageCodes.PATIENT_RETRIEVED,
-      'Patient details retrieved successfully',
-      200,
-    );
+    return patient;
   }
 
   // UPDATE
@@ -756,12 +720,7 @@ export class AdminPatientsService {
         userDataToUpdate,
       );
 
-    return ResponseHelper.success(
-      updatedProfile,
-      MessageCodes.PATIENT_UPDATED,
-      'Patient updated successfully',
-      200,
-    );
+    return updatedProfile;
   }
 
   // HEALTH PROFILE
@@ -793,12 +752,7 @@ export class AdminPatientsService {
       );
     }
 
-    return ResponseHelper.success(
-      profile,
-      MessageCodes.PATIENT_HEALTH_PROFILE_RETRIEVED,
-      'Patient health profile retrieved successfully',
-      200,
-    );
+    return profile;
   }
 
   // INTERNAL HELPERS

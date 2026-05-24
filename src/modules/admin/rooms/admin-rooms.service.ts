@@ -1,11 +1,11 @@
 import { Injectable, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
-import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { ApiException } from '../../../common/exceptions/api.exception';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { FilterRoomDto } from './dto/filter-room.dto';
+import { MessageCodes } from '../../../common/constants/message-codes.const';
 
 @Injectable()
 export class AdminRoomsService {
@@ -44,20 +44,15 @@ export class AdminRoomsService {
       this.prisma.room.count({ where }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        rooms,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    return {
+      rooms,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      'ADMIN.ROOMS.LIST',
-      'Rooms retrieved successfully',
-      200,
-    );
+    };
   }
 
   async findOne(id: string) {
@@ -70,19 +65,14 @@ export class AdminRoomsService {
 
     if (!room) {
       throw new ApiException(
-        'ROOM_NOT_FOUND',
+        MessageCodes.ROOM_NOT_FOUND,
         'Room not found',
         404,
         'Room retrieval failed',
       );
     }
 
-    return ResponseHelper.success(
-      room,
-      'ADMIN.ROOMS.DETAIL',
-      'Room retrieved successfully',
-      200,
-    );
+    return room;
   }
 
   async create(dto: CreateRoomDto) {
@@ -91,7 +81,7 @@ export class AdminRoomsService {
     });
     if (existing) {
       throw new ApiException(
-        'ROOM_NAME_EXISTS',
+        MessageCodes.ROOM_NAME_EXISTS,
         'Room with this name already exists',
         409,
         'Room creation failed',
@@ -109,19 +99,14 @@ export class AdminRoomsService {
       },
     });
 
-    return ResponseHelper.success(
-      room,
-      'ADMIN.ROOMS.CREATED',
-      'Room created successfully',
-      201,
-    );
+    return room;
   }
 
   async update(id: string, dto: UpdateRoomDto) {
     const existing = await this.prisma.room.findUnique({ where: { id } });
     if (!existing) {
       throw new ApiException(
-        'ROOM_NOT_FOUND',
+        MessageCodes.ROOM_NOT_FOUND,
         'Room not found',
         404,
         'Room update failed',
@@ -134,7 +119,7 @@ export class AdminRoomsService {
       });
       if (duplicate) {
         throw new ApiException(
-          'ROOM_NAME_EXISTS',
+          MessageCodes.ROOM_NAME_EXISTS,
           'Room with this name already exists',
           409,
           'Room update failed',
@@ -154,19 +139,14 @@ export class AdminRoomsService {
       },
     });
 
-    return ResponseHelper.success(
-      updated,
-      'ADMIN.ROOMS.UPDATED',
-      'Room updated successfully',
-      200,
-    );
+    return updated;
   }
 
   async remove(id: string) {
     const room = await this.prisma.room.findUnique({ where: { id } });
     if (!room) {
       throw new ApiException(
-        'ROOM_NOT_FOUND',
+        MessageCodes.ROOM_NOT_FOUND,
         'Room not found',
         404,
         'Room deletion failed',
@@ -185,7 +165,7 @@ export class AdminRoomsService {
 
     if (activeSlots > 0) {
       throw new ApiException(
-        'ROOM_HAS_ACTIVE_SLOTS',
+        MessageCodes.ROOM_HAS_ACTIVE_SLOTS,
         `Không thể ngừng hoạt động phòng này vì còn ${activeSlots} lịch khám đang dùng phòng này.`,
         HttpStatus.BAD_REQUEST,
         'Cannot deactivate room',
@@ -197,19 +177,14 @@ export class AdminRoomsService {
       data: { isActive: false },
     });
 
-    return ResponseHelper.success(
-      updated,
-      'ADMIN.ROOMS.DELETED',
-      'Room deactivated successfully',
-      200,
-    );
+    return updated;
   }
 
   async restore(id: string) {
     const room = await this.prisma.room.findUnique({ where: { id } });
     if (!room) {
       throw new ApiException(
-        'ROOM_NOT_FOUND',
+        MessageCodes.ROOM_NOT_FOUND,
         'Room not found',
         404,
         'Room restore failed',
@@ -218,7 +193,7 @@ export class AdminRoomsService {
 
     if (room.isActive) {
       throw new ApiException(
-        'ROOM_ALREADY_ACTIVE',
+        MessageCodes.ROOM_ALREADY_ACTIVE,
         'Room is already active',
         HttpStatus.BAD_REQUEST,
         'Room restore failed',
@@ -230,11 +205,6 @@ export class AdminRoomsService {
       data: { isActive: true },
     });
 
-    return ResponseHelper.success(
-      updated,
-      'ADMIN.ROOMS.RESTORED',
-      'Room restored successfully',
-      200,
-    );
+    return updated;
   }
 }

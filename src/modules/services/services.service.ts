@@ -11,7 +11,7 @@ import {
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { Prisma } from '@prisma/client';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
+
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { RedisService } from '../database/services/redis.service';
@@ -98,12 +98,7 @@ export class ServicesService {
     // Evict cache
     await this.clearServicesCache();
 
-    return ResponseHelper.success(
-      service,
-      MessageCodes.SERVICE_CREATED,
-      'Service created successfully',
-      201,
-    );
+    return service;
   }
 
   /**
@@ -135,12 +130,7 @@ export class ServicesService {
         }>[]
       >(cacheKey);
       if (cached) {
-        return ResponseHelper.success(
-          cached,
-          MessageCodes.SERVICE_LIST_RETRIEVED,
-          'Services retrieved successfully (cached)',
-          200,
-        );
+        return cached;
       }
     }
 
@@ -202,12 +192,7 @@ export class ServicesService {
       await this.redisService.setJson(cacheKey, services, 43200);
     }
 
-    return ResponseHelper.success(
-      services,
-      MessageCodes.SERVICE_LIST_RETRIEVED,
-      'Services retrieved successfully',
-      200,
-    );
+    return services;
   }
 
   /**
@@ -225,12 +210,7 @@ export class ServicesService {
       );
     }
 
-    return ResponseHelper.success(
-      service,
-      MessageCodes.SERVICE_RETRIEVED,
-      'Service retrieved successfully',
-      200,
-    );
+    return service;
   }
 
   /**
@@ -319,12 +299,7 @@ export class ServicesService {
     // Evict cache
     await this.clearServicesCache();
 
-    return ResponseHelper.success(
-      updatedService,
-      MessageCodes.SERVICE_UPDATED,
-      'Service updated successfully',
-      200,
-    );
+    return updatedService;
   }
 
   /**
@@ -371,12 +346,7 @@ export class ServicesService {
     // Evict cache
     await this.clearServicesCache();
 
-    return ResponseHelper.success(
-      deletedService,
-      MessageCodes.SERVICE_DELETED,
-      'Service deleted successfully',
-      200,
-    );
+    return deletedService;
   }
 
   /**
@@ -405,12 +375,7 @@ export class ServicesService {
     // Evict cache
     await this.clearServicesCache();
 
-    return ResponseHelper.success(
-      restoredService,
-      MessageCodes.SERVICE_RESTORED,
-      'Service restored successfully',
-      200,
-    );
+    return restoredService;
   }
 
   /**
@@ -435,25 +400,20 @@ export class ServicesService {
         this.bookingRepository.countBookingsByService(serviceId, ['CANCELLED']),
       ]);
 
-    return ResponseHelper.success(
-      {
-        service: {
-          id: service.id,
-          name: service.name,
-        },
-        statistics: {
-          totalBookings,
-          completedBookings,
-          cancelledBookings,
-          completionRate:
-            totalBookings > 0
-              ? Math.round((completedBookings / totalBookings) * 100)
-              : 0,
-        },
+    return {
+      service: {
+        id: service.id,
+        name: service.name,
       },
-      MessageCodes.SERVICE_STATISTICS_RETRIEVED,
-      'Service statistics retrieved successfully',
-      200,
-    );
+      statistics: {
+        totalBookings,
+        completedBookings,
+        cancelledBookings,
+        completionRate:
+          totalBookings > 0
+            ? Math.round((completedBookings / totalBookings) * 100)
+            : 0,
+      },
+    };
   }
 }

@@ -14,6 +14,8 @@ import { DateRangeQueryDto } from '../analytics/dto/date-range.query.dto';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
+import { ResponseMessage } from 'src/common/decorators/response-message.decorator';
+import { MessageCodes } from 'src/common/constants/message-codes.const';
 
 @ApiTags('admin - dashboard')
 @ApiBearerAuth('JWT-auth')
@@ -28,6 +30,10 @@ export class AdminDashboardController {
    * KPI overview.
    */
   @Get('overview')
+  @ResponseMessage(
+    MessageCodes.DASHBOARD_OVERVIEW_RETRIEVED,
+    'Overview retrieved successfully',
+  )
   @ApiOperation({
     summary: 'KPI overview (ADMIN only)',
     description:
@@ -50,6 +56,10 @@ export class AdminDashboardController {
    * Monthly statistics.
    */
   @Get('monthly-stats')
+  @ResponseMessage(
+    MessageCodes.DASHBOARD_MONTHLY_STATS_RETRIEVED,
+    'Monthly stats retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Monthly statistics (ADMIN only)',
     description:

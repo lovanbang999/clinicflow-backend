@@ -11,7 +11,6 @@ import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { FilterScheduleDto } from './dto/filter-schedule.dto';
 import { Prisma, ScheduleSlotStatus } from '@prisma/client';
-import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
 import { ApiException } from '../../../common/exceptions/api.exception';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -32,12 +31,7 @@ export class AdminSchedulesService {
       orderBy: { name: 'asc' },
     });
 
-    return ResponseHelper.success(
-      { data: rooms },
-      'ROOMS_RETRIEVED',
-      'Rooms retrieved successfully',
-      200,
-    );
+    return rooms;
   }
 
   async getStatistics() {
@@ -76,17 +70,12 @@ export class AdminSchedulesService {
       },
     });
 
-    return ResponseHelper.success(
-      {
-        totalAppointments,
-        todaysSlots,
-        canceledToday: canceledBookings,
-        avgWaitTime: Math.round(queuedBookings._avg?.estimatedWaitMinutes ?? 0),
-      },
-      MessageCodes.SCHEDULE_STATISTICS_RETRIEVED,
-      'Schedule statistics retrieved successfully',
-      200,
-    );
+    return {
+      totalAppointments,
+      todaysSlots,
+      canceledToday: canceledBookings,
+      avgWaitTime: Math.round(queuedBookings._avg?.estimatedWaitMinutes ?? 0),
+    };
   }
 
   async findAll(filters: FilterScheduleDto) {
@@ -125,17 +114,12 @@ export class AdminSchedulesService {
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
     });
 
-    return ResponseHelper.success(
-      {
-        data: slots,
-        meta: {
-          total: slots.length,
-        },
+    return {
+      data: slots,
+      meta: {
+        total: slots.length,
       },
-      MessageCodes.SCHEDULE_LIST_RETRIEVED,
-      'Schedules retrieved successfully',
-      200,
-    );
+    };
   }
 
   private async findById(id: string) {
@@ -166,12 +150,7 @@ export class AdminSchedulesService {
   async findOne(id: string) {
     const slot = await this.findById(id);
 
-    return ResponseHelper.success(
-      slot,
-      MessageCodes.SCHEDULE_RETRIEVED,
-      'Schedule slot retrieved successfully',
-      200,
-    );
+    return slot;
   }
 
   async create(createDto: CreateScheduleDto) {
@@ -194,12 +173,7 @@ export class AdminSchedulesService {
       },
     });
 
-    return ResponseHelper.success(
-      newSlot,
-      MessageCodes.SCHEDULE_CREATED,
-      'Schedule slot created successfully',
-      201,
-    );
+    return newSlot;
   }
 
   async update(id: string, updateDto: UpdateScheduleDto) {
@@ -216,12 +190,7 @@ export class AdminSchedulesService {
       data: updateData,
     });
 
-    return ResponseHelper.success(
-      updatedSlot,
-      MessageCodes.SCHEDULE_UPDATED,
-      'Schedule slot updated successfully',
-      200,
-    );
+    return updatedSlot;
   }
 
   async remove(id: string) {
@@ -232,12 +201,7 @@ export class AdminSchedulesService {
       data: { isActive: false },
     });
 
-    return ResponseHelper.success(
-      deletedSlot,
-      MessageCodes.SCHEDULE_DELETED,
-      'Schedule slot deleted successfully',
-      200,
-    );
+    return deletedSlot;
   }
 
   async restore(id: string) {
@@ -247,11 +211,6 @@ export class AdminSchedulesService {
       data: { isActive: true },
     });
 
-    return ResponseHelper.success(
-      restoredSlot,
-      MessageCodes.SCHEDULE_RESTORED,
-      'Schedule slot restored successfully',
-      200,
-    );
+    return restoredSlot;
   }
 }

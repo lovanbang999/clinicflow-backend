@@ -28,6 +28,8 @@ import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
+import { ResponseMessage } from 'src/common/decorators/response-message.decorator';
+import { MessageCodes } from 'src/common/constants/message-codes.const';
 
 @ApiTags('admin - patients')
 @ApiBearerAuth('JWT-auth')
@@ -43,6 +45,7 @@ export class AdminPatientsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @ResponseMessage(MessageCodes.PATIENT_CREATED, 'Patient created successfully')
   @ApiOperation({
     summary: 'Create a new patient record (ADMIN only)',
     description:
@@ -69,6 +72,10 @@ export class AdminPatientsController {
    * Paginated, searchable, and filterable list of all patients.
    */
   @Get()
+  @ResponseMessage(
+    MessageCodes.PATIENT_LIST_RETRIEVED,
+    'Patients retrieved successfully',
+  )
   @ApiOperation({
     summary: 'List and filter patients (ADMIN only)',
     description:
@@ -140,6 +147,10 @@ export class AdminPatientsController {
    * KPI statistics for the Patient Management dashboard cards.
    */
   @Get('stats')
+  @ResponseMessage(
+    MessageCodes.PATIENT_STATS_RETRIEVED,
+    'Patient statistics retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get patient KPI statistics (ADMIN only)',
     description:
@@ -161,6 +172,10 @@ export class AdminPatientsController {
    * Full detail of a single patient including PatientProfile.
    */
   @Get(':id')
+  @ResponseMessage(
+    MessageCodes.PATIENT_RETRIEVED,
+    'Patient details retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get patient by ID (ADMIN only)',
     description:
@@ -179,6 +194,7 @@ export class AdminPatientsController {
    * Update patient user fields and PatientProfile in one request.
    */
   @Patch(':id')
+  @ResponseMessage(MessageCodes.PATIENT_UPDATED, 'Patient updated successfully')
   @ApiOperation({
     summary: 'Update patient profile (ADMIN only)',
     description:
@@ -203,6 +219,10 @@ export class AdminPatientsController {
    * Medical summary: allergies, chronic conditions, family history, vitals.
    */
   @Get(':id/health-profile')
+  @ResponseMessage(
+    MessageCodes.PATIENT_HEALTH_PROFILE_RETRIEVED,
+    'Patient health profile retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get patient health profile (ADMIN only)',
     description:

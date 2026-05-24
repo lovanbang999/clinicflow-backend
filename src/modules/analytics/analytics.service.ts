@@ -1,5 +1,4 @@
 import { Injectable, Inject, HttpStatus } from '@nestjs/common';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import {
@@ -75,11 +74,7 @@ export class AnalyticsService {
       count,
     }));
 
-    return ResponseHelper.success(
-      trend,
-      'ANALYTICS.PATIENT_VISIT_TREND',
-      'Visit trend retrieved',
-    );
+    return trend;
   }
 
   async getPatientTopDiseases(userId: string) {
@@ -117,11 +112,7 @@ export class AnalyticsService {
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
 
-    return ResponseHelper.success(
-      topDiseases,
-      'ANALYTICS.PATIENT_TOP_DISEASES',
-      'Top diseases retrieved',
-    );
+    return topDiseases;
   }
 
   async getPatientTotalSpending(userId: string) {
@@ -153,14 +144,10 @@ export class AnalyticsService {
       }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        total: Number(allTimeAgg._sum?.totalAmount ?? 0),
-        thisYear: Number(thisYearAgg._sum?.totalAmount ?? 0),
-      },
-      'ANALYTICS.PATIENT_SPENDING',
-      'Spending retrieved',
-    );
+    return {
+      total: Number(allTimeAgg._sum?.totalAmount ?? 0),
+      thisYear: Number(thisYearAgg._sum?.totalAmount ?? 0),
+    };
   }
 
   // DOCTOR ANALYTICS
@@ -191,11 +178,7 @@ export class AnalyticsService {
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
 
-    return ResponseHelper.success(
-      top,
-      'ANALYTICS.DOCTOR_TOP_DIAGNOSES',
-      'Top diagnoses retrieved',
-    );
+    return top;
   }
 
   async getDoctorBookingStatusBreakdown(userId: string) {
@@ -213,11 +196,7 @@ export class AnalyticsService {
       ),
     );
 
-    return ResponseHelper.success(
-      counts,
-      'ANALYTICS.DOCTOR_BOOKING_STATUS',
-      'Booking status breakdown retrieved',
-    );
+    return counts;
   }
 
   async getDoctorPatientsPerMonth(userId: string) {
@@ -251,11 +230,7 @@ export class AnalyticsService {
       month,
       count,
     }));
-    return ResponseHelper.success(
-      trend,
-      'ANALYTICS.DOCTOR_PATIENTS_PER_MONTH',
-      'Patients per month retrieved',
-    );
+    return trend;
   }
 
   /** Summary stats with optional period filter (7d | month | 6m | year) */
@@ -337,25 +312,21 @@ export class AnalyticsService {
           )
         : 0;
 
-    return ResponseHelper.success(
-      {
-        total,
-        prevTotal,
-        deltaTotal,
-        completed,
-        prevCompleted,
-        deltaCompleted,
-        absentCancel,
-        prevAbsentCancel,
-        deltaAbsentCancel,
-        sourceBreakdown: { online, walkIn, phone },
-        // Static KPI placeholders – would require more data in production
-        avgMinutes: 18,
-        rating: 4.8,
-      },
-      'ANALYTICS.DOCTOR_SUMMARY',
-      'Doctor summary retrieved',
-    );
+    return {
+      total,
+      prevTotal,
+      deltaTotal,
+      completed,
+      prevCompleted,
+      deltaCompleted,
+      absentCancel,
+      prevAbsentCancel,
+      deltaAbsentCancel,
+      sourceBreakdown: { online, walkIn, phone },
+      // Static KPI placeholders – would require more data in production
+      avgMinutes: 18,
+      rating: 4.8,
+    };
   }
 
   /** Ten most recent patients seen by this doctor */
@@ -380,11 +351,7 @@ export class AnalyticsService {
       take: 10,
     } as object);
 
-    return ResponseHelper.success(
-      bookings,
-      'ANALYTICS.DOCTOR_RECENT_PATIENTS',
-      'Recent patients retrieved',
-    );
+    return bookings;
   }
 
   /** Today's appointments as a timeline for this doctor */
@@ -410,11 +377,7 @@ export class AnalyticsService {
       orderBy: { startTime: 'asc' },
     } as object);
 
-    return ResponseHelper.success(
-      bookings,
-      'ANALYTICS.DOCTOR_TODAY_SCHEDULE',
-      'Today schedule retrieved',
-    );
+    return bookings;
   }
 
   /**
@@ -452,11 +415,7 @@ export class AnalyticsService {
       }
     }
 
-    return ResponseHelper.success(
-      matrix,
-      'ANALYTICS.DOCTOR_HEATMAP',
-      'Heatmap retrieved',
-    );
+    return matrix;
   }
 
   /**
@@ -561,22 +520,18 @@ export class AnalyticsService {
       ? Math.round((withFollowUp / totalRecords) * 100)
       : 0;
 
-    return ResponseHelper.success(
-      {
-        avgWaitMinutes,
-        returnRate,
-        labOrderRate,
-        icdUsageRate,
-        newPatientRate,
-        followUpRate,
-        meta: {
-          totalBookings,
-          totalRecords,
-          periodMonths: 6,
-        },
+    return {
+      avgWaitMinutes,
+      returnRate,
+      labOrderRate,
+      icdUsageRate,
+      newPatientRate,
+      followUpRate,
+      meta: {
+        totalBookings,
+        totalRecords,
+        periodMonths: 6,
       },
-      'ANALYTICS.DOCTOR_CLINICAL_KPIS',
-      'Clinical KPIs retrieved',
-    );
+    };
   }
 }
