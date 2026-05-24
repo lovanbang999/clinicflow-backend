@@ -18,5 +18,5 @@
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "prisma/**/*.ts", "prisma.config.ts"],
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "prisma/**/*.ts", "prisma.config.ts", "test/**/*.ts"],
 }
