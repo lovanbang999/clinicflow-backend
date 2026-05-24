@@ -19,9 +19,7 @@ export default tseslint.config(
       },
       sourceType: 'commonjs',
       parserOptions: {
-        projectService: {
-          allowDefaultProject: ['test/*.ts'],
-        },
+        project: true,
         tsconfigRootDir: import.meta.dirname,
       },
     },

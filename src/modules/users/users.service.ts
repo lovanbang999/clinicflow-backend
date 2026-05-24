@@ -1,6 +1,7 @@
 import {
   IUserRepository,
   I_USER_REPOSITORY,
+  PublicDoctorResult,
 } from '../database/interfaces/user.repository.interface';
 import {
   IProfileRepository,
@@ -27,6 +28,7 @@ import * as bcrypt from 'bcrypt';
 import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
+import { RedisService } from '../database/services/redis.service';
 
 @Injectable()
 export class UsersService {
@@ -37,7 +39,14 @@ export class UsersService {
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
     private readonly sequenceService: SequenceService,
+    private readonly redisService: RedisService,
   ) {}
+
+  private async clearPublicDoctorsCache() {
+    if (this.redisService.isReady()) {
+      await this.redisService.delPattern('cache:doctors:public:*');
+    }
+  }
 
   /**
    * Create a new user (ADMIN only)
@@ -616,6 +625,28 @@ export class UsersService {
     limit?: number;
   }) {
     const { serviceId, page = 1, limit = 100 } = filters;
+    const cacheKey = `cache:doctors:public:${serviceId || 'all'}:${page}:${limit}`;
+
+    // Try to get from Redis cache first
+    if (this.redisService.isReady()) {
+      const cached = await this.redisService.getJson<{
+        users: PublicDoctorResult[];
+        pagination: {
+          total: number;
+          page: number;
+          limit: number;
+          totalPages: number;
+        };
+      }>(cacheKey);
+      if (cached) {
+        return ResponseHelper.success(
+          cached,
+          MessageCodes.USER_LIST_RETRIEVED,
+          'Doctors retrieved successfully (cached)',
+          200,
+        );
+      }
+    }
 
     const skip = (page - 1) * limit;
 
@@ -641,16 +672,23 @@ export class UsersService {
       limit,
     );
 
-    return ResponseHelper.success(
-      {
-        users,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    const result = {
+      users,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
+    };
+
+    // Save to Redis cache (TTL: 2 hours = 7200 seconds)
+    if (this.redisService.isReady()) {
+      await this.redisService.setJson(cacheKey, result, 7200);
+    }
+
+    return ResponseHelper.success(
+      result,
       MessageCodes.USER_LIST_RETRIEVED,
       'Doctors retrieved successfully',
       200,
@@ -819,6 +857,14 @@ export class UsersService {
 
     const updatedUser = await this.userRepository.update(id, updateData);
 
+    // Evict public doctors cache if updated user is a doctor
+    if (
+      existingUser.role === UserRole.DOCTOR ||
+      updateUserDto.role === UserRole.DOCTOR
+    ) {
+      await this.clearPublicDoctorsCache();
+    }
+
     return ResponseHelper.success(
       updatedUser,
       MessageCodes.USER_UPDATED,
@@ -922,6 +968,11 @@ export class UsersService {
 
     // Soft delete: stamp deletedAt and deactivate
     const deletedUser = await this.userRepository.softDelete(id);
+
+    // Evict public doctors cache if deleted user is a doctor
+    if (user.role === UserRole.DOCTOR) {
+      await this.clearPublicDoctorsCache();
+    }
 
     return ResponseHelper.success(
       deletedUser,

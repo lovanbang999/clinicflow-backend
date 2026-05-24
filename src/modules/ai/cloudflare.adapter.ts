@@ -150,13 +150,17 @@ export class CloudflareAdapter {
 
       for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
         // On 400 (format error), gracefully retry without tools so user still gets a text reply
-        let data: { result?: { response?: string; tool_calls?: OpenAiToolCall[] } };
+        let data: {
+          result?: { response?: string; tool_calls?: OpenAiToolCall[] };
+        };
         try {
           data = await this.callCloudflare(messages, tools);
         } catch (err) {
           const msg = (err as Error).message ?? '';
           if (msg.includes('400') && tools && tools.length > 0) {
-            this.logger.warn('Cloudflare 400 with tools — retrying without tools');
+            this.logger.warn(
+              'Cloudflare 400 with tools — retrying without tools',
+            );
             data = await this.callCloudflare(messages, undefined);
           } else {
             throw err;

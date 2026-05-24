@@ -51,6 +51,7 @@ import {
   IClinicalRepository,
   I_CLINICAL_REPOSITORY,
 } from '../database/interfaces/clinical.repository.interface';
+import { RedisService } from '../database/services/redis.service';
 
 // Reusable select for patientProfile in booking includes
 const patientProfileSelect = {
@@ -84,6 +85,7 @@ export class BookingsService {
     private readonly clinicalRepository: IClinicalRepository,
     private readonly notificationsService: NotificationsService,
     private readonly sequenceService: SequenceService,
+    private readonly redisService: RedisService,
   ) {}
 
   /**
@@ -265,6 +267,9 @@ export class BookingsService {
       type: NotificationType.SYSTEM,
       metadata: { bookingId: booking.id, source: 'ONLINE' },
     });
+
+    // Invalidate slot cache for this doctor and date
+    await this.invalidateDoctorSlotsCache(doctorId, bookingDate);
 
     return ResponseHelper.success(
       booking,
@@ -453,6 +458,9 @@ export class BookingsService {
     }
 
     await this.bookingNotification.notifyAdminsOfBooking(booking, 'CREATED');
+
+    // Invalidate slot cache for this doctor and date
+    await this.invalidateDoctorSlotsCache(doctorId, bookingDate);
 
     return ResponseHelper.success(
       booking,
@@ -795,6 +803,9 @@ export class BookingsService {
       type: NotificationType.SYSTEM,
       metadata: { bookingId: result.id, source: 'DIRECT_SERVICE' },
     });
+
+    // Invalidate slot cache for this doctor and date
+    await this.invalidateDoctorSlotsCache(doctorId, bookingDate);
 
     return ResponseHelper.success(
       result,
@@ -1289,6 +1300,12 @@ export class BookingsService {
       );
     }
 
+    // Invalidate slot cache for this doctor and date
+    await this.invalidateDoctorSlotsCache(
+      updatedBooking.doctorId,
+      updatedBooking.bookingDate,
+    );
+
     return ResponseHelper.success(
       updatedBooking,
       MessageCodes.BOOKING_UPDATED,
@@ -1752,6 +1769,28 @@ export class BookingsService {
     const nextNumber = await this.sequenceService.generateNextSequence(prefix);
 
     return `${prefix}${String(nextNumber).padStart(4, '0')}`;
+  }
+
+  /**
+   * Safe pattern eviction for doctor available slots cache
+   */
+  private async invalidateDoctorSlotsCache(
+    doctorId: string,
+    date: Date | string,
+  ): Promise<void> {
+    if (this.redisService.isReady()) {
+      let dateStr: string;
+      if (date instanceof Date) {
+        // Safe conversion of local date to YYYY-MM-DD
+        const offset = date.getTimezoneOffset();
+        const localDate = new Date(date.getTime() - offset * 60 * 1000);
+        dateStr = localDate.toISOString().split('T')[0];
+      } else {
+        dateStr = date;
+      }
+      const pattern = `cache:slots:${doctorId}:${dateStr}:*`;
+      await this.redisService.delPattern(pattern);
+    }
   }
 
   /**

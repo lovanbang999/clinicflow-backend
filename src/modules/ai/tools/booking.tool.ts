@@ -31,7 +31,8 @@ export class BookingTool {
       return {
         status: 'error',
         error: true,
-        message: 'SYSTEM_INSTRUCTION: patientProfileId không hợp lệ hoặc bị thiếu. Hãy yêu cầu bệnh nhân đăng nhập hoặc cung cấp hồ sơ.',
+        message:
+          'SYSTEM_INSTRUCTION: patientProfileId không hợp lệ hoặc bị thiếu. Hãy yêu cầu bệnh nhân đăng nhập hoặc cung cấp hồ sơ.',
       };
     }
 

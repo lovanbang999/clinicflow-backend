@@ -29,6 +29,7 @@ import {
   IVerificationRepository,
   I_VERIFICATION_REPOSITORY,
 } from '../database/interfaces/verification.repository.interface';
+import { RedisService } from '../database/services/redis.service';
 
 export interface TokenPair {
   accessToken: string;
@@ -52,6 +53,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
     private readonly notificationsService: NotificationsService,
+    private readonly redisService: RedisService,
   ) {}
 
   /**
@@ -68,10 +70,15 @@ export class AuthService {
     userId: string,
     type: VerificationType,
   ): Promise<string> {
-    const latestCode = await this.verificationRepository.findLatestCode(userId, type);
-    if (latestCode) {
-      const timeSinceLastCode = Date.now() - latestCode.createdAt.getTime();
-      if (timeSinceLastCode < 60000) {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const cooldownKey = `auth:otp:cooldown:${userId}:${type}`;
+    const dailyKey = `auth:otp:daily:${userId}:${type}:${todayStr}`;
+    const otpKey = `auth:otp:${userId}:${type}`;
+
+    // 1. Check Cooldown & Daily Limit via Redis if ready
+    if (this.redisService.isReady()) {
+      const hasCooldown = await this.redisService.get(cooldownKey);
+      if (hasCooldown) {
         throw new ApiException(
           'AUTH.OTP.COOLDOWN',
           'Vui lòng đợi 60 giây trước khi yêu cầu mã OTP mới.',
@@ -79,36 +86,206 @@ export class AuthService {
           'Rate limit exceeded',
         );
       }
-    }
 
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const countToday = await this.verificationRepository.countCodesSince(
-      userId,
-      type,
-      startOfDay,
-    );
-    if (countToday >= 5) {
-      throw new ApiException(
-        'AUTH.OTP.DAILY_LIMIT',
-        'Bạn đã vượt quá số lần yêu cầu OTP trong ngày (tối đa 5 lần).',
-        429,
-        'Daily limit exceeded',
+      const dailyCountStr = await this.redisService.get(dailyKey);
+      const dailyCount = dailyCountStr ? parseInt(dailyCountStr, 10) : 0;
+      if (dailyCount >= 5) {
+        throw new ApiException(
+          'AUTH.OTP.DAILY_LIMIT',
+          'Bạn đã vượt quá số lần yêu cầu OTP trong ngày (tối đa 5 lần).',
+          429,
+          'Daily limit exceeded',
+        );
+      }
+    } else {
+      // Postgres Fallback if Redis is down
+      const latestCode = await this.verificationRepository.findLatestCode(
+        userId,
+        type,
       );
+      if (latestCode) {
+        const timeSinceLastCode = Date.now() - latestCode.createdAt.getTime();
+        if (timeSinceLastCode < 60000) {
+          throw new ApiException(
+            'AUTH.OTP.COOLDOWN',
+            'Vui lòng đợi 60 giây trước khi yêu cầu mã OTP mới.',
+            429,
+            'Rate limit exceeded',
+          );
+        }
+      }
+
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const countToday = await this.verificationRepository.countCodesSince(
+        userId,
+        type,
+        startOfDay,
+      );
+      if (countToday >= 5) {
+        throw new ApiException(
+          'AUTH.OTP.DAILY_LIMIT',
+          'Bạn đã vượt quá số lần yêu cầu OTP trong ngày (tối đa 5 lần).',
+          429,
+          'Daily limit exceeded',
+        );
+      }
     }
 
+    // 2. Generate and store OTP in DB
     const code = this.generateOtpCode();
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + 15); // Expires in 15 minutes
 
-    await this.verificationRepository.create({
+    const dbRecord = await this.verificationRepository.create({
       userId,
       code,
       type,
       expiresAt,
     });
 
+    // 3. Cache OTP and update rate limits in Redis if ready
+    if (this.redisService.isReady()) {
+      // Cache the OTP structure
+      await this.redisService.setJson(
+        otpKey,
+        {
+          id: dbRecord.id,
+          code,
+          attempts: 0,
+          expiresAt: expiresAt.getTime(),
+          isUsed: false,
+        },
+        900,
+      ); // 15 mins TTL
+
+      // Set cooldown (60s)
+      await this.redisService.set(cooldownKey, '1', 60);
+
+      // Increment daily counter (24h TTL)
+      const currentDaily = await this.redisService.incr(dailyKey);
+      if (currentDaily === 1) {
+        await this.redisService.expire(dailyKey, 86400); // Set 24h TTL on new counter
+      }
+    }
+
     return code;
+  }
+
+  /**
+   * Get or Fetch OTP Code from Redis or Postgres
+   */
+  private async getOrFetchOtpCode(
+    userId: string,
+    type: VerificationType,
+  ): Promise<{
+    id: string;
+    code: string;
+    attempts: number;
+    expiresAt: Date;
+    isUsed: boolean;
+    isFromCache: boolean;
+  } | null> {
+    const otpKey = `auth:otp:${userId}:${type}`;
+
+    if (this.redisService.isReady()) {
+      interface OtpCacheEntry {
+        id: string;
+        code: string;
+        attempts: number;
+        expiresAt: number;
+        isUsed: boolean;
+      }
+      const cached = await this.redisService.getJson<OtpCacheEntry>(otpKey);
+      if (cached) {
+        return {
+          id: cached.id,
+          code: cached.code,
+          attempts: cached.attempts,
+          expiresAt: new Date(cached.expiresAt),
+          isUsed: cached.isUsed,
+          isFromCache: true,
+        };
+      }
+    }
+
+    const latestCode = await this.verificationRepository.findLatestCode(
+      userId,
+      type,
+    );
+    if (!latestCode) {
+      return null;
+    }
+
+    return {
+      id: latestCode.id,
+      code: latestCode.code,
+      attempts: latestCode.attempts,
+      expiresAt: latestCode.expiresAt,
+      isUsed: latestCode.isUsed,
+      isFromCache: false,
+    };
+  }
+
+  /**
+   * Handle invalid OTP attempts with auto-blocking in both Redis and DB
+   */
+  private async handleInvalidAttempt(
+    userId: string,
+    type: VerificationType,
+    otp: { id: string; attempts: number; isFromCache: boolean },
+  ): Promise<number> {
+    const newAttempts = otp.attempts + 1;
+    const otpKey = `auth:otp:${userId}:${type}`;
+
+    // Always update attempts in DB first
+    await this.verificationRepository.updateAttempts(otp.id, newAttempts);
+
+    if (newAttempts >= 5) {
+      // Invalidate in DB
+      await this.verificationRepository.invalidateCode(otp.id);
+      // Invalidate in Redis
+      if (this.redisService.isReady()) {
+        await this.redisService.del(otpKey);
+      }
+      throw new ApiException(
+        'AUTH.OTP.BLOCKED',
+        'Mã OTP đã bị khóa do nhập sai quá 5 lần. Vui lòng yêu cầu gửi lại mã mới.',
+        400,
+        'Verification failed',
+      );
+    }
+
+    // Update attempts in Redis if it was from cache
+    if (otp.isFromCache && this.redisService.isReady()) {
+      interface OtpCacheEntry {
+        id: string;
+        code: string;
+        attempts: number;
+        expiresAt: number;
+        isUsed: boolean;
+      }
+      const cached = await this.redisService.getJson<OtpCacheEntry>(otpKey);
+      if (cached) {
+        const updated: OtpCacheEntry = { ...cached, attempts: newAttempts };
+        await this.redisService.setJson(otpKey, updated, 900);
+      }
+    }
+
+    return newAttempts;
+  }
+
+  /**
+   * Clean Redis cache when an OTP is consumed
+   */
+  private async markOtpAsUsed(
+    userId: string,
+    type: VerificationType,
+  ): Promise<void> {
+    const otpKey = `auth:otp:${userId}:${type}`;
+    if (this.redisService.isReady()) {
+      await this.redisService.del(otpKey);
+    }
   }
 
   /**
@@ -229,8 +406,8 @@ export class AuthService {
       );
     }
 
-    // Find latest verification code
-    const latestCode = await this.verificationRepository.findLatestCode(
+    // Find latest verification code from Redis or Postgres fallback
+    const latestCode = await this.getOrFetchOtpCode(
       user.id,
       VerificationType.EMAIL_VERIFICATION,
     );
@@ -264,18 +441,11 @@ export class AuthService {
     }
 
     if (latestCode.code !== code) {
-      const newAttempts = latestCode.attempts + 1;
-      await this.verificationRepository.updateAttempts(latestCode.id, newAttempts);
-
-      if (newAttempts >= 5) {
-        await this.verificationRepository.invalidateCode(latestCode.id);
-        throw new ApiException(
-          'AUTH.OTP.BLOCKED',
-          'Mã OTP đã bị khóa do nhập sai quá 5 lần. Vui lòng yêu cầu gửi lại mã mới.',
-          400,
-          'Verification failed',
-        );
-      }
+      const newAttempts = await this.handleInvalidAttempt(
+        user.id,
+        VerificationType.EMAIL_VERIFICATION,
+        latestCode,
+      );
 
       throw new ApiException(
         MessageCodes.INVALID_OTP,
@@ -285,11 +455,11 @@ export class AuthService {
       );
     }
 
+    // Clear from Redis Cache
+    await this.markOtpAsUsed(user.id, VerificationType.EMAIL_VERIFICATION);
+
     // Mark code as used and activate user inside a transaction hidden in the repository
-    await this.userRepository.verifyEmailTransaction(
-      user.id,
-      latestCode.id,
-    );
+    await this.userRepository.verifyEmailTransaction(user.id, latestCode.id);
 
     // Send welcome email
     await this.mailService.sendWelcomeEmail(email, user.fullName);
@@ -411,7 +581,7 @@ export class AuthService {
       );
     }
 
-    const latestCode = await this.verificationRepository.findLatestCode(
+    const latestCode = await this.getOrFetchOtpCode(
       user.id,
       VerificationType.PASSWORD_RESET,
     );
@@ -434,6 +604,7 @@ export class AuthService {
       );
     }
 
+    // Check if code is expired
     if (new Date() > latestCode.expiresAt) {
       throw new ApiException(
         MessageCodes.OTP_EXPIRED,
@@ -444,18 +615,11 @@ export class AuthService {
     }
 
     if (latestCode.code !== code) {
-      const newAttempts = latestCode.attempts + 1;
-      await this.verificationRepository.updateAttempts(latestCode.id, newAttempts);
-
-      if (newAttempts >= 5) {
-        await this.verificationRepository.invalidateCode(latestCode.id);
-        throw new ApiException(
-          'AUTH.OTP.BLOCKED',
-          'Mã OTP đã bị khóa do nhập sai quá 5 lần. Vui lòng yêu cầu gửi lại mã mới.',
-          400,
-          'OTP verification failed',
-        );
-      }
+      const newAttempts = await this.handleInvalidAttempt(
+        user.id,
+        VerificationType.PASSWORD_RESET,
+        latestCode,
+      );
 
       throw new ApiException(
         MessageCodes.INVALID_OTP,
@@ -491,7 +655,7 @@ export class AuthService {
       );
     }
 
-    const latestCode = await this.verificationRepository.findLatestCode(
+    const latestCode = await this.getOrFetchOtpCode(
       user.id,
       VerificationType.PASSWORD_RESET,
     );
@@ -524,18 +688,11 @@ export class AuthService {
     }
 
     if (latestCode.code !== code) {
-      const newAttempts = latestCode.attempts + 1;
-      await this.verificationRepository.updateAttempts(latestCode.id, newAttempts);
-
-      if (newAttempts >= 5) {
-        await this.verificationRepository.invalidateCode(latestCode.id);
-        throw new ApiException(
-          'AUTH.OTP.BLOCKED',
-          'Mã OTP đã bị khóa do nhập sai quá 5 lần. Vui lòng yêu cầu gửi lại mã mới.',
-          400,
-          'Password reset failed',
-        );
-      }
+      const newAttempts = await this.handleInvalidAttempt(
+        user.id,
+        VerificationType.PASSWORD_RESET,
+        latestCode,
+      );
 
       throw new ApiException(
         MessageCodes.INVALID_OTP,
@@ -546,6 +703,9 @@ export class AuthService {
     }
 
     const hashedPassword = await this.hashPassword(newPassword);
+
+    // Clear from Redis Cache
+    await this.markOtpAsUsed(user.id, VerificationType.PASSWORD_RESET);
 
     // Mark code as used and update the password in one atomic transaction
     await this.userRepository.resetPasswordTransaction(

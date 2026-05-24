@@ -82,7 +82,9 @@ export class UploadService {
     return this.uploadBufferToCloudinary(
       file,
       'smart-clinic/lab-results',
-      file.mimetype.includes('pdf') || file.mimetype.includes('word') ? 'auto' : 'image',
+      file.mimetype.includes('pdf') || file.mimetype.includes('word')
+        ? 'auto'
+        : 'image',
     );
   }
 
