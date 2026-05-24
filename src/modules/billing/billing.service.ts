@@ -23,7 +23,7 @@ import {
   I_CLINICAL_REPOSITORY,
 } from '../database/interfaces/clinical.repository.interface';
 import { Inject } from '@nestjs/common';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
+
 import {
   InvoiceStatus,
   InvoiceType,
@@ -440,12 +440,7 @@ export class BillingService {
       return updatedInv;
     });
 
-    return ResponseHelper.success(
-      result,
-      'BILLING.INVOICE_CREATED',
-      'Invoice created successfully',
-      201,
-    );
+    return result;
   }
 
   async deleteInvoice(id: string, currentUser?: Express.User) {
@@ -479,12 +474,7 @@ export class BillingService {
     }
 
     await this.financeRepository.deleteInvoice({ where: { id } });
-    return ResponseHelper.success(
-      null,
-      'BILLING.INVOICE_DELETED',
-      'Invoice deleted',
-      200,
-    );
+    return null;
   }
 
   async syncLabInvoice(bookingId: string) {
@@ -524,7 +514,7 @@ export class BillingService {
         invoiceType: InvoiceType.SERVICE,
       });
       this.labOrdersGateway.server.emit('billing_list_refresh', { bookingId });
-      return result.data;
+      return result;
     }
 
     await this.financeRepository.transaction(async (tx) => {
@@ -712,12 +702,7 @@ export class BillingService {
       orderBy: { createdAt: 'asc' },
     });
 
-    return ResponseHelper.success(
-      invoices,
-      'BILLING.INVOICES_FETCHED',
-      'Invoices retrieved for booking',
-      200,
-    );
+    return invoices;
   }
 
   // Get invoice by invoice ID.
@@ -774,12 +759,7 @@ export class BillingService {
 
     await this.validateInvoiceAccess(invoice.patientProfileId, currentUser);
 
-    return ResponseHelper.success(
-      invoice,
-      'BILLING.INVOICE_FETCHED',
-      'Invoice retrieved',
-      200,
-    );
+    return invoice;
   }
 
   /**
@@ -889,20 +869,15 @@ export class BillingService {
       this.financeRepository.countInvoice({ where }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        invoices,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    return {
+      invoices,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      'BILLING.INVOICES_LISTED',
-      'Invoices retrieved',
-      200,
-    );
+    };
   }
 
   /**
@@ -919,12 +894,7 @@ export class BillingService {
       orderBy: { createdAt: 'asc' },
     });
 
-    return ResponseHelper.success(
-      orders,
-      'BILLING.PENDING_LABS_FETCHED',
-      'Pending unbilled lab orders',
-      200,
-    );
+    return orders;
   }
 
   // Invoice Items
@@ -995,12 +965,7 @@ export class BillingService {
       return newItem;
     });
 
-    return ResponseHelper.success(
-      item,
-      'BILLING.ITEM_ADDED',
-      'Item added to invoice',
-      201,
-    );
+    return item;
   }
 
   /**
@@ -1048,12 +1013,7 @@ export class BillingService {
       await this.recalculateTotals(tx, invoiceId);
     });
 
-    return ResponseHelper.success(
-      null,
-      'BILLING.ITEM_REMOVED',
-      'Item removed',
-      200,
-    );
+    return null;
   }
 
   // Payment Confirmation
@@ -1545,14 +1505,7 @@ export class BillingService {
         .catch((err) => console.error('Failed to send invoice email', err));
     }
 
-    return ResponseHelper.success(
-      updated,
-      'BILLING.PAYMENT_ADDED',
-      shouldAutoFinalize
-        ? 'Payment added and invoice finalized'
-        : 'Payment added',
-      200,
-    );
+    return updated;
   }
 
   /**
@@ -1664,12 +1617,7 @@ export class BillingService {
       } as Prisma.InputJsonValue,
     });
 
-    return ResponseHelper.success(
-      updatedInvoice,
-      'BILLING.INVOICE_FINALIZED',
-      'Invoice finalized and PAID',
-      200,
-    );
+    return updatedInvoice;
   }
 
   /**
@@ -1691,18 +1639,15 @@ export class BillingService {
 
     if (!patientProfile) {
       // If user has no patient profile, return empty list
-      return ResponseHelper.success(
-        {
-          invoices: [],
+      return {
+        invoices: [],
+        pagination: {
           total: 0,
-          page: params.page,
-          limit: params.limit,
+          page: params.page ?? 1,
+          limit: params.limit ?? 10,
           totalPages: 0,
         },
-        'BILLING.INVOICES_LISTED',
-        'No patient profile found',
-        200,
-      );
+      };
     }
 
     return this.listInvoices({
@@ -1882,12 +1827,7 @@ export class BillingService {
       };
     });
 
-    return ResponseHelper.success(
-      queueItems,
-      'BILLING.WORKSPACE_QUEUE_FETCHED',
-      'Workspace queue retrieved',
-      200,
-    );
+    return queueItems;
   }
 
   async getWorkspaceKpis() {
@@ -1942,16 +1882,11 @@ export class BillingService {
       0,
     );
 
-    return ResponseHelper.success(
-      {
-        awaitingPaymentCount,
-        completedPaymentCount,
-        totalRevenue,
-        totalInvoicesValue,
-      },
-      'BILLING.WORKSPACE_KPIS_FETCHED',
-      'Workspace KPIs retrieved',
-      200,
-    );
+    return {
+      awaitingPaymentCount,
+      completedPaymentCount,
+      totalRevenue,
+      totalInvoicesValue,
+    };
   }
 }

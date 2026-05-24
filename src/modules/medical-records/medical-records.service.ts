@@ -38,7 +38,7 @@ import { format } from 'date-fns';
 import { vi } from 'date-fns/locale';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
+
 import { NotificationsService } from '../notifications/notifications.service';
 import { BillingService } from '../billing/billing.service';
 import { SaveSymptomsDto } from './dto/save-symptoms.dto';
@@ -342,12 +342,7 @@ export class MedicalRecordsService {
       });
     });
 
-    return ResponseHelper.success(
-      record,
-      'EMR.SYMPTOMS_SAVED',
-      'Symptoms saved',
-      200,
-    );
+    return record;
   }
 
   // Order Services
@@ -519,12 +514,7 @@ export class MedicalRecordsService {
       });
     }
 
-    return ResponseHelper.success(
-      result,
-      'EMR.SERVICES_ORDERED',
-      'Services ordered',
-      200,
-    );
+    return result;
   }
 
   // Remove a Service Order (only if PENDING)
@@ -553,12 +543,7 @@ export class MedicalRecordsService {
     // Auto-sync after removal
     await this.billingService.syncLabInvoice(bookingId);
 
-    return ResponseHelper.success(
-      null,
-      'EMR.ORDER_REMOVED',
-      'Service order removed',
-      200,
-    );
+    return null;
   }
 
   // GET Results — composite response for B4
@@ -576,11 +561,11 @@ export class MedicalRecordsService {
     });
 
     if (!record) {
-      // In early stages of an exam, the record might not exist yet. Return 200 with null.
-      return ResponseHelper.success(null, 'EMR.NO_RECORD_YET', '', 200);
+      // In early stages of an exam, the record might not exist yet. Return null.
+      return null;
     }
 
-    return ResponseHelper.success(record, 'EMR.RESULTS_FETCHED', '', 200);
+    return record;
   }
 
   // Save Diagnosis
@@ -630,12 +615,7 @@ export class MedicalRecordsService {
       include: this.visitIncludes,
     });
 
-    return ResponseHelper.success(
-      updated,
-      'EMR.DIAGNOSIS_SAVED',
-      'Diagnosis saved',
-      200,
-    );
+    return updated;
   }
 
   // Save Prescription
@@ -759,12 +739,7 @@ export class MedicalRecordsService {
       });
     }
 
-    return ResponseHelper.success(
-      updatedRecord,
-      'EMR.PRESCRIPTION_SAVED',
-      'Prescription saved',
-      200,
-    );
+    return updatedRecord;
   }
 
   private async sendPostVisitEmailSafe(
@@ -867,20 +842,18 @@ export class MedicalRecordsService {
   // ICD-10 Search
   async searchICD10(query: string) {
     if (!query) {
-      const results = await this.clinicalRepository.findManyIcd10Code({
+      return this.clinicalRepository.findManyIcd10Code({
         take: 10,
         orderBy: { code: 'asc' },
       });
-      return ResponseHelper.success(results, 'ICD.SEARCH_SUCCESS', '', 200);
     }
-    const results = await this.clinicalRepository.findManyIcd10Code({
+    return this.clinicalRepository.findManyIcd10Code({
       where: {
         OR: [{ code: { contains: query } }, { name: { contains: query } }],
       },
       take: 20,
       orderBy: { code: 'asc' },
     });
-    return ResponseHelper.success(results, 'ICD.SEARCH_SUCCESS', '', 200);
   }
 
   // Patient History
@@ -928,31 +901,26 @@ export class MedicalRecordsService {
       }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        patientProfile: {
-          id: patientProfile.id,
-          patientCode: patientProfile.patientCode,
-          fullName: patientProfile.fullName,
-          dateOfBirth: patientProfile.dateOfBirth,
-          gender: patientProfile.gender,
-          phone: patientProfile.phone,
-          bloodType: patientProfile.bloodType,
-          allergies: patientProfile.allergies,
-          chronicConditions: patientProfile.chronicConditions,
-        },
-        visits,
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit),
-        },
+    return {
+      patientProfile: {
+        id: patientProfile.id,
+        patientCode: patientProfile.patientCode,
+        fullName: patientProfile.fullName,
+        dateOfBirth: patientProfile.dateOfBirth,
+        gender: patientProfile.gender,
+        phone: patientProfile.phone,
+        bloodType: patientProfile.bloodType,
+        allergies: patientProfile.allergies,
+        chronicConditions: patientProfile.chronicConditions,
       },
-      MessageCodes.PATIENT_HEALTH_PROFILE_RETRIEVED,
-      'Patient history retrieved',
-      200,
-    );
+      visits,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 
   // Auto-advance MedicalRecord step (called by VisitServiceOrdersService)
@@ -1023,17 +991,12 @@ export class MedicalRecordsService {
         }),
       ]);
 
-    return ResponseHelper.success(
-      {
-        totalVisits,
-        visitsThisYear,
-        activeBookings,
-        abnormalResults,
-      },
-      'PATIENT.STATS_RETRIEVED',
-      'Patient stats retrieved',
-      200,
-    );
+    return {
+      totalVisits,
+      visitsThisYear,
+      activeBookings,
+      abnormalResults,
+    };
   }
 
   // Doctor stats
@@ -1094,17 +1057,12 @@ export class MedicalRecordsService {
       }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        patientsSeenToday,
-        totalPatientsSeen,
-        pendingActive,
-        abnormalResultsToday: abnormalLabs + abnormalVso,
-      },
-      'DOCTOR.STATS_RETRIEVED',
-      'Doctor stats retrieved',
-      200,
-    );
+    return {
+      patientsSeenToday,
+      totalPatientsSeen,
+      pendingActive,
+      abnormalResultsToday: abnormalLabs + abnormalVso,
+    };
   }
 
   // B8 — Fulfill Prescription (BN mua thuốc tại phòng khám)
@@ -1139,12 +1097,7 @@ export class MedicalRecordsService {
       });
     });
 
-    return ResponseHelper.success(
-      updated,
-      'PRESCRIPTION.FULFILLED',
-      'Prescription marked as fulfilled internally',
-      200,
-    );
+    return updated;
   }
 
   // Specialist Examination Actions
@@ -1202,12 +1155,7 @@ export class MedicalRecordsService {
       return updatedVso;
     });
 
-    return ResponseHelper.success(
-      updated,
-      'VSO.STARTED',
-      'Specialist examination started',
-      200,
-    );
+    return updated;
   }
 
   async completeSpecialistExamination(
@@ -1255,11 +1203,6 @@ export class MedicalRecordsService {
       return updatedVso;
     });
 
-    return ResponseHelper.success(
-      updated,
-      'VSO.COMPLETED',
-      'Specialist examination result recorded successfully',
-      200,
-    );
+    return updated;
   }
 }

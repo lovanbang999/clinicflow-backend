@@ -22,7 +22,7 @@ import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
-import { ResponseHelper } from 'src/common/interfaces/api-response.interface';
+import { ResponseMessage } from 'src/common/decorators/response-message.decorator';
 
 @ApiTags('upload')
 @Controller('upload')
@@ -37,6 +37,7 @@ export class UploadController {
   @Post('icon')
   @Roles(UserRole.ADMIN)
   @UseInterceptors(FileInterceptor('file'))
+  @ResponseMessage(MessageCodes.SERVICE_CREATED, 'Icon uploaded successfully')
   @ApiOperation({
     summary: 'Upload service icon (ADMIN only)',
     description: 'Upload an icon for a service. Max size: 5MB',
@@ -78,16 +79,12 @@ export class UploadController {
   async uploadIcon(@UploadedFile() file: Express.Multer.File) {
     const { url, publicId } = await this.uploadService.uploadIcon(file);
 
-    return ResponseHelper.success(
-      { iconUrl: url, publicId },
-      MessageCodes.SERVICE_CREATED,
-      'Icon uploaded successfully',
-      201,
-    );
+    return { iconUrl: url, publicId };
   }
 
   @Post('avatar')
   @UseInterceptors(FileInterceptor('file'))
+  @ResponseMessage(MessageCodes.USER_UPDATED, 'Avatar uploaded successfully')
   @ApiOperation({
     summary: 'Upload user avatar',
     description:
@@ -138,12 +135,7 @@ export class UploadController {
 
     await this.usersService.updateAvatar(userId, url);
 
-    return ResponseHelper.success(
-      { url, publicId },
-      MessageCodes.USER_UPDATED,
-      'Avatar uploaded successfully',
-      201,
-    );
+    return { url, publicId };
   }
 
   @Post('lab-result')
@@ -153,6 +145,10 @@ export class UploadController {
     UserRole.RECEPTIONIST,
     UserRole.TECHNICIAN,
     UserRole.DOCTOR,
+  )
+  @ResponseMessage(
+    MessageCodes.LAB_RESULT_UPLOADED,
+    'Lab result file uploaded successfully',
   )
   @ApiOperation({
     summary: 'Upload a lab result file (PDF, Image)',
@@ -179,11 +175,6 @@ export class UploadController {
   async uploadLabResult(@UploadedFile() file: Express.Multer.File) {
     const { url, publicId } = await this.uploadService.uploadLabResult(file);
 
-    return ResponseHelper.success(
-      { url, publicId },
-      'LAB.UPLOAD_SUCCESS',
-      'Lab result file uploaded successfully',
-      201,
-    );
+    return { url, publicId };
   }
 }

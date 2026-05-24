@@ -23,6 +23,8 @@ import {
   IProfileRepository,
 } from '../database/interfaces/profile.repository.interface';
 import { Inject } from '@nestjs/common';
+import { ResponseMessage } from 'src/common/decorators/response-message.decorator';
+import { MessageCodes } from 'src/common/constants/message-codes.const';
 
 @Controller('ai')
 @UseGuards(JwtAuthGuard)
@@ -126,6 +128,7 @@ export class AiController {
    */
   @Patch('session/:id/end')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ResponseMessage(MessageCodes.AI_SESSION_ENDED, 'Session ended successfully')
   async endSession(
     @Param('id') sessionId: string,
     @CurrentUser() user: { id: string },
@@ -146,6 +149,10 @@ export class AiController {
    */
   @Post('session/:id/report')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ResponseMessage(
+    MessageCodes.AI_REPORT_CREATED,
+    'Issue reported successfully',
+  )
   async reportSession(
     @Param('id') sessionId: string,
     @Body('note') note: string | undefined,

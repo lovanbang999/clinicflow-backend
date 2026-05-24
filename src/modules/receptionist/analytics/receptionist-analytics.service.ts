@@ -12,7 +12,7 @@ import {
   IProfileRepository,
 } from '../../database/interfaces/profile.repository.interface';
 import { BookingStatus, InvoiceStatus } from '@prisma/client';
-import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
+
 import { DateRangeQueryDto } from '../../admin/analytics/dto/date-range.query.dto';
 
 @Injectable()
@@ -82,17 +82,12 @@ export class ReceptionistAnalyticsService {
         }),
       ]);
 
-    return ResponseHelper.success(
-      {
-        totalRevenue: Number(totalRevenueRaw._sum?.totalAmount ?? 0),
-        checkIns,
-        newPatients,
-        pendingInvoices,
-      },
-      'RECEPTIONIST.ANALYTICS.OVERVIEW',
-      'Receptionist overview stats retrieved successfully',
-      200,
-    );
+    return {
+      totalRevenue: Number(totalRevenueRaw._sum?.totalAmount ?? 0),
+      checkIns,
+      newPatients,
+      pendingInvoices,
+    };
   }
 
   async getRevenueTrend(query: DateRangeQueryDto) {
@@ -151,12 +146,7 @@ export class ReceptionistAnalyticsService {
       }),
     );
 
-    return ResponseHelper.success(
-      { chart },
-      'RECEPTIONIST.ANALYTICS.REVENUE_TREND',
-      'Revenue trend retrieved successfully',
-      200,
-    );
+    return { chart };
   }
 
   async getOperationalStats(query: DateRangeQueryDto) {
@@ -262,26 +252,21 @@ export class ReceptionistAnalyticsService {
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5);
 
-    return ResponseHelper.success(
-      {
-        bookingSources: bookingSourcesTyped.map((s) => ({
-          label: s.source,
-          value: s._count?._all ?? 0,
-        })),
-        appointmentStatuses: appointmentStatusesTyped.map((s) => ({
-          label: s.status,
-          value: s._count?._all ?? 0,
-        })),
-        paymentMethods: paymentMethodsTyped.map((p) => ({
-          label: p.paymentMethod,
-          value: Number(p._sum?.amountPaid ?? 0),
-          count: p._count?._all ?? 0,
-        })),
-        topServices,
-      },
-      'RECEPTIONIST.ANALYTICS.OPERATIONAL',
-      'Operational stats retrieved successfully',
-      200,
-    );
+    return {
+      bookingSources: bookingSourcesTyped.map((s) => ({
+        label: s.source,
+        value: s._count?._all ?? 0,
+      })),
+      appointmentStatuses: appointmentStatusesTyped.map((s) => ({
+        label: s.status,
+        value: s._count?._all ?? 0,
+      })),
+      paymentMethods: paymentMethodsTyped.map((p) => ({
+        label: p.paymentMethod,
+        value: Number(p._sum?.amountPaid ?? 0),
+        count: p._count?._all ?? 0,
+      })),
+      topServices,
+    };
   }
 }

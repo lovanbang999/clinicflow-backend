@@ -1,7 +1,3 @@
-import {
-  ApiResponse,
-  ResponseHelper,
-} from '../../common/interfaces/api-response.interface';
 import { Injectable, Inject, BadRequestException } from '@nestjs/common';
 import {
   IBookingRepository,
@@ -174,12 +170,7 @@ export class QueueService {
       });
     }
 
-    return ResponseHelper.success(
-      result,
-      MessageCodes.BOOKING_CHECKED_IN,
-      'Patient added to queue successfully',
-      200,
-    );
+    return result;
   }
 
   /**
@@ -375,28 +366,21 @@ export class QueueService {
       return a.queuePosition - b.queuePosition;
     });
 
-    return ResponseHelper.success(
-      {
-        queueRecords: sortedRecords,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    return {
+      queueRecords: sortedRecords,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      MessageCodes.QUEUE_LIST_RETRIEVED,
-      'Queue records retrieved successfully',
-      200,
-    );
+    };
   }
 
   /**
    * Get queue by booking ID
    */
-  async findByBookingId(
-    bookingId: string,
-  ): Promise<ApiResponse<QueueRecordWithRelations>> {
+  async findByBookingId(bookingId: string): Promise<QueueRecordWithRelations> {
     const queueRecord = await this.bookingRepository.findQueueUnique({
       where: { bookingId },
       include: {
@@ -424,34 +408,24 @@ export class QueueService {
       }
 
       // Return synthetic queue record
-      return ResponseHelper.success(
-        {
-          id: `synth-${booking.id}`,
-          bookingId: booking.id,
-          doctorId: booking.doctorId,
-          queueDate: booking.bookingDate,
-          queuePosition: 0,
-          estimatedWaitMinutes: 0,
-          isPreBooked: booking.isPreBooked,
-          scheduledTime: booking.startTime,
-          createdAt: booking.createdAt,
-          updatedAt: booking.updatedAt,
-          calledAt: null,
-          completedAt: null,
-          booking,
-        } as unknown as QueueRecordWithRelations,
-        MessageCodes.QUEUE_RETRIEVED,
-        'Queue record retrieved successfully (Synthetic)',
-        200,
-      );
+      return {
+        id: `synth-${booking.id}`,
+        bookingId: booking.id,
+        doctorId: booking.doctorId,
+        queueDate: booking.bookingDate,
+        queuePosition: 0,
+        estimatedWaitMinutes: 0,
+        isPreBooked: booking.isPreBooked,
+        scheduledTime: booking.startTime,
+        createdAt: booking.createdAt,
+        updatedAt: booking.updatedAt,
+        calledAt: null,
+        completedAt: null,
+        booking,
+      } as unknown as QueueRecordWithRelations;
     }
 
-    return ResponseHelper.success(
-      queueRecord,
-      MessageCodes.QUEUE_RETRIEVED,
-      'Queue record retrieved successfully',
-      200,
-    );
+    return queueRecord;
   }
 
   /**
@@ -494,18 +468,13 @@ export class QueueService {
       }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        totalQueued,
-        averageWaitTimeMinutes: Math.round(
-          avgWaitTime._avg?.estimatedWaitMinutes ?? 0,
-        ),
-        longestQueuePosition: longestQueue?.queuePosition || 0,
-      },
-      MessageCodes.QUEUE_STATISTICS_RETRIEVED,
-      'Queue statistics retrieved successfully',
-      200,
-    );
+    return {
+      totalQueued,
+      averageWaitTimeMinutes: Math.round(
+        avgWaitTime._avg?.estimatedWaitMinutes ?? 0,
+      ),
+      longestQueuePosition: longestQueue?.queuePosition || 0,
+    };
   }
 
   /**
@@ -515,8 +484,7 @@ export class QueueService {
     const { bookingId, reason } = promoteDto;
 
     // Get queue record (will throw if not found)
-    const queueResponse = await this.findByBookingId(bookingId);
-    const queueRecord = queueResponse.data as QueueRecordWithRelations;
+    const queueRecord = await this.findByBookingId(bookingId);
 
     if (!queueRecord) {
       throw new ApiException(
@@ -563,12 +531,7 @@ export class QueueService {
       result.booking,
     );
 
-    return ResponseHelper.success(
-      result.booking,
-      MessageCodes.QUEUE_PROMOTED,
-      'Booking promoted from queue successfully',
-      200,
-    );
+    return result.booking;
   }
 
   /**

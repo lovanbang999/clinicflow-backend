@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -74,6 +75,11 @@ import { AppService } from './app.service';
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    // Global interceptor for standard API responses mapping
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: TransformInterceptor,
     },
   ],
 })

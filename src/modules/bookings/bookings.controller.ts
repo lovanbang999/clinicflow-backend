@@ -31,6 +31,8 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole, User } from '@prisma/client';
+import { ResponseMessage } from '../../common/decorators/response-message.decorator';
+import { MessageCodes } from '../../common/constants/message-codes.const';
 
 @ApiTags('bookings')
 @Controller('bookings')
@@ -41,6 +43,7 @@ export class BookingsController {
 
   @Post()
   @Roles(UserRole.PATIENT)
+  @ResponseMessage(MessageCodes.BOOKING_CREATED, 'Booking created successfully')
   @ApiOperation({
     summary: 'Create a new online booking',
     description:
@@ -90,6 +93,7 @@ export class BookingsController {
 
   @Post('receptionist')
   @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ResponseMessage(MessageCodes.BOOKING_CREATED, 'Booking created successfully')
   @ApiOperation({
     summary: 'Create a booking as receptionist (pre-booking or walk-in)',
     description:
@@ -126,6 +130,10 @@ export class BookingsController {
 
   @Post('receptionist/direct-service')
   @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.BOOKING_DIRECT_SERVICE_CREATED,
+    'Direct service booking created successfully',
+  )
   @ApiOperation({
     summary: 'Mode B — Đặt thẳng dịch vụ (không qua tư vấn)',
     description:
@@ -146,6 +154,10 @@ export class BookingsController {
   @Patch(':id/service')
   @Roles(UserRole.DOCTOR, UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.BOOKING_SERVICE_UPDATED,
+    'Booking service and specialist updated successfully',
+  )
   @ApiOperation({
     summary: 'B2 — Bác sĩ tư vấn xác định dịch vụ chuyên khoa',
     description:
@@ -172,6 +184,10 @@ export class BookingsController {
 
   @Get('doctor/my-patients')
   @Roles(UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.BOOKING_LIST_RETRIEVED,
+    'Patients retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get unique patients of this doctor',
     description:
@@ -197,9 +213,12 @@ export class BookingsController {
 
   @Get()
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.BOOKING_LIST_RETRIEVED,
+    'List of bookings retrieved successfully',
+  )
   @ApiOperation({
     summary: 'List all bookings',
-
     description:
       'Retrieve a paginated list of all bookings with advanced filtering options for admin/receptionist.',
   })
@@ -235,6 +254,10 @@ export class BookingsController {
 
   @Get('my-bookings')
   @Roles(UserRole.PATIENT)
+  @ResponseMessage(
+    MessageCodes.BOOKING_LIST_RETRIEVED,
+    'My bookings retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get current user bookings',
     description:
@@ -297,6 +320,10 @@ export class BookingsController {
     UserRole.DOCTOR,
     UserRole.PATIENT,
   )
+  @ResponseMessage(
+    MessageCodes.BOOKING_RETRIEVED,
+    'Booking details retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get booking details by ID',
     description:
@@ -335,6 +362,10 @@ export class BookingsController {
   @Post(':id/check-in')
   @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.QUEUE_PROMOTED,
+    'Patient checked in and added to queue successfully',
+  )
   @ApiOperation({
     summary: 'Check-in patient to consultation queue',
     description:
@@ -372,6 +403,10 @@ export class BookingsController {
 
   @Patch(':id/status')
   @Roles(UserRole.DOCTOR, UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.BOOKING_UPDATED,
+    'Booking status updated successfully',
+  )
   @ApiOperation({
     summary: 'Update appointment status',
     description:
@@ -407,6 +442,10 @@ export class BookingsController {
 
   @Patch(':id/start')
   @Roles(UserRole.DOCTOR, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.BOOKING_UPDATED,
+    'Examination started successfully',
+  )
   @ApiOperation({ summary: 'Start examination' })
   startExamination(@Param('id') id: string, @CurrentUser() user: User) {
     return this.bookingsService.startExamination(id, user.id, user);
@@ -414,6 +453,7 @@ export class BookingsController {
 
   @Patch(':id/complete')
   @Roles(UserRole.DOCTOR, UserRole.ADMIN)
+  @ResponseMessage(MessageCodes.BOOKING_UPDATED, 'Visit completed successfully')
   @ApiOperation({ summary: 'Complete visit' })
   completeVisit(
     @Param('id') id: string,
@@ -425,6 +465,10 @@ export class BookingsController {
 
   @Patch(':id/no-show')
   @Roles(UserRole.RECEPTIONIST, UserRole.DOCTOR, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.BOOKING_UPDATED,
+    'Booking marked as no-show successfully',
+  )
   @ApiOperation({ summary: 'Mark as no-show' })
   markNoShow(@Param('id') id: string, @CurrentUser() user: User) {
     return this.bookingsService.markNoShow(id, user.id, user);
@@ -437,6 +481,10 @@ export class BookingsController {
     UserRole.RECEPTIONIST,
     UserRole.DOCTOR,
     UserRole.PATIENT,
+  )
+  @ResponseMessage(
+    MessageCodes.BOOKING_CANCELLED,
+    'Booking cancelled successfully',
   )
   @ApiOperation({
     summary: 'Cancel an appointment',
@@ -468,6 +516,7 @@ export class BookingsController {
 
   @Delete(':id')
   @Roles(UserRole.ADMIN)
+  @ResponseMessage(MessageCodes.BOOKING_DELETED, 'Booking deleted successfully')
   @ApiOperation({
     summary: 'Soft-delete a booking',
     description:
@@ -483,6 +532,10 @@ export class BookingsController {
 
   @Get('dashboard/stats')
   @Roles(UserRole.PATIENT)
+  @ResponseMessage(
+    MessageCodes.BOOKING_LIST_RETRIEVED,
+    'Patient dashboard statistics retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get patient dashboard stats',
     description:
@@ -520,6 +573,10 @@ export class BookingsController {
 
   @Get('dashboard/receptionist-stats')
   @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.BOOKING_LIST_RETRIEVED,
+    'Receptionist dashboard stats retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get receptionist dashboard stats',
     description:

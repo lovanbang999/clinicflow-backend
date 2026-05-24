@@ -5,6 +5,8 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { AnalyticsService } from './analytics.service';
+import { ResponseMessage } from 'src/common/decorators/response-message.decorator';
+import { MessageCodes } from 'src/common/constants/message-codes.const';
 
 @ApiTags('Analytics')
 @ApiBearerAuth()
@@ -17,6 +19,10 @@ export class AnalyticsController {
 
   @Get('patient/me/visit-trend')
   @Roles(UserRole.PATIENT)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_VISIT_TREND_RETRIEVED,
+    'Patient visit trend retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Monthly visit trend for the last 12 months (patient)',
   })
@@ -26,6 +32,10 @@ export class AnalyticsController {
 
   @Get('patient/me/top-diseases')
   @Roles(UserRole.PATIENT)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_TOP_DISEASES_RETRIEVED,
+    'Patient top diseases retrieved successfully',
+  )
   @ApiOperation({ summary: 'Top 5 most frequent diagnoses for this patient' })
   getPatientTopDiseases(@Req() req: { user: { id: string } }) {
     return this.analyticsService.getPatientTopDiseases(req.user.id);
@@ -33,6 +43,10 @@ export class AnalyticsController {
 
   @Get('patient/me/total-spending')
   @Roles(UserRole.PATIENT)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_SPENDING_RETRIEVED,
+    'Patient spending retrieved successfully',
+  )
   @ApiOperation({ summary: 'Total medical spending (all time + this year)' })
   getPatientTotalSpending(@Req() req: { user: { id: string } }) {
     return this.analyticsService.getPatientTotalSpending(req.user.id);
@@ -42,6 +56,10 @@ export class AnalyticsController {
 
   @Get('doctor/me/top-diagnoses')
   @Roles(UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_DOCTOR_TOP_DIAGNOSES_RETRIEVED,
+    'Doctor top diagnoses retrieved successfully',
+  )
   @ApiOperation({ summary: 'Top 5 diagnoses made by this doctor' })
   getDoctorTopDiagnoses(@Req() req: { user: { id: string } }) {
     return this.analyticsService.getDoctorTopDiagnoses(req.user.id);
@@ -49,6 +67,10 @@ export class AnalyticsController {
 
   @Get('doctor/me/booking-status')
   @Roles(UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_DOCTOR_BOOKING_STATUS_RETRIEVED,
+    'Doctor booking status breakdown retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Breakdown of booking statuses (Completed / Cancelled / No-show)',
   })
@@ -58,6 +80,10 @@ export class AnalyticsController {
 
   @Get('doctor/me/patients-per-month')
   @Roles(UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_DOCTOR_PATIENTS_PER_MONTH_RETRIEVED,
+    'Doctor patients seen per month retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Number of patients seen per month in the last 6 months',
   })
@@ -67,6 +93,10 @@ export class AnalyticsController {
 
   @Get('doctor/me/summary')
   @Roles(UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_DOCTOR_SUMMARY_RETRIEVED,
+    'Doctor summary stats retrieved successfully',
+  )
   @ApiOperation({ summary: 'Summary stats with period filter for this doctor' })
   getDoctorSummary(
     @Req() req: { user: { id: string } },
@@ -77,6 +107,10 @@ export class AnalyticsController {
 
   @Get('doctor/me/recent-patients')
   @Roles(UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_DOCTOR_RECENT_PATIENTS_RETRIEVED,
+    'Doctor recent patients list retrieved successfully',
+  )
   @ApiOperation({ summary: 'Ten most recent patients seen by this doctor' })
   getDoctorRecentPatients(@Req() req: { user: { id: string } }) {
     return this.analyticsService.getDoctorRecentPatients(req.user.id);
@@ -84,6 +118,10 @@ export class AnalyticsController {
 
   @Get('doctor/me/today-schedule')
   @Roles(UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_DOCTOR_TODAY_SCHEDULE_RETRIEVED,
+    "Doctor today's schedule timeline retrieved successfully",
+  )
   @ApiOperation({ summary: "Today's appointment timeline for this doctor" })
   getDoctorTodaySchedule(@Req() req: { user: { id: string } }) {
     return this.analyticsService.getDoctorTodaySchedule(req.user.id);
@@ -91,6 +129,10 @@ export class AnalyticsController {
 
   @Get('doctor/me/heatmap')
   @Roles(UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_DOCTOR_HEATMAP_RETRIEVED,
+    'Doctor booking heatmap retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Booking count heatmap (hour × day-of-week) for last 12 weeks',
   })
@@ -100,6 +142,10 @@ export class AnalyticsController {
 
   @Get('doctor/me/clinical-kpis')
   @Roles(UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_DOCTOR_CLINICAL_KPIS_RETRIEVED,
+    'Doctor clinical KPIs retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Real clinical KPIs for this doctor (last 6 months)',
   })

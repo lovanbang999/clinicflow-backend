@@ -25,6 +25,8 @@ import { AdminSchedulesService } from './admin-schedules.service';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { FilterScheduleDto } from './dto/filter-schedule.dto';
+import { ResponseMessage } from 'src/common/decorators/response-message.decorator';
+import { MessageCodes } from 'src/common/constants/message-codes.const';
 
 @ApiTags('admin - schedules')
 @ApiBearerAuth('JWT-auth')
@@ -39,6 +41,10 @@ export class AdminSchedulesController {
    * Returns schedule statistics for the admin dashboard.
    */
   @Get('statistics')
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_STATISTICS_RETRIEVED,
+    'Schedule statistics retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Schedule statistics (ADMIN only)',
     description:
@@ -58,6 +64,7 @@ export class AdminSchedulesController {
    * List all active rooms for scheduling slots
    */
   @Get('rooms')
+  @ResponseMessage(MessageCodes.ROOMS_RETRIEVED, 'Rooms retrieved successfully')
   @ApiOperation({
     summary: 'List all active rooms (ADMIN only)',
     description: 'Returns a list of active rooms to assign schedules.',
@@ -72,6 +79,10 @@ export class AdminSchedulesController {
    * Create a new schedule slot for a doctor.
    */
   @Post()
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_CREATED,
+    'Schedule slot created successfully',
+  )
   @ApiOperation({
     summary: 'Create a new schedule slot (ADMIN only)',
     description:
@@ -93,6 +104,10 @@ export class AdminSchedulesController {
    * Paginated & filterable list of all schedule slots.
    */
   @Get()
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_LIST_RETRIEVED,
+    'Schedules retrieved successfully',
+  )
   @ApiOperation({
     summary: 'List all schedule slots (ADMIN only)',
     description:
@@ -109,6 +124,10 @@ export class AdminSchedulesController {
    * Get detail of a single schedule slot.
    */
   @Get(':id')
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_RETRIEVED,
+    'Schedule slot retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get schedule slot by ID (ADMIN only)' })
   @ApiParam({ name: 'id', description: 'Schedule slot UUID' })
   @ApiResponse({
@@ -126,6 +145,10 @@ export class AdminSchedulesController {
    * Update fields of a specific schedule slot.
    */
   @Patch(':id')
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_UPDATED,
+    'Schedule slot updated successfully',
+  )
   @ApiOperation({
     summary: 'Update schedule slot (ADMIN only)',
     description:
@@ -151,6 +174,10 @@ export class AdminSchedulesController {
    * Soft delete (suspend) a schedule slot.
    */
   @Delete(':id')
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_DELETED,
+    'Schedule slot deleted successfully',
+  )
   @ApiOperation({
     summary: 'Soft delete a schedule slot (ADMIN only)',
     description:
@@ -172,6 +199,10 @@ export class AdminSchedulesController {
    * Restore a previously soft-deleted schedule slot.
    */
   @Patch(':id/restore')
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_RESTORED,
+    'Schedule slot restored successfully',
+  )
   @ApiOperation({
     summary: 'Restore a deleted schedule slot (ADMIN only)',
     description:

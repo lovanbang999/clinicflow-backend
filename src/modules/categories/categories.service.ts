@@ -5,7 +5,6 @@ import {
 } from '../database/interfaces/catalog.repository.interface';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { CategoryQueryDto } from './dto/category-query.dto';
@@ -26,7 +25,7 @@ export class CategoriesService {
     }
   }
 
-  async create(createCategoryDto: CreateCategoryDto) {
+  async create(createCategoryDto: CreateCategoryDto): Promise<Category> {
     const existing = await this.catalogRepository.findCategoryByCode(
       createCategoryDto.code,
     );
@@ -44,15 +43,15 @@ export class CategoriesService {
     // Evict cache
     await this.clearCategoriesCache();
 
-    return ResponseHelper.success(
-      category,
-      'CATEGORY_CREATED',
-      'Category created successfully',
-      201,
-    );
+    return category;
   }
 
-  async findAll(query: CategoryQueryDto) {
+  async findAll(query: CategoryQueryDto): Promise<{
+    items: Category[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
     const { isActive, page = 1, limit = 10 } = query;
     const cacheKey = `cache:categories:list:${JSON.stringify(query)}`;
 
@@ -63,15 +62,12 @@ export class CategoriesService {
         total: number;
       }>(cacheKey);
       if (cached) {
-        return ResponseHelper.successPagination(
-          cached.items,
-          cached.total,
+        return {
+          items: cached.items,
+          total: cached.total,
           page,
           limit,
-          'CATEGORIES_RETRIEVED',
-          'Categories retrieved (cached)',
-          200,
-        );
+        };
       }
     }
 
@@ -88,18 +84,15 @@ export class CategoriesService {
       await this.redisService.setJson(cacheKey, { items, total }, 43200);
     }
 
-    return ResponseHelper.successPagination(
+    return {
       items,
       total,
       page,
       limit,
-      'CATEGORIES_RETRIEVED',
-      'Categories retrieved',
-      200,
-    );
+    };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string): Promise<Category> {
     const category = await this.catalogRepository.findCategoryById(id, true);
     if (!category) {
       throw new ApiException(
@@ -108,15 +101,13 @@ export class CategoriesService {
         HttpStatus.NOT_FOUND,
       );
     }
-    return ResponseHelper.success(
-      category,
-      'CATEGORY_RETRIEVED',
-      'Category retrieved',
-      200,
-    );
+    return category;
   }
 
-  async update(id: string, updateCategoryDto: UpdateCategoryDto) {
+  async update(
+    id: string,
+    updateCategoryDto: UpdateCategoryDto,
+  ): Promise<Category> {
     const category = await this.catalogRepository.findCategoryById(id);
     if (!category) {
       throw new ApiException(
@@ -147,15 +138,10 @@ export class CategoriesService {
     // Evict cache
     await this.clearCategoriesCache();
 
-    return ResponseHelper.success(
-      updated,
-      'CATEGORY_UPDATED',
-      'Category updated successfully',
-      200,
-    );
+    return updated;
   }
 
-  async remove(id: string) {
+  async remove(id: string): Promise<null> {
     const category = await this.catalogRepository.findCategoryById(id);
     if (!category) {
       throw new ApiException(
@@ -180,11 +166,6 @@ export class CategoriesService {
     // Evict cache
     await this.clearCategoriesCache();
 
-    return ResponseHelper.success(
-      null,
-      'CATEGORY_DELETED',
-      'Category deleted successfully',
-      200,
-    );
+    return null;
   }
 }

@@ -16,7 +16,7 @@ import {
   ServiceOrderStatus,
   PerformerType,
 } from '@prisma/client';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
+
 import { CompleteServiceOrderDto } from './dto/complete-service-order.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -68,12 +68,7 @@ export class VisitServiceOrdersService {
       },
     });
 
-    return ResponseHelper.success(
-      orders,
-      'VSO.WORKLIST_FETCHED',
-      'Worklist fetched',
-      200,
-    );
+    return orders;
   }
 
   // KTV starts a service order
@@ -94,12 +89,7 @@ export class VisitServiceOrdersService {
       },
     });
 
-    return ResponseHelper.success(
-      updated,
-      'VSO.STARTED',
-      'Service order started',
-      200,
-    );
+    return updated;
   }
 
   // KTV completes a service order + auto-advance MedicalRecord step
@@ -203,12 +193,7 @@ export class VisitServiceOrdersService {
       },
     );
 
-    return ResponseHelper.success(
-      updatedOrder,
-      'VSO.COMPLETED',
-      'Service order completed',
-      200,
-    );
+    return updatedOrder;
   }
 
   // Get detail of a single service order
@@ -230,6 +215,6 @@ export class VisitServiceOrdersService {
       },
     });
     if (!order) throw new NotFoundException('Service order not found');
-    return ResponseHelper.success(order, 'VSO.DETAIL_FETCHED', '', 200);
+    return order;
   }
 }

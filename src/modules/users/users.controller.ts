@@ -36,6 +36,8 @@ import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { UserRole } from '@prisma/client';
+import { ResponseMessage } from '../../common/decorators/response-message.decorator';
+import { MessageCodes } from '../../common/constants/message-codes.const';
 
 @ApiTags('users')
 @Controller('users')
@@ -48,6 +50,10 @@ export class UsersController {
 
   @Get('public/doctors')
   @Public()
+  @ResponseMessage(
+    MessageCodes.USER_LIST_RETRIEVED,
+    'Doctors retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get all doctors (Public - No auth required)',
     description: 'Retrieve list of active doctors for public viewing',
@@ -78,6 +84,7 @@ export class UsersController {
 
   @Get('public/doctors/:id')
   @Public()
+  @ResponseMessage(MessageCodes.USER_RETRIEVED, 'Doctor retrieved successfully')
   @ApiOperation({
     summary: 'Get doctor by ID (Public - No auth required)',
     description:
@@ -99,6 +106,7 @@ export class UsersController {
 
   @Post()
   @Roles(UserRole.ADMIN)
+  @ResponseMessage(MessageCodes.USER_CREATED, 'User created successfully')
   @ApiOperation({
     summary: 'Create a new user (ADMIN only)',
     description:
@@ -118,6 +126,10 @@ export class UsersController {
 
   @Post('receptionist/patients/account')
   @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.USER_CREATED,
+    'Patient account created successfully',
+  )
   @ApiOperation({
     summary: 'Create a patient with a system account (RECEPTIONIST/ADMIN only)',
     description:
@@ -133,6 +145,10 @@ export class UsersController {
 
   @Post('receptionist/patients/guest')
   @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.USER_CREATED,
+    'Guest patient created successfully',
+  )
   @ApiOperation({
     summary: 'Create a guest patient medical record (RECEPTIONIST/ADMIN only)',
     description:
@@ -148,6 +164,10 @@ export class UsersController {
 
   @Get('receptionist/patients')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ResponseMessage(
+    MessageCodes.USER_LIST_RETRIEVED,
+    'Patient profiles retrieved successfully',
+  )
   @ApiOperation({
     summary:
       'Get all patient profiles including guests (ADMIN/RECEPTIONIST only)',
@@ -164,6 +184,10 @@ export class UsersController {
 
   @Get('receptionist/patients/stats')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ResponseMessage(
+    MessageCodes.PATIENT_STATS_RETRIEVED,
+    'Patient statistics retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get patient statistics (ADMIN/RECEPTIONIST only)',
     description:
@@ -179,6 +203,10 @@ export class UsersController {
 
   @Patch('receptionist/patients/:id')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ResponseMessage(
+    MessageCodes.PATIENT_UPDATED,
+    'Patient profile updated successfully',
+  )
   @ApiOperation({
     summary: 'Update patient profile (ADMIN/RECEPTIONIST only)',
     description: 'Atomically updates User and PatientProfile record.',
@@ -196,6 +224,10 @@ export class UsersController {
 
   @Get()
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ResponseMessage(
+    MessageCodes.USER_LIST_RETRIEVED,
+    'Users retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get all users with filters (ADMIN/RECEPTIONIST only)',
     description:
@@ -221,6 +253,10 @@ export class UsersController {
 
   @Get('statistics')
   @Roles(UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.USER_LIST_RETRIEVED,
+    'User statistics retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get user statistics (ADMIN only)',
     description: 'Get aggregated statistics about users',
@@ -235,6 +271,10 @@ export class UsersController {
 
   @Get('me')
   @Authenticated()
+  @ResponseMessage(
+    MessageCodes.USER_RETRIEVED,
+    'User profile retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get current user profile',
     description: 'Get the profile of the currently authenticated user',
@@ -249,6 +289,7 @@ export class UsersController {
 
   @Patch('me')
   @Authenticated()
+  @ResponseMessage(MessageCodes.USER_UPDATED, 'Profile updated successfully')
   @ApiOperation({
     summary: 'Update current user profile',
     description: 'Users can update their own profile (excluding role)',
@@ -269,6 +310,7 @@ export class UsersController {
 
   @Patch('me/password')
   @Authenticated()
+  @ResponseMessage(MessageCodes.USER_UPDATED, 'Password changed successfully')
   @ApiOperation({
     summary: 'Change password',
     description: 'User can change their own password',
@@ -290,6 +332,7 @@ export class UsersController {
 
   @Get(':id')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ResponseMessage(MessageCodes.USER_RETRIEVED, 'User retrieved successfully')
   @ApiOperation({
     summary: 'Get user by ID (ADMIN/RECEPTIONIST only)',
   })
@@ -307,6 +350,7 @@ export class UsersController {
 
   @Patch(':id')
   @Roles(UserRole.ADMIN)
+  @ResponseMessage(MessageCodes.USER_UPDATED, 'User updated successfully')
   @ApiOperation({
     summary: 'Update user by ID (ADMIN only)',
     description: 'Admin can update any user including role and status',
@@ -330,6 +374,7 @@ export class UsersController {
   @Delete(':id')
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(MessageCodes.USER_DELETED, 'User deleted successfully')
   @ApiOperation({
     summary: 'Delete user (ADMIN only)',
     description: 'Soft delete user by setting isActive to false',

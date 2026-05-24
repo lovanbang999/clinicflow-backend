@@ -9,6 +9,8 @@ import { Roles } from 'src/common/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
+import { ResponseMessage } from 'src/common/decorators/response-message.decorator';
+import { MessageCodes } from 'src/common/constants/message-codes.const';
 
 @ApiTags('admin - settings')
 @ApiBearerAuth('JWT-auth')
@@ -19,12 +21,20 @@ export class AdminSettingsController {
   constructor(private readonly settingsService: AdminSettingsService) {}
 
   @Get()
+  @ResponseMessage(
+    MessageCodes.SETTINGS_RETRIEVED,
+    'All system settings retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get all system settings (ADMIN only)' })
   getAllSettings() {
     return this.settingsService.getAllSettings();
   }
 
   @Patch('clinic-profile')
+  @ResponseMessage(
+    MessageCodes.SETTINGS_UPDATED,
+    'Clinic profile settings updated successfully',
+  )
   @ApiOperation({ summary: 'Update clinic profile settings (ADMIN only)' })
   updateClinicProfile(
     @Body() dto: UpdateClinicProfileDto,
@@ -38,6 +48,10 @@ export class AdminSettingsController {
   }
 
   @Patch('booking-rules')
+  @ResponseMessage(
+    MessageCodes.SETTINGS_UPDATED,
+    'Booking/scheduling rules updated successfully',
+  )
   @ApiOperation({ summary: 'Update booking/scheduling rules (ADMIN only)' })
   updateBookingRules(
     @Body() dto: UpdateBookingRulesDto,
@@ -51,6 +65,10 @@ export class AdminSettingsController {
   }
 
   @Patch('notifications')
+  @ResponseMessage(
+    MessageCodes.SETTINGS_UPDATED,
+    'Notification settings updated successfully',
+  )
   @ApiOperation({
     summary: 'Update notification/communication settings (ADMIN only)',
   })

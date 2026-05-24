@@ -9,8 +9,8 @@ import { BulkUpdateWorkingHoursDto } from './dto/bulk-update-working-hours.dto';
 import { CreateBreakTimeDto } from './dto/create-break-time.dto';
 import { CreateOffDayDto } from './dto/create-off-day.dto';
 import { AvailableSlotsQueryDto } from './dto/available-slots-query.dto';
-import { DayOfWeek, UserRole, User } from '@prisma/client';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
+import { DayOfWeek, UserRole, User, DoctorWorkingHours } from '@prisma/client';
+
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { format } from 'date-fns';
@@ -65,7 +65,7 @@ export class SchedulesService {
       dayOfWeek,
     );
 
-    let workingHours;
+    let workingHours: DoctorWorkingHours;
     if (existing) {
       workingHours = await this.bookingRepository.updateDoctorWorkingHours(
         doctorId,
@@ -83,12 +83,7 @@ export class SchedulesService {
 
     await this.invalidateAllDoctorSlotsCache(doctorId);
 
-    return ResponseHelper.success(
-      workingHours,
-      MessageCodes.SCHEDULE_CREATED,
-      'Working hours saved successfully',
-      201,
-    );
+    return workingHours;
   }
 
   /**
@@ -98,12 +93,7 @@ export class SchedulesService {
     const workingHours =
       await this.bookingRepository.findWorkingHoursList(doctorId);
 
-    return ResponseHelper.success(
-      workingHours,
-      MessageCodes.SCHEDULE_LIST_RETRIEVED,
-      'Working hours retrieved successfully',
-      200,
-    );
+    return workingHours;
   }
 
   /**
@@ -128,12 +118,7 @@ export class SchedulesService {
 
     await this.invalidateAllDoctorSlotsCache(doctorId);
 
-    return ResponseHelper.success(
-      null,
-      MessageCodes.SCHEDULE_DELETED,
-      'Working hours deleted successfully',
-      200,
-    );
+    return null;
   }
 
   /**
@@ -170,12 +155,7 @@ export class SchedulesService {
 
     await this.invalidateDoctorSlotsCache(doctorId, date);
 
-    return ResponseHelper.success(
-      breakTime,
-      MessageCodes.SCHEDULE_CREATED,
-      'Break time created successfully',
-      201,
-    );
+    return breakTime;
   }
 
   /**
@@ -191,12 +171,7 @@ export class SchedulesService {
       end,
     );
 
-    return ResponseHelper.success(
-      breakTimes,
-      MessageCodes.SCHEDULE_LIST_RETRIEVED,
-      'Break times retrieved successfully',
-      200,
-    );
+    return breakTimes;
   }
 
   /**
@@ -218,12 +193,7 @@ export class SchedulesService {
     const dateStr = format(deletedBreakTime.breakDate, 'yyyy-MM-dd');
     await this.invalidateDoctorSlotsCache(deletedBreakTime.doctorId, dateStr);
 
-    return ResponseHelper.success(
-      null,
-      MessageCodes.SCHEDULE_DELETED,
-      'Break time deleted successfully',
-      200,
-    );
+    return null;
   }
 
   /**
@@ -259,21 +229,16 @@ export class SchedulesService {
         dateEnd,
       );
 
-    return ResponseHelper.success(
-      {
-        affectedAppointments: affectedAppointments.map((b) => ({
-          id: b.id,
-          patientName: b.patientProfile?.fullName ?? 'Unknown',
-          patientPhone: b.patientProfile?.phone ?? '',
-          serviceName: b.service?.name ?? '',
-          startTime: b.startTime,
-          status: b.status,
-        })),
-      },
-      MessageCodes.SCHEDULE_LIST_RETRIEVED,
-      'Preview retrieved successfully',
-      200,
-    );
+    return {
+      affectedAppointments: affectedAppointments.map((b) => ({
+        id: b.id,
+        patientName: b.patientProfile?.fullName ?? 'Unknown',
+        patientPhone: b.patientProfile?.phone ?? '',
+        serviceName: b.service?.name ?? '',
+        startTime: b.startTime,
+        status: b.status,
+      })),
+    };
   }
 
   /**
@@ -337,26 +302,21 @@ export class SchedulesService {
 
     await this.invalidateDoctorSlotsCache(doctorId, date);
 
-    return ResponseHelper.success(
-      {
-        id: offDay.id,
-        doctorId: offDay.doctorId,
-        date: offDay.offDate.toISOString().split('T')[0],
-        reason: offDay.reason,
-        affectedAppointments: affectedAppointments.map((b) => ({
-          id: b.id,
-          patientName: b.patientProfile?.fullName ?? 'Unknown',
-          patientPhone: b.patientProfile?.phone ?? '',
-          serviceName: b.service?.name ?? '',
-          startTime: b.startTime,
-          status: b.status,
-        })),
-        cancelledCount: dto.cancelAffected ? affectedAppointments.length : 0,
-      },
-      MessageCodes.SCHEDULE_CREATED,
-      'Off day created successfully',
-      201,
-    );
+    return {
+      id: offDay.id,
+      doctorId: offDay.doctorId,
+      date: offDay.offDate.toISOString().split('T')[0],
+      reason: offDay.reason,
+      affectedAppointments: affectedAppointments.map((b) => ({
+        id: b.id,
+        patientName: b.patientProfile?.fullName ?? 'Unknown',
+        patientPhone: b.patientProfile?.phone ?? '',
+        serviceName: b.service?.name ?? '',
+        startTime: b.startTime,
+        status: b.status,
+      })),
+      cancelledCount: dto.cancelAffected ? affectedAppointments.length : 0,
+    };
   }
 
   /**
@@ -372,17 +332,12 @@ export class SchedulesService {
       end,
     );
 
-    return ResponseHelper.success(
-      offDays.map((od) => ({
-        id: od.id,
-        doctorId: od.doctorId,
-        date: od.offDate.toISOString().split('T')[0],
-        reason: od.reason,
-      })),
-      MessageCodes.SCHEDULE_LIST_RETRIEVED,
-      'Off days retrieved successfully',
-      200,
-    );
+    return offDays.map((od) => ({
+      id: od.id,
+      doctorId: od.doctorId,
+      date: od.offDate.toISOString().split('T')[0],
+      reason: od.reason,
+    }));
   }
 
   /**
@@ -407,12 +362,7 @@ export class SchedulesService {
 
     await this.invalidateDoctorSlotsCache(doctorId, date);
 
-    return ResponseHelper.success(
-      null,
-      MessageCodes.SCHEDULE_DELETED,
-      'Off day deleted successfully',
-      200,
-    );
+    return null;
   }
 
   /**
@@ -430,12 +380,7 @@ export class SchedulesService {
         message?: string;
       }>(cacheKey);
       if (cachedData) {
-        return ResponseHelper.success(
-          cachedData,
-          MessageCodes.AVAILABLE_SLOTS_RETRIEVED,
-          'Available slots retrieved successfully (cached)',
-          200,
-        );
+        return cachedData;
       }
     }
 
@@ -476,12 +421,7 @@ export class SchedulesService {
         await this.redisService.setJson(cacheKey, resultData, 300);
       }
 
-      return ResponseHelper.success(
-        resultData,
-        MessageCodes.AVAILABLE_SLOTS_RETRIEVED,
-        'No available slots',
-        200,
-      );
+      return resultData;
     }
 
     const offDay = await this.bookingRepository.findDoctorOffDay(
@@ -501,12 +441,7 @@ export class SchedulesService {
         await this.redisService.setJson(cacheKey, resultData, 300);
       }
 
-      return ResponseHelper.success(
-        resultData,
-        MessageCodes.AVAILABLE_SLOTS_RETRIEVED,
-        'No available slots',
-        200,
-      );
+      return resultData;
     }
 
     const breakTimes = await this.bookingRepository.findDoctorBreakTimes(
@@ -550,12 +485,7 @@ export class SchedulesService {
       await this.redisService.setJson(cacheKey, resultData, 300);
     }
 
-    return ResponseHelper.success(
-      resultData,
-      MessageCodes.AVAILABLE_SLOTS_RETRIEVED,
-      'Available slots retrieved successfully',
-      200,
-    );
+    return resultData;
   }
 
   // PRIVATE HELPER METHODS
@@ -896,11 +826,6 @@ export class SchedulesService {
         items,
       );
 
-    return ResponseHelper.success(
-      updatedList,
-      MessageCodes.SCHEDULE_CREATED,
-      'Bulk working hours updated successfully',
-      200,
-    );
+    return updatedList;
   }
 }

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { BookingsService } from '../../bookings/bookings.service';
-import { BookingSource, BookingPriority } from '@prisma/client';
+import { BookingSource, BookingPriority, Booking } from '@prisma/client';
 import { CreateBookingDto } from '../../bookings/dto/create-booking.dto';
 
 @Injectable()
@@ -66,9 +66,12 @@ export class BookingTool {
     } as unknown as CreateBookingDto;
 
     try {
-      const result = await this.bookingsService.create(createDto, userId);
+      const result = (await this.bookingsService.create(
+        createDto,
+        userId,
+      )) as Booking;
 
-      if (!result?.data?.id) {
+      if (!result?.id) {
         return {
           status: 'error',
           error: true,
@@ -78,15 +81,15 @@ export class BookingTool {
 
       return {
         status: 'success',
-        bookingId: result.data.id,
-        bookingCode: result.data.bookingCode,
+        bookingId: result.id,
+        bookingCode: result.bookingCode,
         message: 'Đặt lịch thành công',
         details: {
-          id: result.data.id,
-          bookingDate: result.data.bookingDate,
-          startTime: result.data.startTime,
-          endTime: result.data.endTime,
-          status: result.data.status,
+          id: result.id,
+          bookingDate: result.bookingDate,
+          startTime: result.startTime,
+          endTime: result.endTime,
+          status: result.status,
         },
       };
     } catch (error) {
@@ -142,7 +145,7 @@ export class BookingTool {
         error: true,
         slotUnavailable: isConflict,
         message: isConflict
-          ? `Khung giờ này vừa được bệnh nhân khác đặt. Hãy gọi lại [getAvailableSlots] để lấy danh sách lịch trống mới nhất rồi cho bệnh nhân chọn lại.`
+          ? `Khung giờ này vừa được bệnh nhân khác đặt. Hãy gọi lại [getAvailableSlots] to lấy danh sách lịch trống mới nhất rồi cho bệnh nhân chọn lại.`
           : `Đặt lịch thất bại: ${detail}. Vui lòng thử lại hoặc đặt lịch tại quầy.`,
       };
     }

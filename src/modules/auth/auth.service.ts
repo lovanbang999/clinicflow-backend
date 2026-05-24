@@ -13,7 +13,6 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerificationType } from '@prisma/client';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import type { StringValue } from 'ms';
@@ -380,12 +379,7 @@ export class AuthService {
       metadata: { userId: user.id },
     });
 
-    return ResponseHelper.success(
-      { email },
-      MessageCodes.REGISTER_SUCCESS,
-      'Registration successful! Please check your email for verification code.',
-      201,
-    );
+    return { email };
   }
 
   /**
@@ -471,15 +465,10 @@ export class AuthService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password: _password, ...userWithoutPassword } = user;
 
-    return ResponseHelper.success(
-      {
-        user: { ...userWithoutPassword, isActive: true },
-        ...tokens,
-      },
-      MessageCodes.VERIFY_SUCCESS,
-      'Email verified successfully!',
-      200,
-    );
+    return {
+      user: { ...userWithoutPassword, isActive: true },
+      ...tokens,
+    };
   }
 
   /**
@@ -517,12 +506,7 @@ export class AuthService {
     // Send verification email
     await this.mailService.sendVerificationEmail(email, user.fullName, otpCode);
 
-    return ResponseHelper.success(
-      { email },
-      'AUTH.RESEND_OTP.SUCCESS',
-      'Verification code sent successfully!',
-      200,
-    );
+    return { email };
   }
 
   /**
@@ -535,12 +519,7 @@ export class AuthService {
 
     if (!user) {
       // Don't throw error to prevent email enumeration, just return success
-      return ResponseHelper.success(
-        { email },
-        'AUTH.FORGOT_PASSWORD.SUCCESS',
-        'If an account exists, a password reset OTP has been sent.',
-        200,
-      );
+      return { email };
     }
 
     // Generate password reset OTP code using the correct VerificationType
@@ -555,12 +534,7 @@ export class AuthService {
       otpCode,
     );
 
-    return ResponseHelper.success(
-      { email },
-      'AUTH.FORGOT_PASSWORD.SUCCESS',
-      'Password reset instructions sent successfully',
-      200,
-    );
+    return { email };
   }
 
   /**
@@ -629,12 +603,7 @@ export class AuthService {
       );
     }
 
-    return ResponseHelper.success(
-      { email },
-      MessageCodes.VERIFY_RESET_OTP_SUCCESS,
-      'OTP verified successfully. You can now reset your password.',
-      200,
-    );
+    return { email };
   }
 
   /**
@@ -714,12 +683,7 @@ export class AuthService {
       hashedPassword,
     );
 
-    return ResponseHelper.success(
-      { email },
-      MessageCodes.RESET_PASSWORD_SUCCESS,
-      'Password reset successfully. You can now log in with your new password.',
-      200,
-    );
+    return { email };
   }
 
   /**
@@ -781,15 +745,10 @@ export class AuthService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password: _password, ...userWithoutPassword } = user;
 
-    return ResponseHelper.success(
-      {
-        user: userWithoutPassword,
-        ...tokens,
-      },
-      MessageCodes.LOGIN_SUCCESS,
-      'Login successful!',
-      200,
-    );
+    return {
+      user: userWithoutPassword,
+      ...tokens,
+    };
   }
 
   /**
@@ -833,12 +792,7 @@ export class AuthService {
       // Revoke old refresh token
       await this.tokenRepository.revokeToken(refreshToken);
 
-      return ResponseHelper.success(
-        tokens,
-        MessageCodes.REFRESH_SUCCESS,
-        'Token refreshed successfully',
-        200,
-      );
+      return tokens;
     } catch {
       throw new ApiException(
         MessageCodes.INVALID_REFRESH_TOKEN,
@@ -855,12 +809,7 @@ export class AuthService {
   async logout(refreshToken: string) {
     await this.tokenRepository.revokeToken(refreshToken);
 
-    return ResponseHelper.success(
-      null,
-      MessageCodes.LOGOUT_SUCCESS,
-      'Logged out successfully',
-      200,
-    );
+    return null;
   }
 
   /**
@@ -900,12 +849,7 @@ export class AuthService {
   async getProfile(userId: string) {
     const user = await this.validateUser(userId);
 
-    return ResponseHelper.success(
-      user,
-      MessageCodes.PROFILE_RETRIEVED,
-      'Profile retrieved successfully',
-      200,
-    );
+    return user;
   }
 
   /**

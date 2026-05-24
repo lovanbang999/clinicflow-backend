@@ -25,10 +25,7 @@ import { QueueService } from '../queue/queue.service';
 import { SequenceService } from '../database/services/sequence.service';
 import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { ApiException } from 'src/common/exceptions/api.exception';
-import {
-  ResponseHelper,
-  ApiResponse,
-} from 'src/common/interfaces/api-response.interface';
+
 import { BillingService } from '../billing/billing.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -271,12 +268,7 @@ export class BookingsService {
     // Invalidate slot cache for this doctor and date
     await this.invalidateDoctorSlotsCache(doctorId, bookingDate);
 
-    return ResponseHelper.success(
-      booking,
-      MessageCodes.BOOKING_CREATED,
-      'Booking created successfully',
-      201,
-    );
+    return booking;
   }
 
   /**
@@ -462,14 +454,7 @@ export class BookingsService {
     // Invalidate slot cache for this doctor and date
     await this.invalidateDoctorSlotsCache(doctorId, bookingDate);
 
-    return ResponseHelper.success(
-      booking,
-      MessageCodes.BOOKING_CREATED,
-      isPreBooked
-        ? 'Pre-booking created and confirmed successfully'
-        : 'Walk-in booking created successfully',
-      201,
-    );
+    return booking;
   }
 
   /**
@@ -487,7 +472,7 @@ export class BookingsService {
   async createDirectServiceBooking(
     dto: import('./dto/create-direct-service-booking.dto').CreateDirectServiceBookingDto,
     createdById: string,
-  ): Promise<ApiResponse<any>> {
+  ) {
     const {
       patientProfileId,
       doctorId,
@@ -807,12 +792,7 @@ export class BookingsService {
     // Invalidate slot cache for this doctor and date
     await this.invalidateDoctorSlotsCache(doctorId, bookingDate);
 
-    return ResponseHelper.success(
-      result,
-      'BOOKING.DIRECT_SERVICE_CREATED',
-      'Direct service booking created successfully',
-      201,
-    );
+    return result;
   }
 
   /**
@@ -824,7 +804,7 @@ export class BookingsService {
     serviceId: string,
     doctorId: string,
     newDoctorId?: string,
-  ): Promise<ApiResponse<any>> {
+  ) {
     const booking = await this.bookingRepository.findUniqueBooking({
       where: { id: bookingId },
       include: BookingInclude,
@@ -911,14 +891,10 @@ export class BookingsService {
       service.name,
     );
 
-    return ResponseHelper.success(
-      updated,
-      'BOOKING.SERVICE_UPDATED',
-      'Booking service and specialist updated successfully. Patient referred to reception.',
-    );
+    return updated;
   }
 
-  async findAll(filterDto: FilterBookingDto): Promise<ApiResponse<any>> {
+  async findAll(filterDto: FilterBookingDto) {
     const {
       patientProfileId,
       doctorId,
@@ -981,20 +957,15 @@ export class BookingsService {
       this.bookingRepository.count({ where }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        bookings,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    return {
+      bookings,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      MessageCodes.BOOKING_LIST_RETRIEVED,
-      'Bookings retrieved successfully',
-      200,
-    );
+    };
   }
 
   /**
@@ -1091,12 +1062,7 @@ export class BookingsService {
       // Staff (Admin/Receptionist) always allowed
     }
 
-    return ResponseHelper.success(
-      booking,
-      MessageCodes.BOOKING_RETRIEVED,
-      'Booking retrieved successfully',
-      200,
-    );
+    return booking;
   }
 
   /**
@@ -1110,8 +1076,7 @@ export class BookingsService {
   ) {
     const { status, reason, doctorNotes } = updateStatusDto;
 
-    const bookingResponse = await this.findOne(id, currentUser);
-    const booking = bookingResponse.data;
+    const booking = await this.findOne(id, currentUser);
 
     if (!booking) {
       throw new ApiException(
@@ -1306,12 +1271,7 @@ export class BookingsService {
       updatedBooking.bookingDate,
     );
 
-    return ResponseHelper.success(
-      updatedBooking,
-      MessageCodes.BOOKING_UPDATED,
-      'Booking status updated successfully',
-      200,
-    );
+    return updatedBooking;
   }
 
   /**
@@ -1322,8 +1282,8 @@ export class BookingsService {
     userId: string,
     reason?: string,
     currentUser?: User,
-  ): Promise<ApiResponse<any>> {
-    const result = await this.updateStatus(
+  ) {
+    const booking = await this.updateStatus(
       id,
       {
         status: BookingStatus.CANCELLED,
@@ -1333,8 +1293,7 @@ export class BookingsService {
       currentUser,
     );
 
-    const booking = result.data;
-    if (!booking) return result;
+    if (!booking) return null;
 
     // Notify admins of cancellation
     await this.bookingNotification.notifyAdminsOfBooking(
@@ -1343,35 +1302,21 @@ export class BookingsService {
       reason ? `Lý do: ${reason}` : undefined,
     );
 
-    return ResponseHelper.success(
-      result.data,
-      MessageCodes.BOOKING_CANCELLED,
-      'Booking cancelled successfully',
-      200,
-    );
+    return booking;
   }
 
   /**
    * Delete booking (soft delete — effectively cancel)
    */
-  async remove(
-    id: string,
-    userId: string,
-    currentUser?: User,
-  ): Promise<ApiResponse<any>> {
-    const result = await this.cancelBooking(
+  async remove(id: string, userId: string, currentUser?: User) {
+    const booking = await this.cancelBooking(
       id,
       userId,
       'Booking deleted',
       currentUser,
     );
 
-    return ResponseHelper.success(
-      result.data,
-      MessageCodes.BOOKING_DELETED,
-      'Booking deleted successfully',
-      200,
-    );
+    return booking;
   }
 
   /**
@@ -1382,8 +1327,7 @@ export class BookingsService {
     userId: string,
     currentUser?: Express.User,
   ) {
-    const bookingResponse = await this.findOne(id, currentUser);
-    const booking = bookingResponse.data;
+    const booking = await this.findOne(id, currentUser);
 
     if (!booking) {
       throw new ApiException(
@@ -1473,7 +1417,7 @@ export class BookingsService {
       page?: number;
       limit?: number;
     },
-  ): Promise<ApiResponse<any>> {
+  ) {
     const { status, page = 1, limit = 10 } = options;
 
     // Find the PatientProfile belonging to this user
@@ -1483,15 +1427,10 @@ export class BookingsService {
     });
 
     if (!profile) {
-      return ResponseHelper.success(
-        {
-          bookings: [],
-          pagination: { total: 0, page, limit, totalPages: 0 },
-        },
-        MessageCodes.BOOKING_LIST_RETRIEVED,
-        'My bookings retrieved successfully',
-        200,
-      );
+      return {
+        bookings: [],
+        pagination: { total: 0, page, limit, totalPages: 0 },
+      };
     }
 
     const where: Prisma.BookingWhereInput = {
@@ -1540,20 +1479,15 @@ export class BookingsService {
       this.bookingRepository.count({ where }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        bookings,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    return {
+      bookings,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      MessageCodes.BOOKING_LIST_RETRIEVED,
-      'My bookings retrieved successfully',
-      200,
-    );
+    };
   }
 
   /**
@@ -1570,20 +1504,15 @@ export class BookingsService {
     });
 
     if (!profile) {
-      return ResponseHelper.success(
-        {
-          stats: {
-            upcomingBookings: 0,
-            completedBookings: 0,
-            waitingBookings: 0,
-            totalBookings: 0,
-          },
-          nextBooking: null,
+      return {
+        stats: {
+          upcomingBookings: 0,
+          completedBookings: 0,
+          waitingBookings: 0,
+          totalBookings: 0,
         },
-        MessageCodes.BOOKING_LIST_RETRIEVED,
-        'Dashboard statistics retrieved successfully',
-        200,
-      );
+        nextBooking: null,
+      };
     }
 
     const patientProfileId = profile.id;
@@ -1623,20 +1552,15 @@ export class BookingsService {
       orderBy: [{ bookingDate: 'asc' }, { startTime: 'asc' }],
     });
 
-    return ResponseHelper.success(
-      {
-        stats: {
-          upcomingBookings,
-          completedBookings,
-          waitingBookings,
-          totalBookings,
-        },
-        nextBooking,
+    return {
+      stats: {
+        upcomingBookings,
+        completedBookings,
+        waitingBookings,
+        totalBookings,
       },
-      MessageCodes.BOOKING_LIST_RETRIEVED,
-      'Dashboard statistics retrieved successfully',
-      200,
-    );
+      nextBooking,
+    };
   }
 
   /**
@@ -1651,7 +1575,7 @@ export class BookingsService {
       limit?: number;
       currentUser?: User;
     },
-  ): Promise<ApiResponse<any>> {
+  ) {
     const { search, page = 1, limit = 10 } = options;
 
     const patientWhere: Prisma.PatientProfileWhereInput = {};
@@ -1734,20 +1658,15 @@ export class BookingsService {
       }),
     );
 
-    return ResponseHelper.success(
-      {
-        patients,
-        pagination: {
-          total: totalDistinct.length,
-          page,
-          limit,
-          totalPages: Math.ceil(totalDistinct.length / limit),
-        },
+    return {
+      patients,
+      pagination: {
+        total: totalDistinct.length,
+        page,
+        limit,
+        totalPages: Math.ceil(totalDistinct.length / limit),
       },
-      MessageCodes.BOOKING_LIST_RETRIEVED,
-      'My patients retrieved successfully',
-      200,
-    );
+    };
   }
 
   async checkIn(bookingId: string, userId: string) {
@@ -1810,7 +1729,7 @@ export class BookingsService {
     });
   }
 
-  async getReceptionistDashboardStats(): Promise<ApiResponse<any>> {
+  async getReceptionistDashboardStats() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
@@ -1850,15 +1769,11 @@ export class BookingsService {
       }
     });
 
-    return ResponseHelper.success(
-      {
-        pending: { value: result.pending, trend: 0, trendDir: 'neutral' },
-        confirmed: { value: result.confirmed, trend: 0, trendDir: 'neutral' },
-        completed: { value: result.completed, trend: 0, trendDir: 'neutral' },
-        cancelled: { value: result.cancelled, trend: 0, trendDir: 'neutral' },
-      },
-      MessageCodes.BOOKING_LIST_RETRIEVED,
-      'Receptionist dashboard stats fetched successfully',
-    );
+    return {
+      pending: { value: result.pending, trend: 0, trendDir: 'neutral' },
+      confirmed: { value: result.confirmed, trend: 0, trendDir: 'neutral' },
+      completed: { value: result.completed, trend: 0, trendDir: 'neutral' },
+      cancelled: { value: result.cancelled, trend: 0, trendDir: 'neutral' },
+    };
   }
 }

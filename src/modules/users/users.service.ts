@@ -25,7 +25,6 @@ import { FilterPatientDto } from './dto/filter-patient.dto';
 import { UpdatePatientProfileDto } from './dto/update-patient-profile.dto';
 import { Prisma, UserRole, Gender } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { RedisService } from '../database/services/redis.service';
@@ -123,12 +122,7 @@ export class UsersService {
       doctorProfileData,
     );
 
-    return ResponseHelper.success(
-      user,
-      MessageCodes.USER_CREATED,
-      'User created successfully',
-      201,
-    );
+    return user;
   }
 
   /**
@@ -163,12 +157,7 @@ export class UsersService {
     );
 
     if (existingUser) {
-      return ResponseHelper.success(
-        existingUser,
-        MessageCodes.USER_ALREADY_EXISTS,
-        'Patient already has an account',
-        200,
-      );
+      return existingUser;
     }
 
     // 2. Check if Guest PatientProfile with this phone exists
@@ -208,12 +197,7 @@ export class UsersService {
           profileData,
         );
 
-      return ResponseHelper.success(
-        upgradedUserWithProfile,
-        MessageCodes.USER_UPDATED,
-        'Guest patient upgraded to account successfully',
-        200,
-      );
+      return upgradedUserWithProfile;
     }
 
     // 3. Create fresh User and PatientProfile
@@ -251,12 +235,7 @@ export class UsersService {
       profileData,
     );
 
-    return ResponseHelper.success(
-      result,
-      MessageCodes.USER_CREATED,
-      'Patient account created successfully',
-      201,
-    );
+    return result;
   }
 
   /**
@@ -277,21 +256,16 @@ export class UsersService {
     const existingUser = await this.userRepository.findByPhone(phone);
 
     if (existingUser) {
-      return ResponseHelper.success(
-        {
-          id: existingUser.id,
-          fullName: existingUser.fullName,
-          phone: existingUser.phone,
-          dateOfBirth: existingUser.dateOfBirth,
-          gender: existingUser.gender,
-          address: existingUser.address,
-          role: UserRole.PATIENT,
-          patientProfile: existingUser.patientProfile,
-        },
-        MessageCodes.USER_RETRIEVED,
-        'Patient already exists with a system account',
-        200,
-      );
+      return {
+        id: existingUser.id,
+        fullName: existingUser.fullName,
+        phone: existingUser.phone,
+        dateOfBirth: existingUser.dateOfBirth,
+        gender: existingUser.gender,
+        address: existingUser.address,
+        role: UserRole.PATIENT,
+        patientProfile: existingUser.patientProfile,
+      };
     }
 
     // 2. Check if Guest PatientProfile with this phone exists
@@ -299,24 +273,19 @@ export class UsersService {
       await this.profileRepository.findGuestPatientByPhone(phone);
 
     if (existingGuest) {
-      return ResponseHelper.success(
-        {
+      return {
+        id: existingGuest.id,
+        fullName: existingGuest.fullName,
+        phone: existingGuest.phone,
+        dateOfBirth: existingGuest.dateOfBirth,
+        gender: existingGuest.gender,
+        address: existingGuest.address,
+        role: UserRole.PATIENT,
+        patientProfile: {
           id: existingGuest.id,
-          fullName: existingGuest.fullName,
-          phone: existingGuest.phone,
-          dateOfBirth: existingGuest.dateOfBirth,
-          gender: existingGuest.gender,
-          address: existingGuest.address,
-          role: UserRole.PATIENT,
-          patientProfile: {
-            id: existingGuest.id,
-            patientCode: existingGuest.patientCode,
-          },
+          patientCode: existingGuest.patientCode,
         },
-        MessageCodes.USER_RETRIEVED,
-        'Guest patient found',
-        200,
-      );
+      };
     }
 
     // 3. Create new Guest Profile
@@ -337,24 +306,19 @@ export class UsersService {
       { data: guestData },
     );
 
-    return ResponseHelper.success(
-      {
+    return {
+      id: guestProfile.id,
+      fullName: guestProfile.fullName,
+      phone: guestProfile.phone,
+      dateOfBirth: guestProfile.dateOfBirth,
+      gender: guestProfile.gender,
+      address: guestProfile.address,
+      role: UserRole.PATIENT,
+      patientProfile: {
         id: guestProfile.id,
-        fullName: guestProfile.fullName,
-        phone: guestProfile.phone,
-        dateOfBirth: guestProfile.dateOfBirth,
-        gender: guestProfile.gender,
-        address: guestProfile.address,
-        role: UserRole.PATIENT,
-        patientProfile: {
-          id: guestProfile.id,
-          patientCode: guestProfile.patientCode,
-        },
+        patientCode: guestProfile.patientCode,
       },
-      MessageCodes.USER_CREATED,
-      'Guest patient created successfully',
-      201,
-    );
+    };
   }
 
   /**
@@ -439,20 +403,15 @@ export class UsersService {
       };
     });
 
-    return ResponseHelper.success(
-      {
-        users,
-        pagination: {
-          total,
-          page: pPage,
-          limit: pLimit,
-          totalPages: Math.ceil(total / pLimit),
-        },
+    return {
+      users,
+      pagination: {
+        total,
+        page: pPage,
+        limit: pLimit,
+        totalPages: Math.ceil(total / pLimit),
       },
-      MessageCodes.USER_LIST_RETRIEVED,
-      'Patient profiles retrieved successfully',
-      200,
-    );
+    };
   }
 
   /**
@@ -469,16 +428,11 @@ export class UsersService {
       this.bookingRepository.countActiveAppointmentsGroup(startOfToday),
     ]);
 
-    return ResponseHelper.success(
-      {
-        totalPatients,
-        newToday,
-        activeAppointments,
-      },
-      MessageCodes.PATIENT_STATS_RETRIEVED,
-      'Patient statistics retrieved successfully',
-      200,
-    );
+    return {
+      totalPatients,
+      newToday,
+      activeAppointments,
+    };
   }
 
   /**
@@ -545,12 +499,7 @@ export class UsersService {
       );
     }
 
-    return ResponseHelper.success(
-      result,
-      MessageCodes.PATIENT_UPDATED,
-      'Patient profile updated successfully',
-      200,
-    );
+    return result;
   }
 
   /**
@@ -598,20 +547,15 @@ export class UsersService {
       sortOrder,
     );
 
-    return ResponseHelper.success(
-      {
-        users,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    return {
+      users,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      MessageCodes.USER_LIST_RETRIEVED,
-      'Users retrieved successfully',
-      200,
-    );
+    };
   }
 
   /**
@@ -639,12 +583,7 @@ export class UsersService {
         };
       }>(cacheKey);
       if (cached) {
-        return ResponseHelper.success(
-          cached,
-          MessageCodes.USER_LIST_RETRIEVED,
-          'Doctors retrieved successfully (cached)',
-          200,
-        );
+        return cached;
       }
     }
 
@@ -687,12 +626,7 @@ export class UsersService {
       await this.redisService.setJson(cacheKey, result, 7200);
     }
 
-    return ResponseHelper.success(
-      result,
-      MessageCodes.USER_LIST_RETRIEVED,
-      'Doctors retrieved successfully',
-      200,
-    );
+    return result;
   }
 
   /**
@@ -710,12 +644,7 @@ export class UsersService {
       );
     }
 
-    return ResponseHelper.success(
-      user,
-      MessageCodes.USER_RETRIEVED,
-      'Doctor retrieved successfully',
-      200,
-    );
+    return user;
   }
 
   /**
@@ -733,12 +662,7 @@ export class UsersService {
       );
     }
 
-    return ResponseHelper.success(
-      user,
-      MessageCodes.USER_RETRIEVED,
-      'User retrieved successfully',
-      200,
-    );
+    return user;
   }
 
   /**
@@ -865,12 +789,7 @@ export class UsersService {
       await this.clearPublicDoctorsCache();
     }
 
-    return ResponseHelper.success(
-      updatedUser,
-      MessageCodes.USER_UPDATED,
-      'User updated successfully',
-      200,
-    );
+    return updatedUser;
   }
 
   /**
@@ -943,12 +862,7 @@ export class UsersService {
     // Update password
     await this.userRepository.update(userId, { password: hashedPassword });
 
-    return ResponseHelper.success(
-      null,
-      MessageCodes.USER_UPDATED,
-      'Password changed successfully',
-      200,
-    );
+    return null;
   }
 
   /**
@@ -974,12 +888,7 @@ export class UsersService {
       await this.clearPublicDoctorsCache();
     }
 
-    return ResponseHelper.success(
-      deletedUser,
-      MessageCodes.USER_DELETED,
-      'User deleted successfully',
-      200,
-    );
+    return deletedUser;
   }
 
   /**
@@ -988,11 +897,6 @@ export class UsersService {
   async getStatistics() {
     const stats = await this.userRepository.getUserStatistics();
 
-    return ResponseHelper.success(
-      stats,
-      MessageCodes.USER_LIST_RETRIEVED,
-      'User statistics retrieved successfully',
-      200,
-    );
+    return stats;
   }
 }
