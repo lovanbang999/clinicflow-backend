@@ -108,8 +108,9 @@ export class TransformInterceptor<T> implements NestInterceptor<
           const paginatedData = data as ExpectedPaginatedData &
             Record<string, unknown>;
           const items = paginatedData.items;
-          const extraKeys = { ...paginatedData } as Partial<ExpectedPaginatedData> &
-            Record<string, unknown>;
+          const extraKeys = {
+            ...paginatedData,
+          } as Partial<ExpectedPaginatedData> & Record<string, unknown>;
           delete extraKeys.items;
           delete extraKeys.total;
           delete extraKeys.page;
