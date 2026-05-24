@@ -913,13 +913,10 @@ export class MedicalRecordsService {
         allergies: patientProfile.allergies,
         chronicConditions: patientProfile.chronicConditions,
       },
-      visits,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
+      items: visits,
+      total,
+      page,
+      limit,
     };
   }
 
