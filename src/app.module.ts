@@ -23,8 +23,11 @@ import { VisitServiceOrdersModule } from './modules/visit-service-orders/visit-s
 import { CategoriesModule } from './modules/categories/categories.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AiModule } from './modules/ai/ai.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 
 @Module({
+  controllers: [AppController],
   imports: [
     // Configuration
     ConfigModule.forRoot({
@@ -61,6 +64,7 @@ import { AiModule } from './modules/ai/ai.module';
     AiModule,
   ],
   providers: [
+    AppService,
     // Global rate limiter
     {
       provide: APP_GUARD,

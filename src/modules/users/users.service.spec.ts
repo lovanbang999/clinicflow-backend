@@ -1,5 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { UsersService } from './users.service';
+import { SequenceService } from '../database/services/sequence.service';
+import { RedisService } from '../database/services/redis.service';
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -19,6 +21,21 @@ describe('UsersService', () => {
         {
           provide: 'IBookingRepository',
           useValue: {},
+        },
+        {
+          provide: SequenceService,
+          useValue: {
+            generateNextSequence: jest.fn(),
+          },
+        },
+        {
+          provide: RedisService,
+          useValue: {
+            isReady: jest.fn().mockReturnValue(false),
+            getJson: jest.fn(),
+            setJson: jest.fn(),
+            delPattern: jest.fn(),
+          },
         },
       ],
     }).compile();

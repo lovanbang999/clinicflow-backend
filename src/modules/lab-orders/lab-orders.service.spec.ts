@@ -1,5 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { LabOrdersService } from './lab-orders.service';
+import { LabOrdersGateway } from './lab-orders.gateway';
+import { BillingService } from '../billing/billing.service';
+import { MedicalRecordsService } from '../medical-records/medical-records.service';
 
 describe('LabOrdersService', () => {
   let service: LabOrdersService;
@@ -21,15 +24,15 @@ describe('LabOrdersService', () => {
           useValue: {},
         },
         {
-          provide: 'LabOrdersGateway',
+          provide: LabOrdersGateway,
           useValue: {},
         },
         {
-          provide: 'BillingService',
+          provide: BillingService,
           useValue: {},
         },
         {
-          provide: 'MedicalRecordsService',
+          provide: MedicalRecordsService,
           useValue: {},
         },
       ],
