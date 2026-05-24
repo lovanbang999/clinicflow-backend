@@ -105,7 +105,7 @@ export class TransformInterceptor<T> implements NestInterceptor<
           const totalPages = Math.ceil(total / limit) || 1;
           
           // Separate items, total, page, limit from other potential keys
-          const { items, total: _, page: __, limit: ___, ...extraKeys } = data as any;
+          const { items, total: _, page: __, limit: ___, ...extraKeys } = data as ExpectedPaginatedData & Record<string, unknown>;
           
           return {
             success: true,
