@@ -285,6 +285,7 @@ export class BookingValidatorService {
       [BookingStatus.PENDING]: [
         BookingStatus.CONFIRMED,
         BookingStatus.CANCELLED,
+        BookingStatus.NO_SHOW,
       ],
       [BookingStatus.CONFIRMED]: [
         BookingStatus.CHECKED_IN,
