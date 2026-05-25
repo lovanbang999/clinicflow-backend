@@ -1,34 +1,37 @@
 <h2>Chào {{patientName}},</h2>
-<p>Cảm ơn bạn đã tin tưởng và thăm khám tại Smart Clinic hôm nay. Buổi tư vấn của bạn với <strong>Bác sĩ {{doctorName}}</strong> đã hoàn tất.</p>
 
-<div class="section-card" style="border-left-color: #10b981;">
-    <div class="section-title">Tóm tắt buổi khám</div>
+<p>Cảm ơn quý khách đã tin tưởng lựa chọn dịch vụ và thăm khám tại Smart Clinic ngày hôm nay. Buổi khám bệnh và tư vấn y khoa của quý khách với bác sĩ <strong>{{doctorName}}</strong> đã hoàn thành tốt đẹp.</p>
+
+<div class="section-card">
+    <div class="section-title">Tóm tắt thông tin buổi khám</div>
     
     <div class="detail-row">
-        <span class="detail-label">Ngày:</span>
+        <span class="detail-label">Ngày khám:</span>
         <span class="detail-value">{{bookingDate}}</span>
     </div>
     
     <div class="detail-row">
-        <span class="detail-label">Dịch vụ:</span>
+        <span class="detail-label">Dịch vụ thực hiện:</span>
         <span class="detail-value">{{serviceName}}</span>
     </div>
     
     {{#if diagnosisName}}
     <div class="detail-row">
-        <span class="detail-label">Chẩn đoán:</span>
+        <span class="detail-label">Chẩn đoán y khoa:</span>
         <span class="detail-value">{{diagnosisName}}</span>
     </div>
     {{/if}}
 </div>
 
 {{#if hasPrescription}}
-<div class="section-card" style="background-color: #eff6ff; border-left-color: #3b82f6;">
-    <div class="section-title" style="color: #2563eb;">Thông tin đơn thuốc</div>
-    <p style="margin-bottom: 0; font-weight: 500;">Bác sĩ đã kê đơn thuốc cho bạn. Vui lòng di chuyển đến <strong>Quầy Dược / Quầy Lễ tân</strong> để nhận thuốc và hoàn tất thanh toán chi phí thuốc.</p>
+<div class="status-alert pending">
+    <div class="status-alert-title">Thông tin nhận đơn thuốc</div>
+    <div class="status-alert-body">Bác sĩ đã kê đơn thuốc điện tử cho quý khách. Kính mời quý khách di chuyển đến <strong>Quầy Dược / Nhà Thuốc của Smart Clinic</strong> để nhận thuốc và thanh toán chi phí đơn thuốc theo hướng dẫn của dược sĩ.</div>
 </div>
 {{/if}}
 
-<p>Chúc bạn sớm hồi phục sức khỏe và luôn mạnh khỏe!</p>
+<p>Để theo dõi lịch sử khám bệnh, các kết quả xét nghiệm (nếu có) cũng như đơn thuốc chi tiết, quý khách có thể đăng nhập vào tài khoản cá nhân trên cổng thông tin điện tử của phòng khám.</p>
 
-<p>Trân trọng,<br>Đội ngũ Smart Clinic</p>
+<p>Kính chúc quý khách và gia đình luôn dồi dào sức khỏe, bình an.</p>
+
+<p>Trân trọng,<br><strong>Đội ngũ phòng khám đa khoa Smart Clinic</strong></p>

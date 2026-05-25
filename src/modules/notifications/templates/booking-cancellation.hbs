@@ -1,8 +1,12 @@
-<h2>Chào bạn {{patientName}},</h2>
-<p>Chúng tôi rất tiếc phải thông báo rằng lịch hẹn khám của bạn đã được hủy.</p>
+<h2>Chào {{patientName}},</h2>
 
-<div class="section-card" style="border-left-color: #ef4444;">
-    <div class="section-title">Chi tiết lịch hẹn đã hủy</div>
+<div class="status-alert cancelled">
+    <div class="status-alert-title">Lịch hẹn đã hủy thành công</div>
+    <div class="status-alert-body">Chúng tôi xác nhận yêu cầu hủy lịch hẹn khám của bạn tại Smart Clinic đã được xử lý thành công.</div>
+</div>
+
+<div class="section-card" style="border-left-color: #dc2626;">
+    <div class="section-title" style="color: #dc2626;">Chi tiết lịch hẹn đã hủy</div>
     
     <div class="detail-row">
         <span class="detail-label">Mã đặt lịch:</span>
@@ -20,22 +24,22 @@
     </div>
     
     <div class="detail-row">
-        <span class="detail-label">Ngày khám:</span>
+        <span class="detail-label">Ngày khám trước đó:</span>
         <span class="detail-value">{{bookingDate}}</span>
     </div>
     
     <div class="detail-row">
-        <span class="detail-label">Thời gian:</span>
+        <span class="detail-label">Khung giờ đặt:</span>
         <span class="detail-value">{{startTime}} - {{endTime}}</span>
     </div>
 </div>
 
-<p>Nếu bạn không yêu cầu hủy lịch này hoặc có bất kỳ thắc mắc nào, vui lòng liên hệ với chúng tôi qua hotline hoặc ứng dụng ngay lập tức.</p>
+<p>Nếu quý khách không yêu cầu hủy lịch này hoặc có bất kỳ nhầm lẫn nào, vui lòng liên hệ ngay với phòng khám qua hotline để được hỗ trợ khôi phục kịp thời.</p>
 
 <div class="cta-container">
-    <a href="{{rebookUrl}}" class="button">Đặt lịch hẹn mới</a>
+    <a href="{{rebookUrl}}" class="button" style="background-color: #0f766e;">Đặt lịch hẹn mới</a>
 </div>
 
-<p>Hy vọng được phục vụ bạn trong lần tới!</p>
+<p>Smart Clinic luôn sẵn sàng đồng hành cùng sức khỏe của quý khách. Hy vọng được phục vụ quý khách trong thời gian tới.</p>
 
-<p>Trân trọng,<br>Đội ngũ Smart Clinic</p>
+<p>Trân trọng,<br><strong>Đội ngũ phòng khám đa khoa Smart Clinic</strong></p>

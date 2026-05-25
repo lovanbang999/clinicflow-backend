@@ -142,7 +142,7 @@ export class MailService {
    * Send welcome email after verification
    */
   async sendWelcomeEmail(email: string, fullName: string): Promise<void> {
-    const subject = 'Chào mừng bạn đến với Smart Clinic! 🎉';
+    const subject = 'Chào mừng bạn đến với Smart Clinic - Smart Clinic';
     const loginUrl = `${this.configService.get('FRONTEND_URL')}/login`;
     const html = this.compile('welcome', {
       fullName,
