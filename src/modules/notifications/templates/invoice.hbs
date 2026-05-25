@@ -1,12 +1,13 @@
 <h2>Chào {{patientName}},</h2>
-<p>Smart Clinic gửi đến bạn thông tin hóa đơn cho dịch vụ bạn đã sử dụng.</p>
 
-<div class="section-card" style="border-left-color: #6366f1;">
+<p>Phòng khám đa khoa Smart Clinic xin gửi đến quý khách thông tin tóm tắt hóa đơn thanh toán cho các dịch vụ y tế quý khách đã sử dụng.</p>
+
+<div class="section-card" style="border-left-color: #0f766e;">
     <div class="section-title">Thông tin hóa đơn</div>
     
     <div class="detail-row">
         <span class="detail-label">Số hóa đơn:</span>
-        <span class="detail-value">{{invoiceNumber}}</span>
+        <span class="detail-value" style="font-family: monospace; font-size: 15px;">{{invoiceNumber}}</span>
     </div>
     
     <div class="detail-row">
@@ -15,24 +16,24 @@
     </div>
     
     <div class="detail-row">
-        <span class="detail-label">Loại dịch vụ:</span>
+        <span class="detail-label">Loại hóa đơn:</span>
         <span class="detail-value">{{invoiceType}}</span>
     </div>
     
-    <div style="margin-top: 15px; padding-top: 15px; border-top: 1px dashed #cbd5e1;">
-        <div class="detail-row" style="font-size: 18px;">
-            <span class="detail-label">Tổng thanh toán:</span>
-            <span class="detail-value" style="color: #2563eb;">{{totalAmount}}</span>
+    <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e2e8f0;">
+        <div class="detail-row" style="font-size: 16px; font-weight: 700;">
+            <span class="detail-label" style="color: #0f172a;">Tổng thanh toán:</span>
+            <span class="detail-value" style="color: #0f766e; font-size: 18px;">{{totalAmount}}</span>
         </div>
     </div>
 </div>
 
-<p>Bạn có thể xem chi tiết hóa đơn và lịch sử thanh toán trên ứng dụng hoặc cổng thông tin bệnh nhân của chúng tôi.</p>
+<p>Quý khách có thể xem, tải về hóa đơn điện tử VAT chi tiết và tra cứu lịch sử thanh toán bất kỳ lúc nào trên cổng thông tin dành cho bệnh nhân.</p>
 
 <div class="cta-container">
-    <a href="{{invoiceUrl}}" class="button">Xem hóa đơn chi tiết</a>
+    <a href="{{invoiceUrl}}" class="button" style="background-color: #0f766e;">Xem hóa đơn chi tiết</a>
 </div>
 
-<p>Nếu có bất kỳ thắc mắc nào về hóa đơn, vui lòng liên hệ bộ phận kế toán của chúng tôi.</p>
+<p>Nếu có bất kỳ thắc mắc hay phản ánh nào liên quan đến chi phí dịch vụ, kính mong quý khách liên hệ bộ phận Kế toán / Thu ngân của phòng khám qua hotline để được giải đáp nhanh chóng.</p>
 
-<p>Trân trọng,<br>Đội ngũ Smart Clinic</p>
+<p>Trân trọng,<br><strong>Bộ phận Tài chính - Phòng khám đa khoa Smart Clinic</strong></p>

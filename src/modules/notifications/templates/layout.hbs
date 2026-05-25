@@ -9,60 +9,69 @@
         body {
             margin: 0;
             padding: 0;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
             background-color: #f8fafc;
-            color: #1e293b;
+            color: #334155;
             line-height: 1.6;
         }
 
         /* Container */
         .email-wrapper {
             max-width: 600px;
-            margin: 20px auto;
+            margin: 30px auto;
             background-color: #ffffff;
-            border-radius: 20px;
+            border-top: 4px solid #0f766e;
+            border-left: 1px solid #e2e8f0;
+            border-right: 1px solid #e2e8f0;
+            border-bottom: 1px solid #e2e8f0;
+            border-radius: 8px;
             overflow: hidden;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
         }
 
         /* Header */
         .header {
-            background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%);
-            padding: 40px 20px;
-            text-align: center;
-            color: #ffffff;
+            padding: 32px 30px 24px 30px;
+            border-bottom: 1px solid #f1f5f9;
+            background-color: #ffffff;
         }
 
-        .header h1 {
+        .header-title {
             margin: 0;
-            font-size: 28px;
-            font-weight: 800;
-            letter-spacing: -0.025em;
+            font-size: 24px;
+            font-weight: 700;
+            color: #0f172a;
+            letter-spacing: -0.02em;
         }
 
-        .header p {
-            margin: 10px 0 0;
-            opacity: 0.9;
-            font-size: 16px;
+        .header-subtitle {
+            margin: 4px 0 0 0;
+            font-size: 14px;
+            color: #0f766e;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
         /* Content Area */
         .content {
-            padding: 40px 30px;
+            padding: 32px 30px;
         }
 
         .content h2 {
             margin-top: 0;
+            margin-bottom: 16px;
             color: #0f172a;
-            font-size: 24px;
-            font-weight: 700;
+            font-size: 18px;
+            font-weight: 600;
         }
 
         /* Typography */
         p {
-            margin-bottom: 20px;
-            font-size: 16px;
-            color: #475569;
+            margin-top: 0;
+            margin-bottom: 18px;
+            font-size: 15px;
+            color: #334155;
+            line-height: 1.6;
         }
 
         /* Call to Action */
@@ -73,53 +82,87 @@
 
         .button {
             display: inline-block;
-            background-color: #2563eb;
+            background-color: #0f766e;
             color: #ffffff !important;
-            padding: 14px 32px;
-            border-radius: 12px;
+            padding: 12px 28px;
+            border-radius: 6px;
             text-decoration: none;
             font-weight: 600;
-            font-size: 16px;
-            transition: background-color 0.2s;
+            font-size: 15px;
+            text-align: center;
         }
 
-        /* Cards/Sections */
+        /* Card Section */
         .section-card {
-            background-color: #f1f5f9;
-            border-radius: 16px;
-            padding: 24px;
+            background-color: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-left: 4px solid #0f766e;
+            border-radius: 6px;
+            padding: 20px;
             margin: 20px 0;
-            border-left: 4px solid #0ea5e9;
         }
 
         .section-title {
-            font-weight: 700;
-            color: #0f172a;
-            margin-bottom: 16px;
             font-size: 13px;
+            font-weight: 700;
+            color: #0f766e;
+            margin-top: 0;
+            margin-bottom: 12px;
             text-transform: uppercase;
-            letter-spacing: 0.1em;
-            display: flex;
-            align-items: center;
+            letter-spacing: 0.05em;
         }
 
-        .section-title::before {
-            content: "";
-            display: inline-block;
-            width: 4px;
-            height: 4px;
-            background-color: currentColor;
-            border-radius: 50%;
-            margin-right: 12px;
-            box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.05);
+        /* Status Hộp Thông Báo */
+        .status-alert {
+            border-radius: 6px;
+            padding: 16px 20px;
+            margin: 20px 0;
+            border-left: 4px solid transparent;
+            font-size: 14px;
+        }
+
+        .status-alert.pending {
+            background-color: #fffbeb;
+            border-left-color: #d97706;
+            color: #78350f;
+        }
+
+        .status-alert.confirmed {
+            background-color: #f0fdf4;
+            border-left-color: #059669;
+            color: #064e3b;
+        }
+
+        .status-alert.cancelled {
+            background-color: #fef2f2;
+            border-left-color: #dc2626;
+            color: #7f1d1d;
+        }
+
+        .status-alert-title {
+            font-weight: 700;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            font-size: 13px;
+        }
+
+        .status-alert-body {
+            margin: 0;
+            line-height: 1.5;
         }
 
         /* Details */
         .detail-row {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 8px;
-            font-size: 15px;
+            margin-bottom: 10px;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .detail-row:last-child {
+            margin-bottom: 0;
         }
 
         .detail-label {
@@ -128,46 +171,46 @@
         }
 
         .detail-value {
-            color: #1e293b;
+            color: #0f172a;
             font-weight: 600;
             text-align: right;
+            max-width: 60%;
+            word-break: break-all;
         }
 
         /* OTP Code Style */
         .otp-box {
-            background-color: #ffffff;
-            border: 2px dashed #0ea5e9;
-            padding: 20px;
+            background-color: #f0fdf4;
+            border: 1px solid #ccfbf1;
+            padding: 18px;
             text-align: center;
-            font-size: 32px;
-            font-weight: 800;
+            font-size: 28px;
+            font-weight: 700;
             letter-spacing: 0.2em;
-            color: #2563eb;
-            margin: 25px 0;
-            border-radius: 12px;
+            color: #0f766e;
+            margin: 24px 0;
+            border-radius: 6px;
         }
 
         /* Footer */
         .footer {
-            padding: 30px;
+            padding: 24px 30px;
             text-align: center;
             background-color: #f8fafc;
             border-top: 1px solid #e2e8f0;
         }
 
         .footer p {
-            margin: 5px 0;
-            font-size: 13px;
-            color: #94a3b8;
-        }
-
-        .social-links {
-            margin: 15px 0;
+            margin: 4px 0;
+            font-size: 12px;
+            color: #64748b;
         }
 
         .copyright {
-            margin-top: 20px;
-            font-weight: 500;
+            margin-top: 16px;
+            font-weight: 600;
+            color: #475569;
+            font-size: 12px;
         }
 
         /* Responsive */
@@ -176,9 +219,14 @@
                 margin: 0;
                 width: 100% !important;
                 border-radius: 0;
+                border-left: none;
+                border-right: none;
             }
             .content {
-                padding: 30px 20px;
+                padding: 24px 20px;
+            }
+            .header {
+                padding: 24px 20px 18px 20px;
             }
         }
     </style>
@@ -186,8 +234,8 @@
 <body>
     <div class="email-wrapper">
         <div class="header">
-            <h1>Smart Clinic</h1>
-            <p>{{#if subheader}}{{subheader}}{{else}}Chăm Sóc Sức Khỏe Toàn Diện{{/if}}</p>
+            <h1 class="header-title">Smart Clinic</h1>
+            <div class="header-subtitle">{{#if subheader}}{{subheader}}{{else}}Chăm Sóc Sức Khỏe Toàn Diện{{/if}}</div>
         </div>
 
         <div class="content">
@@ -200,7 +248,7 @@
             <div class="copyright">
                 &copy; 2026 Smart Clinic. Bảo lưu mọi quyền.
             </div>
-            <p>Phòng khám Đa khoa Smart Clinic - Chăm sóc tận tâm, nâng tầm sức khỏe.</p>
+            <p style="margin-top: 8px; font-weight: 500;">Phòng khám Đa khoa Smart Clinic - Chăm sóc tận tâm, nâng tầm sức khỏe.</p>
         </div>
     </div>
 </body>
