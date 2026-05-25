@@ -27,6 +27,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { UserRole, DayOfWeek, User } from '@prisma/client';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ResponseMessage } from '../../common/decorators/response-message.decorator';
@@ -349,6 +350,7 @@ export class SchedulesController {
   }
 
   @Post('reserve-slot')
+  @Authenticated()
   @ResponseMessage(MessageCodes.SLOT_RESERVED, 'Slot reserved successfully')
   @ApiOperation({ summary: 'Temporarily lock a time slot for 5 minutes' })
   reserveSlot(
@@ -371,6 +373,7 @@ export class SchedulesController {
   }
 
   @Post('release-slot')
+  @Authenticated()
   @HttpCode(HttpStatus.OK)
   @ResponseMessage(MessageCodes.SLOT_RELEASED, 'Slot released successfully')
   @ApiOperation({ summary: 'Release a temporarily locked time slot' })
