@@ -8,6 +8,7 @@ import {
   Injectable,
   NotFoundException,
   Inject,
+  Logger,
 } from '@nestjs/common';
 import {
   Prisma,
@@ -22,6 +23,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class VisitServiceOrdersService {
+  private readonly logger = new Logger(VisitServiceOrdersService.name);
+
   constructor(
     @Inject(I_CLINICAL_REPOSITORY)
     private readonly clinicalRepository: IClinicalRepository,
@@ -88,6 +91,10 @@ export class VisitServiceOrdersService {
         startedAt: new Date(),
       },
     });
+
+    this.logger.log(
+      `Technician ${technicianId} started service order ${orderId} successfully`,
+    );
 
     return updated;
   }
@@ -180,9 +187,9 @@ export class VisitServiceOrdersService {
                   },
                 })
                 .catch((err) =>
-                  console.error(
-                    'Failed to send notification for RESULTS_READY',
-                    err,
+                  this.logger.error(
+                    'Failed to send notification for RESULTS_READY:',
+                    err instanceof Error ? err.stack : String(err),
                   ),
                 );
             }
@@ -191,6 +198,10 @@ export class VisitServiceOrdersService {
 
         return completed;
       },
+    );
+
+    this.logger.log(
+      `Technician ${technicianId} completed service order ${orderId} successfully`,
     );
 
     return updatedOrder;

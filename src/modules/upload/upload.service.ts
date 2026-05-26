@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Inject,
+  Logger,
+} from '@nestjs/common';
 import { extname } from 'path';
 import { promises as fs } from 'fs';
 import * as streamifier from 'streamifier';
@@ -29,6 +34,8 @@ export class UploadService {
     @Inject(CLOUDINARY) private readonly cloudinary: typeof CloudinaryType,
   ) {}
 
+  private readonly logger = new Logger(UploadService.name);
+
   async uploadIcon(
     file: Express.Multer.File | undefined,
   ): Promise<UploadResult> {
@@ -54,7 +61,10 @@ export class UploadService {
       });
     } catch (e) {
       // ignore if already deleted / not found
-      console.log('Cloudinary delete failed:', publicId, e);
+      this.logger.warn(
+        `Cloudinary delete failed for publicId: ${publicId}`,
+        e instanceof Error ? e.message : String(e),
+      );
     }
   }
 
@@ -98,7 +108,10 @@ export class UploadService {
       });
     } catch (e) {
       // ignore if already deleted / not found
-      console.log('Cloudinary delete failed:', publicId, e);
+      this.logger.warn(
+        `Cloudinary delete failed for publicId: ${publicId}`,
+        e instanceof Error ? e.message : String(e),
+      );
     }
   }
 

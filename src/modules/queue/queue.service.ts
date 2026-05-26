@@ -1,4 +1,9 @@
-import { Injectable, Inject, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
 import {
   IBookingRepository,
   I_BOOKING_REPOSITORY,
@@ -23,6 +28,8 @@ import { startOfDay, endOfDay, parseISO } from 'date-fns';
 
 @Injectable()
 export class QueueService {
+  private readonly logger = new Logger(QueueService.name);
+
   constructor(
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
@@ -141,18 +148,35 @@ export class QueueService {
       return { booking: updatedBooking, queue: queueRecord };
     });
 
-    // Broadcast real-time update
-    this.queueGateway.broadcastQueueUpdate(
-      booking.doctorId,
-      'CHECK_IN',
-      result,
+    this.logger.log(
+      `Patient checked-in and added to queue successfully: Booking: ${bookingId}, STT: ${currentPosition}, Doctor: ${booking.doctorId}`,
     );
 
+    // Broadcast real-time update
+    try {
+      this.queueGateway.broadcastQueueUpdate(
+        booking.doctorId,
+        'CHECK_IN',
+        result,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to broadcast queue update for doctor ${booking.doctorId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     // Recalculate estimated times for the doctor's queue today
-    await this.recalculateEstimatedTimes(
-      booking.doctorId,
-      booking.bookingDate.toISOString().split('T')[0],
-    );
+    try {
+      await this.recalculateEstimatedTimes(
+        booking.doctorId,
+        booking.bookingDate.toISOString().split('T')[0],
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to recalculate estimated times for doctor ${booking.doctorId} on ${booking.bookingDate.toISOString()}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
 
     // Notify staff
     const statusLabels: Record<string, string> = {
@@ -163,11 +187,18 @@ export class QueueService {
     };
 
     if (statusLabels[BookingStatus.CHECKED_IN]) {
-      await this.notificationsService.notifyAdmins({
-        title: 'Cập nhật lịch hẹn',
-        content: `Lịch hẹn của ${booking.patientProfile.fullName} đã vào hàng đợi (STT: ${currentPosition}).`,
-        metadata: { bookingId: booking.id, status: BookingStatus.CHECKED_IN },
-      });
+      try {
+        await this.notificationsService.notifyAdmins({
+          title: 'Cập nhật lịch hẹn',
+          content: `Lịch hẹn của ${booking.patientProfile.fullName} đã vào hàng đợi (STT: ${currentPosition}).`,
+          metadata: { bookingId: booking.id, status: BookingStatus.CHECKED_IN },
+        });
+      } catch (err) {
+        this.logger.error(
+          `Failed to notify admins for booking check-in ${booking.id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
     }
 
     return result;
@@ -524,12 +555,23 @@ export class QueueService {
       reason || 'Manual promotion by staff',
     );
 
-    // Broadcast the promotion event
-    this.queueGateway.broadcastQueueUpdate(
-      queueRecord.booking.doctorId,
-      'PROMOTED',
-      result.booking,
+    this.logger.log(
+      `Successfully promoted booking ${bookingId} manually by user ${promotedBy}`,
     );
+
+    // Broadcast the promotion event (non-blocking)
+    try {
+      this.queueGateway.broadcastQueueUpdate(
+        queueRecord.booking.doctorId,
+        'PROMOTED',
+        result.booking,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to broadcast manual promotion for booking ${bookingId}:`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
 
     return result.booking;
   }
@@ -595,11 +637,23 @@ export class QueueService {
       'Auto-promoted from queue',
     );
 
-    this.queueGateway.broadcastQueueUpdate(
-      doctorId,
-      'PROMOTED',
-      result.booking,
+    this.logger.log(
+      `Successfully auto-promoted booking ${firstInQueue.bookingId} from queue`,
     );
+
+    // Broadcast the promotion event (non-blocking)
+    try {
+      this.queueGateway.broadcastQueueUpdate(
+        doctorId,
+        'PROMOTED',
+        result.booking,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to broadcast auto-promotion for booking ${firstInQueue.bookingId}:`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
 
     return true;
   }
@@ -634,6 +688,22 @@ export class QueueService {
         queueRecord.queuePosition,
       );
     });
+
+    this.logger.log(`Successfully removed booking ${bookingId} from queue`);
+
+    // Broadcast queue update since positions shifted (non-blocking)
+    try {
+      this.queueGateway.broadcastQueueUpdate(
+        queueRecord.booking.doctorId,
+        'UPDATE',
+        { bookingId },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to broadcast queue update after removing booking ${bookingId}:`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   // ============================================
@@ -709,7 +779,10 @@ export class QueueService {
 
     // Send queue promotion notification (non-blocking)
     this.sendQueuePromotionNotification(result.booking).catch((error) => {
-      console.error('Failed to send queue promotion notification:', error);
+      this.logger.error(
+        'Failed to send queue promotion notification:',
+        error instanceof Error ? error.stack : String(error),
+      );
     });
 
     return result;
@@ -806,7 +879,10 @@ export class QueueService {
           : undefined,
       });
     } catch (error) {
-      console.error('Failed to send queue promotion notification:', error);
+      this.logger.error(
+        'Failed to send queue promotion notification:',
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 

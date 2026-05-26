@@ -10,7 +10,7 @@ import {
   IProfileRepository,
   I_PROFILE_REPOSITORY,
 } from '../database/interfaces/profile.repository.interface';
-import { Injectable, HttpStatus, Inject } from '@nestjs/common';
+import { Injectable, HttpStatus, Inject, Logger } from '@nestjs/common';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { CreateLabOrderDto } from './dto/create-lab-order.dto';
@@ -67,6 +67,8 @@ export interface InternalLabOrder extends LabOrder {
 
 @Injectable()
 export class LabOrdersService {
+  private readonly logger = new Logger(LabOrdersService.name);
+
   constructor(
     @Inject(I_CLINICAL_REPOSITORY)
     private readonly clinicalRepository: IClinicalRepository,
@@ -186,6 +188,9 @@ export class LabOrdersService {
     });
 
     if (!medicalRecord) {
+      this.logger.log(
+        `Medical record not found for booking: ${dto.bookingId}. Creating new one.`,
+      );
       medicalRecord = await this.clinicalRepository.createMedicalRecord({
         data: {
           bookingId: dto.bookingId,
@@ -200,6 +205,9 @@ export class LabOrdersService {
       // Advance step to SERVICES_ORDERED if it's currently at SYMPTOMS_TAKEN or less
       const currentStep = medicalRecord?.visitStep;
       if (currentStep === 'SYMPTOMS_TAKEN') {
+        this.logger.log(
+          `Advancing medical record step to SERVICES_ORDERED for record: ${medicalRecord?.id}`,
+        );
         await tx.medicalRecord.update({
           where: { id: medicalRecord?.id },
           data: {
@@ -223,8 +231,22 @@ export class LabOrdersService {
       });
     });
 
+    this.logger.log(
+      `Lab order created successfully: ${labOrder.id} for booking: ${dto.bookingId}`,
+    );
+
     // Automatically sync to draft invoice
-    await this.billingService.syncLabInvoice(dto.bookingId);
+    try {
+      await this.billingService.syncLabInvoice(dto.bookingId);
+      this.logger.log(
+        `Successfully synced lab invoice for booking: ${dto.bookingId}`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to sync lab invoice for booking ${dto.bookingId} after creating lab order`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
 
     return labOrder;
   }
@@ -577,16 +599,33 @@ export class LabOrdersService {
       },
     );
 
+    this.logger.log(
+      `Result added for lab order: ${labOrderId} by user: ${resultAuthorId}`,
+    );
+
     // Push real-time event to the doctor viewing this booking
-    this.labOrdersGateway.broadcastLabResultCompleted(order.bookingId, {
-      labOrderId,
-      testName: order.testName,
-    });
+    try {
+      this.labOrdersGateway.broadcastLabResultCompleted(order.bookingId, {
+        labOrderId,
+        testName: order.testName,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to broadcast lab result completed event: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     // CRITICAL: Check if all orders are now done and advance MedicalRecord step
-    await this.medicalRecordsService.checkAndAdvanceToResultsReady(
-      order.medicalRecordId,
-    );
+    try {
+      await this.medicalRecordsService.checkAndAdvanceToResultsReady(
+        order.medicalRecordId,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to check and advance medical record step to RESULTS_READY for record ${order.medicalRecordId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
 
     return updatedOrder;
   }
@@ -636,10 +675,21 @@ export class LabOrdersService {
       data: { status },
     });
 
+    this.logger.log(
+      `Lab order ${labOrderId} status updated from ${order.status} to ${status}`,
+    );
+
     if (status === LabOrderStatus.COMPLETED) {
-      await this.medicalRecordsService.checkAndAdvanceToResultsReady(
-        order.medicalRecordId,
-      );
+      try {
+        await this.medicalRecordsService.checkAndAdvanceToResultsReady(
+          order.medicalRecordId,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Failed to check and advance medical record step to RESULTS_READY for record ${order.medicalRecordId}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
     }
 
     return updatedOrder;
@@ -698,23 +748,48 @@ export class LabOrdersService {
     // Explicitly remove the invoice item BEFORE deleting the lab order
     // This ensures we clean up the billing side while the link is still active.
     if (order.invoiceItem) {
-      await this.billingService.removeInvoiceItem(
-        order.invoiceItem.invoiceId,
-        order.invoiceItem.id,
-      );
+      try {
+        await this.billingService.removeInvoiceItem(
+          order.invoiceItem.invoiceId,
+          order.invoiceItem.id,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Failed to remove invoice item ${order.invoiceItem.id} for lab order ${labOrderId}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
     }
 
     await this.clinicalRepository.deleteLabOrder({
       where: { id: labOrderId },
     });
 
+    this.logger.log(
+      `Lab order deleted successfully: ${labOrderId} associated with booking: ${order.bookingId}`,
+    );
+
     // Auto-sync after deletion to remove from draft invoice
-    await this.billingService.syncLabInvoice(order.bookingId);
+    try {
+      await this.billingService.syncLabInvoice(order.bookingId);
+    } catch (err) {
+      this.logger.error(
+        `Failed to sync lab invoice for booking ${order.bookingId} after deleting lab order`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
 
     // CRITICAL: If this was the last pending/active order, advance medical record step
-    await this.medicalRecordsService.checkAndAdvanceToResultsReady(
-      order.medicalRecordId,
-    );
+    try {
+      await this.medicalRecordsService.checkAndAdvanceToResultsReady(
+        order.medicalRecordId,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to check and advance medical record step to RESULTS_READY for record ${order.medicalRecordId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
 
     return null;
   }

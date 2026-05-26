@@ -245,14 +245,20 @@ export class BookingsService {
     });
 
     this.bookingNotification.sendBookingNotification(booking).catch((error) => {
-      console.error('Failed to send booking notification:', error);
+      this.logger.error(
+        'Failed to send booking notification',
+        error instanceof Error ? error.stack : String(error),
+      );
     });
 
     // Auto-create invoice
     try {
       await this.billingService.createInvoice({ bookingId: booking.id });
     } catch (e) {
-      console.error('Failed to auto-create invoice:', e);
+      this.logger.error(
+        'Failed to auto-create invoice',
+        e instanceof Error ? e.stack : String(e),
+      );
     }
 
     // Notify admins and receptionists of new booking
@@ -432,7 +438,10 @@ export class BookingsService {
     })) as unknown as BookingWithRelations;
 
     this.bookingNotification.sendBookingNotification(booking).catch((error) => {
-      console.error('Failed to send booking notification:', error);
+      this.logger.error(
+        'Failed to send booking notification',
+        error instanceof Error ? error.stack : String(error),
+      );
     });
 
     // Auto-create invoice — chỉ khi serviceId đã xác định
@@ -445,7 +454,10 @@ export class BookingsService {
             : 'Walk-in generated invoice',
         });
       } catch (e) {
-        console.error('Failed to auto-create invoice:', e);
+        this.logger.error(
+          'Failed to auto-create invoice',
+          e instanceof Error ? e.stack : String(e),
+        );
       }
     }
 
@@ -882,7 +894,10 @@ export class BookingsService {
         notes: `Specialized service: ${service.name} — assigned by doctor`,
       });
     } catch (e) {
-      console.error('Failed to auto-create specialized invoice:', e);
+      this.logger.error(
+        'Failed to auto-create specialized invoice',
+        e instanceof Error ? e.stack : String(e),
+      );
     }
 
     // 5. Notify receptionists
@@ -1239,7 +1254,10 @@ export class BookingsService {
       this.bookingNotification
         .sendCancellationNotification(updatedBooking)
         .catch((error) => {
-          console.error('Failed to send cancellation notification:', error);
+          this.logger.error(
+            'Failed to send cancellation notification',
+            error instanceof Error ? error.stack : String(error),
+          );
         });
     }
 
@@ -1247,7 +1265,10 @@ export class BookingsService {
       this.bookingNotification
         .sendStatusSpecificNotification(updatedBooking)
         .catch((error) => {
-          console.error('Failed to send confirmation notification:', error);
+          this.logger.error(
+            'Failed to send confirmation notification',
+            error instanceof Error ? error.stack : String(error),
+          );
         });
     }
 

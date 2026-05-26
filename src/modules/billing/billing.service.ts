@@ -1,4 +1,10 @@
-import { Injectable, HttpStatus, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  HttpStatus,
+  forwardRef,
+  Inject,
+  Logger,
+} from '@nestjs/common';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import {
@@ -22,7 +28,6 @@ import {
   IClinicalRepository,
   I_CLINICAL_REPOSITORY,
 } from '../database/interfaces/clinical.repository.interface';
-import { Inject } from '@nestjs/common';
 
 import {
   InvoiceStatus,
@@ -59,6 +64,8 @@ export class BillingService {
     private readonly queueService: QueueService,
     private readonly sequenceService: SequenceService,
   ) {}
+
+  private readonly logger = new Logger(BillingService.name);
 
   private formatVNCurrency(amount: number): string {
     return new Intl.NumberFormat('vi-VN', {
@@ -1499,7 +1506,12 @@ export class BillingService {
           totalAmount: this.formatVNCurrency(Number(updated.totalAmount)),
           invoiceUrl: `${process.env.FRONTEND_URL}/patient/billing/${updated.id}`,
         })
-        .catch((err) => console.error('Failed to send invoice email', err));
+        .catch((err) =>
+          this.logger.error(
+            'Failed to send invoice email',
+            err instanceof Error ? err.stack : String(err),
+          ),
+        );
     }
 
     return updated;
@@ -1597,7 +1609,12 @@ export class BillingService {
           ),
           invoiceUrl: `${process.env.FRONTEND_URL}/patient/billing/${updatedInvoice.id}`,
         })
-        .catch((err) => console.error('Failed to send invoice email', err));
+        .catch((err) =>
+          this.logger.error(
+            'Failed to send invoice email',
+            err instanceof Error ? err.stack : String(err),
+          ),
+        );
     }
 
     // Notify admins of payment

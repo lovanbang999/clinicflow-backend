@@ -255,7 +255,12 @@ export class MedicalRecordsService {
                 recordId: record.id,
               },
             })
-            .catch(console.error);
+            .catch((err) =>
+              this.logger.error(
+                'Failed to send lab result notification to doctor',
+                err instanceof Error ? err.stack : String(err),
+              ),
+            );
 
           // Broadcast queue update so doctor's dashboard refreshes
           this.queueGateway.broadcastQueueUpdate(record.doctorId, 'UPDATE', {
@@ -273,7 +278,12 @@ export class MedicalRecordsService {
                 type: NotificationType.LAB_RESULT_READY,
                 metadata: { bookingId: record.bookingId },
               })
-              .catch(console.error);
+              .catch((err) =>
+                this.logger.error(
+                  'Failed to send lab result notification to patient',
+                  err instanceof Error ? err.stack : String(err),
+                ),
+              );
           }
         }
       }
