@@ -1,7 +1,13 @@
-import { Injectable, Inject, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  UnauthorizedException,
+  Logger,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
+import { randomInt, randomUUID } from 'crypto';
 import { MailService } from '../notifications/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RegisterDto } from './dto/register.dto';
@@ -55,11 +61,13 @@ export class AuthService {
     private readonly redisService: RedisService,
   ) {}
 
+  private readonly logger = new Logger(AuthService.name);
+
   /**
-   * Generate 6-digit OTP code
+   * Generate 6-digit OTP code using cryptographically secure random number generator
    */
   private generateOtpCode(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    return randomInt(100000, 1000000).toString();
   }
 
   /**
@@ -305,8 +313,9 @@ export class AuthService {
       ) as StringValue,
     });
 
-    // Generate refresh token
-    const refreshToken = this.jwtService.sign(payload, {
+    // Generate refresh token with a unique JTI to prevent duplicate tokens on parallel logins
+    const refreshPayload = { ...payload, jti: randomUUID() };
+    const refreshToken = this.jwtService.sign(refreshPayload, {
       secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
       expiresIn: this.configService.get<string>(
         'JWT_REFRESH_EXPIRES_IN',
@@ -350,7 +359,7 @@ export class AuthService {
     const hashedPassword = await this.hashPassword(password);
 
     // Create user with isActive = false
-    const patientCode = `PT-${Date.now().toString().slice(-6)}-${phone ? phone.slice(-4) : Math.floor(1000 + Math.random() * 9000)}`;
+    const patientCode = `PT-${Date.now().toString().slice(-6)}-${phone ? phone.slice(-4) : randomInt(1000, 9999)}`;
     const user = await this.userRepository.createRegisteredPatient(
       {
         email,
