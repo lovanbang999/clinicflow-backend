@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { format } from 'date-fns';
 import { vi } from 'date-fns/locale';
 import { NotificationsService } from '../../notifications/notifications.service';
@@ -7,6 +7,8 @@ import { BookingStatus } from '@prisma/client';
 
 @Injectable()
 export class BookingNotificationService {
+  private readonly logger = new Logger(BookingNotificationService.name);
+
   constructor(private readonly notificationsService: NotificationsService) {}
 
   /**
@@ -35,7 +37,10 @@ export class BookingNotificationService {
         patientNotes: booking.patientNotes ?? undefined,
       });
     } catch (error) {
-      console.error('Failed to send booking notification:', error);
+      this.logger.error(
+        'Failed to send booking notification',
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 
@@ -66,7 +71,10 @@ export class BookingNotificationService {
           : undefined,
       });
     } catch (error) {
-      console.error('Failed to send cancellation notification:', error);
+      this.logger.error(
+        'Failed to send cancellation notification',
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 
@@ -145,7 +153,10 @@ export class BookingNotificationService {
         status: booking.status,
       });
     } catch (error) {
-      console.error('Failed to send confirmation notification:', error);
+      this.logger.error(
+        'Failed to send confirmation notification',
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 

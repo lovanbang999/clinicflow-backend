@@ -3,6 +3,7 @@ import {
   Inject,
   BadRequestException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { CreateWorkingHoursDto } from './dto/create-working-hours.dto';
 import { BulkUpdateWorkingHoursDto } from './dto/bulk-update-working-hours.dto';
@@ -31,6 +32,8 @@ import { RedisService } from '../database/services/redis.service';
 
 @Injectable()
 export class SchedulesService {
+  private readonly logger = new Logger(SchedulesService.name);
+
   constructor(
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
@@ -83,6 +86,10 @@ export class SchedulesService {
 
     await this.invalidateAllDoctorSlotsCache(doctorId);
 
+    this.logger.log(
+      `Successfully created/updated working hours for doctor ${doctorId} on ${dayOfWeek}`,
+    );
+
     return workingHours;
   }
 
@@ -117,6 +124,10 @@ export class SchedulesService {
     await this.bookingRepository.deleteDoctorWorkingHours(doctorId, dayOfWeek);
 
     await this.invalidateAllDoctorSlotsCache(doctorId);
+
+    this.logger.log(
+      `Successfully deleted working hours for doctor ${doctorId} on ${dayOfWeek}`,
+    );
 
     return null;
   }
@@ -155,6 +166,10 @@ export class SchedulesService {
 
     await this.invalidateDoctorSlotsCache(doctorId, date);
 
+    this.logger.log(
+      `Successfully created break time for doctor ${doctorId} on ${date} (${startTime} - ${endTime})`,
+    );
+
     return breakTime;
   }
 
@@ -192,6 +207,10 @@ export class SchedulesService {
 
     const dateStr = format(deletedBreakTime.breakDate, 'yyyy-MM-dd');
     await this.invalidateDoctorSlotsCache(deletedBreakTime.doctorId, dateStr);
+
+    this.logger.log(
+      `Successfully deleted break time ${id} for doctor ${deletedBreakTime.doctorId} on ${dateStr}`,
+    );
 
     return null;
   }
@@ -302,6 +321,10 @@ export class SchedulesService {
 
     await this.invalidateDoctorSlotsCache(doctorId, date);
 
+    this.logger.log(
+      `Successfully created off day for doctor ${doctorId} on ${date}. Cancelled affected: ${dto.cancelAffected ?? false}`,
+    );
+
     return {
       id: offDay.id,
       doctorId: offDay.doctorId,
@@ -361,6 +384,10 @@ export class SchedulesService {
     await this.bookingRepository.deleteDoctorOffDay(doctorId, new Date(date));
 
     await this.invalidateDoctorSlotsCache(doctorId, date);
+
+    this.logger.log(
+      `Successfully deleted off day for doctor ${doctorId} on ${date}`,
+    );
 
     return null;
   }
@@ -705,6 +732,10 @@ export class SchedulesService {
 
       await this.invalidateDoctorSlotsCache(doctorId, date);
 
+      this.logger.log(
+        `Successfully reserved slot for doctor ${doctorId} on ${date} at ${startTime} for patient profile ${patientProfileId}`,
+      );
+
       return reservation;
     } catch (error: unknown) {
       if (
@@ -756,6 +787,10 @@ export class SchedulesService {
 
     await this.invalidateDoctorSlotsCache(doctorId, date);
 
+    this.logger.log(
+      `Successfully released slot for doctor ${doctorId} on ${date} at ${startTime} for patient profile ${patientProfileId}`,
+    );
+
     return result;
   }
 
@@ -763,16 +798,30 @@ export class SchedulesService {
     doctorId: string,
     date: string,
   ): Promise<void> {
-    if (this.redisService.isReady()) {
-      const pattern = `cache:slots:${doctorId}:${date}:*`;
-      await this.redisService.delPattern(pattern);
+    try {
+      if (this.redisService.isReady()) {
+        const pattern = `cache:slots:${doctorId}:${date}:*`;
+        await this.redisService.delPattern(pattern);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to invalidate doctor slots cache for doctor ${doctorId} on date ${date}:`,
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 
   private async invalidateAllDoctorSlotsCache(doctorId: string): Promise<void> {
-    if (this.redisService.isReady()) {
-      const pattern = `cache:slots:${doctorId}:*`;
-      await this.redisService.delPattern(pattern);
+    try {
+      if (this.redisService.isReady()) {
+        const pattern = `cache:slots:${doctorId}:*`;
+        await this.redisService.delPattern(pattern);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to invalidate all doctor slots cache for doctor ${doctorId}:`,
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 
@@ -825,6 +874,10 @@ export class SchedulesService {
         doctorId,
         items,
       );
+
+    this.logger.log(
+      `Successfully bulk updated working hours for doctor ${doctorId}`,
+    );
 
     return updatedList;
   }

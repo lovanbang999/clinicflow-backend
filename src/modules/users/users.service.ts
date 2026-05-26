@@ -15,7 +15,7 @@ import {
   RegisterPatientDto,
   CreateGuestPatientDto,
 } from './dto/quick-create-patient.dto';
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { SequenceService } from '../database/services/sequence.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -31,6 +31,8 @@ import { RedisService } from '../database/services/redis.service';
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
     @Inject(I_PROFILE_REPOSITORY)
@@ -42,8 +44,15 @@ export class UsersService {
   ) {}
 
   private async clearPublicDoctorsCache() {
-    if (this.redisService.isReady()) {
-      await this.redisService.delPattern('cache:doctors:public:*');
+    try {
+      if (this.redisService.isReady()) {
+        await this.redisService.delPattern('cache:doctors:public:*');
+      }
+    } catch (error) {
+      this.logger.error(
+        'Failed to clear public doctors cache:',
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 
@@ -122,6 +131,10 @@ export class UsersService {
       doctorProfileData,
     );
 
+    this.logger.log(
+      `Successfully created user ${user.id} with role ${role} by Admin`,
+    );
+
     return user;
   }
 
@@ -197,6 +210,10 @@ export class UsersService {
           profileData,
         );
 
+      this.logger.log(
+        `Successfully upgraded guest patient profile ${existingGuest.id} to user account ${upgradedUserWithProfile.id}`,
+      );
+
       return upgradedUserWithProfile;
     }
 
@@ -233,6 +250,10 @@ export class UsersService {
     const result = await this.userRepository.createRegisteredPatient(
       userData,
       profileData,
+    );
+
+    this.logger.log(
+      `Successfully registered new patient ${result.id} with patient code ${patientCode}`,
     );
 
     return result;
@@ -304,6 +325,10 @@ export class UsersService {
 
     const guestProfile = await this.profileRepository.createGuestPatientProfile(
       { data: guestData },
+    );
+
+    this.logger.log(
+      `Successfully created guest patient profile ${guestProfile.id} with patient code ${patientCode}`,
     );
 
     return {
@@ -496,6 +521,10 @@ export class UsersService {
       );
     }
 
+    this.logger.log(
+      `Successfully updated patient profile ${id} and its associated user account (if any)`,
+    );
+
     return result;
   }
 
@@ -619,8 +648,15 @@ export class UsersService {
     };
 
     // Save to Redis cache (TTL: 2 hours = 7200 seconds)
-    if (this.redisService.isReady()) {
-      await this.redisService.setJson(cacheKey, result, 7200);
+    try {
+      if (this.redisService.isReady()) {
+        await this.redisService.setJson(cacheKey, result, 7200);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to cache public doctors:`,
+        error instanceof Error ? error.stack : String(error),
+      );
     }
 
     return result;
@@ -778,6 +814,8 @@ export class UsersService {
 
     const updatedUser = await this.userRepository.update(id, updateData);
 
+    this.logger.log(`Successfully updated user ${id}`);
+
     // Evict public doctors cache if updated user is a doctor
     if (
       existingUser.role === UserRole.DOCTOR ||
@@ -859,6 +897,8 @@ export class UsersService {
     // Update password
     await this.userRepository.update(userId, { password: hashedPassword });
 
+    this.logger.log(`Successfully changed password for user ${userId}`);
+
     return null;
   }
 
@@ -879,6 +919,8 @@ export class UsersService {
 
     // Soft delete: stamp deletedAt and deactivate
     const deletedUser = await this.userRepository.softDelete(id);
+
+    this.logger.log(`Successfully soft deleted user ${id}`);
 
     // Evict public doctors cache if deleted user is a doctor
     if (user.role === UserRole.DOCTOR) {
