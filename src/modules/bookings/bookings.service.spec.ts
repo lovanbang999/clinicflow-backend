@@ -203,8 +203,7 @@ describe('BookingsService Unit Tests', () => {
 
       const result = await service.create(mockDto, 'created-by-user-id');
 
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual(mockCreatedBooking);
+      expect(result).toEqual(mockCreatedBooking);
       expect(mockSequenceService.generateNextSequence).toHaveBeenCalled();
       expect(mockBookingRepository.create).toHaveBeenCalled();
     });
