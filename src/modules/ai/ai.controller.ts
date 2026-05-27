@@ -2,8 +2,10 @@ import {
   Controller,
   Post,
   Patch,
+  Get,
   Body,
   Param,
+  Query,
   UseGuards,
   Res,
   HttpCode,
@@ -163,5 +165,41 @@ export class AiController {
       throw new NotFoundException('Session not found or access denied');
 
     await this.aiSessionService.reportSession(sessionId, note);
+  }
+
+  /**
+   * GET /ai/sessions
+   * Returns paginated list of the current user's chat sessions.
+   */
+  @Get('sessions')
+  async listSessions(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '20',
+    @CurrentUser() user: { id: string },
+  ) {
+    const result = await this.aiSessionService.listSessions(
+      user.id,
+      parseInt(page, 10) || 1,
+      parseInt(limit, 10) || 20,
+    );
+    return { data: result.sessions, meta: { total: result.total } };
+  }
+
+  /**
+   * GET /ai/session/:id/messages
+   * Returns all messages for a specific session (ownership-checked).
+   */
+  @Get('session/:id/messages')
+  async getSessionMessages(
+    @Param('id') sessionId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    const result = await this.aiSessionService.getSessionMessages(
+      sessionId,
+      user.id,
+    );
+    if (!result)
+      throw new NotFoundException('Session not found or access denied');
+    return { data: result };
   }
 }
