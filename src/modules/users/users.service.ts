@@ -806,6 +806,32 @@ export class UsersService {
       updateData.dateOfBirth = new Date(updateUserDto.dateOfBirth);
     }
 
+    // Auto-update PatientProfile if role is PATIENT and medical fields are passed
+    if (existingUser.role === 'PATIENT') {
+      const patientFields: any = {};
+      if (updateUserDto.bloodType !== undefined) {
+        patientFields.bloodType = updateUserDto.bloodType;
+      }
+      if (updateUserDto.heightCm !== undefined) {
+        patientFields.heightCm = updateUserDto.heightCm;
+      }
+      if (updateUserDto.weightKg !== undefined) {
+        patientFields.weightKg = updateUserDto.weightKg;
+      }
+      if (updateUserDto.allergies !== undefined) {
+        patientFields.allergies = updateUserDto.allergies;
+      }
+      if (updateUserDto.chronicConditions !== undefined) {
+        patientFields.chronicConditions = updateUserDto.chronicConditions;
+      }
+
+      if (Object.keys(patientFields).length > 0) {
+        updateData.patientProfile = {
+          update: patientFields,
+        };
+      }
+    }
+
     // Update user
     // Auto-update DoctorProfile if role is DOCTOR and data is passed
     // NOTE: This complex nested update is handled gracefully by Prisma directly.

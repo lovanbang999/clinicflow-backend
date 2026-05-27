@@ -58,7 +58,13 @@ export class PrismaUserRepository implements IUserRepository {
   }
 
   async findById(id: string): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { id } });
+    return this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        patientProfile: true,
+        doctorProfile: true,
+      },
+    });
   }
 
   async findByIdWithProfile(id: string): Promise<Prisma.UserGetPayload<{
@@ -366,6 +372,10 @@ export class PrismaUserRepository implements IUserRepository {
     return this.prisma.user.update({
       where: { id },
       data,
+      include: {
+        patientProfile: true,
+        doctorProfile: true,
+      },
     });
   }
 
