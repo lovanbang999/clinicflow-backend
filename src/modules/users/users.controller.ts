@@ -302,9 +302,9 @@ export class UsersController {
     @CurrentUser('id') userId: string,
     @Body() updateUserDto: UpdateUserDto,
   ) {
-    // Prevent users from changing their own role
+    // Prevent users from changing their own role or email
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { role, ...safeUpdate } = updateUserDto;
+    const { role, email, ...safeUpdate } = updateUserDto;
     return this.usersService.update(userId, safeUpdate);
   }
 
