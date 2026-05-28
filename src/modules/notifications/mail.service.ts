@@ -36,11 +36,14 @@ export class MailService {
 
     this.transporter = createTransport({
       host: mailHost,
-      port: mailPort,
-      secure: false, // true for 465, false for other ports
+      port: Number(mailPort),
+      secure: Number(mailPort) === 465, // true for 465, false for other ports (like 587)
       auth: {
         user: mailUser,
         pass: mailPassword,
+      },
+      tls: {
+        rejectUnauthorized: false, // Prevents certificate chain validation failures in local/dev environments
       },
     });
 
@@ -72,7 +75,12 @@ export class MailService {
         );
       }
 
-      const authTemplates = ['verification', 'password-reset', 'welcome'];
+      const authTemplates = [
+        'verification',
+        'password-reset',
+        'welcome',
+        'welcome-temp-password',
+      ];
       for (const t of authTemplates) {
         const tPath = path.join(templatesDir, `${t}.hbs`);
         if (fs.existsSync(tPath)) {
@@ -152,6 +160,28 @@ export class MailService {
     });
 
     await this.sendMail(email, subject, html, fullName);
+  }
+
+  /**
+   * Send welcome email with temporary password
+   */
+  async sendTemporaryPasswordEmail(
+    email: string,
+    fullName: string,
+    tempPassword: string,
+  ): Promise<void> {
+    const subject = 'Tài khoản Smart Clinic của bạn đã sẵn sàng - Smart Clinic';
+    const loginUrl = `${this.configService.get('FRONTEND_URL')}/login`;
+    const html = this.compile('welcome-temp-password', {
+      fullName,
+      email,
+      tempPassword,
+      loginUrl,
+      subject,
+      subheader: 'Tài khoản và mật khẩu tạm thời',
+    });
+
+    await this.sendMail(email, subject, html, fullName, tempPassword);
   }
 
   /**
