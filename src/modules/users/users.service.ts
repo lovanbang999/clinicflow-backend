@@ -28,6 +28,7 @@ import * as bcrypt from 'bcrypt';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { RedisService } from '../database/services/redis.service';
+import { MailService } from '../notifications/mail.service';
 
 @Injectable()
 export class UsersService {
@@ -41,6 +42,7 @@ export class UsersService {
     private readonly bookingRepository: IBookingRepository,
     private readonly sequenceService: SequenceService,
     private readonly redisService: RedisService,
+    private readonly mailService: MailService,
   ) {}
 
   private async clearPublicDoctorsCache() {
@@ -179,7 +181,8 @@ export class UsersService {
 
     if (existingGuest) {
       // Upgrade Guest to User
-      const hashedPassword = await bcrypt.hash(phone, 10);
+      const tempPassword = Math.random().toString(36).substring(2, 10);
+      const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
       const userData = {
         email,
@@ -189,6 +192,7 @@ export class UsersService {
         role: UserRole.PATIENT,
         isActive: true,
         isVerified: true,
+        isPasswordTemp: true,
         ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
         ...(gender && { gender }),
         ...(address && { address }),
@@ -211,14 +215,28 @@ export class UsersService {
         );
 
       this.logger.log(
-        `Successfully upgraded guest patient profile ${existingGuest.id} to user account ${upgradedUserWithProfile.id}`,
+        `Successfully upgraded guest patient profile ${existingGuest.id} to user account ${upgradedUserWithProfile.id}. Temp password: ${tempPassword}`,
       );
 
-      return upgradedUserWithProfile;
+      // Send welcome email with temporary password asynchronously
+      void this.mailService
+        .sendTemporaryPasswordEmail(email, fullName, tempPassword)
+        .catch((err: unknown) => {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          this.logger.error(
+            `Failed to send temp password email to upgraded guest: ${errMsg}`,
+          );
+        });
+
+      return {
+        ...upgradedUserWithProfile,
+        tempPassword,
+      };
     }
 
     // 3. Create fresh User and PatientProfile
-    const hashedPassword = await bcrypt.hash(phone, 10);
+    const tempPassword = Math.random().toString(36).substring(2, 10);
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
     const patientCode = await this.generatePatientCode();
 
     const userData = {
@@ -229,6 +247,7 @@ export class UsersService {
       role: UserRole.PATIENT,
       isActive: true,
       isVerified: true,
+      isPasswordTemp: true,
       ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
       ...(gender && { gender }),
       ...(address && { address }),
@@ -253,10 +272,23 @@ export class UsersService {
     );
 
     this.logger.log(
-      `Successfully registered new patient ${result.id} with patient code ${patientCode}`,
+      `Successfully registered new patient ${result.id} with patient code ${patientCode}. Temp password: ${tempPassword}`,
     );
 
-    return result;
+    // Send welcome email with temporary password asynchronously
+    void this.mailService
+      .sendTemporaryPasswordEmail(email, fullName, tempPassword)
+      .catch((err: unknown) => {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `Failed to send temp password email to new patient: ${errMsg}`,
+        );
+      });
+
+    return {
+      ...result,
+      tempPassword,
+    };
   }
 
   /**
@@ -808,7 +840,7 @@ export class UsersService {
 
     // Auto-update PatientProfile if role is PATIENT and medical fields are passed
     if (existingUser.role === 'PATIENT') {
-      const patientFields: any = {};
+      const patientFields: Prisma.PatientProfileUpdateWithoutUserInput = {};
       if (updateUserDto.bloodType !== undefined) {
         patientFields.bloodType = updateUserDto.bloodType;
       }
@@ -920,10 +952,15 @@ export class UsersService {
     // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // Update password
-    await this.userRepository.update(userId, { password: hashedPassword });
+    // Update password and clear temp flag
+    await this.userRepository.update(userId, {
+      password: hashedPassword,
+      isPasswordTemp: false,
+    });
 
-    this.logger.log(`Successfully changed password for user ${userId}`);
+    this.logger.log(
+      `Successfully changed password for user ${userId} and cleared temporary flag`,
+    );
 
     return null;
   }
