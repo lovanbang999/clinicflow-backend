@@ -33,6 +33,7 @@ model User {
   address                       String?
   isActive                      Boolean                @default(false)
   isVerified                    Boolean                @default(false)
+  isPasswordTemp                Boolean                @default(false)
   deletedAt                     DateTime?
   createdAt                     DateTime               @default(now())
   updatedAt                     DateTime               @updatedAt
