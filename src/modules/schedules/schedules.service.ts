@@ -397,9 +397,10 @@ export class SchedulesService {
    */
   async getAvailableSlots(queryDto: AvailableSlotsQueryDto) {
     const { doctorId, date, serviceId } = queryDto;
-    const cacheKey = `cache:slots:${doctorId}:${date}:${serviceId ?? ''}:${queryDto.patientId ?? ''}`;
+    // const cacheKey = `cache:slots:${doctorId}:${date}:${serviceId ?? ''}:${queryDto.patientId ?? ''}`;
 
-    // Try to get from Redis cache first
+    // Temporarily bypass Redis cache for debugging
+    /*
     if (this.redisService.isReady()) {
       const cachedData = await this.redisService.getJson<{
         availableSlots: any[];
@@ -410,6 +411,7 @@ export class SchedulesService {
         return cachedData;
       }
     }
+    */
 
     let durationMinutes = 30; // Default: 30 minutes
     let maxSlotsPerHour = 1; // Default: 1 slot per slot (usually matching doctor availability)
@@ -441,12 +443,15 @@ export class SchedulesService {
         availableSlots: [],
         message: 'Doctor does not work on this day',
         total: 0,
+        debug: {
+          doctorId,
+          date,
+          dayOfWeek,
+          workingHours: null,
+          requestedDateStr: requestedDate.toISOString(),
+          serverTime: new Date().toISOString(),
+        },
       };
-
-      // Cache this result too for 5 minutes
-      if (this.redisService.isReady()) {
-        await this.redisService.setJson(cacheKey, resultData, 300);
-      }
 
       return resultData;
     }
@@ -461,12 +466,19 @@ export class SchedulesService {
         availableSlots: [],
         message: `Doctor is not available: ${offDay.reason || 'Off day'}`,
         total: 0,
+        debug: {
+          doctorId,
+          date,
+          dayOfWeek,
+          workingHours: {
+            startTime: workingHours.startTime,
+            endTime: workingHours.endTime,
+          },
+          offDay: { reason: offDay.reason },
+          requestedDateStr: requestedDate.toISOString(),
+          serverTime: new Date().toISOString(),
+        },
       };
-
-      // Cache this result too for 5 minutes
-      if (this.redisService.isReady()) {
-        await this.redisService.setJson(cacheKey, resultData, 300);
-      }
 
       return resultData;
     }
@@ -505,12 +517,24 @@ export class SchedulesService {
     const resultData = {
       availableSlots,
       total: availableSlots.length,
+      debug: {
+        doctorId,
+        date,
+        dayOfWeek,
+        workingHours: {
+          startTime: workingHours.startTime,
+          endTime: workingHours.endTime,
+          isActive: workingHours.isActive,
+        },
+        offDay: null,
+        breakTimesCount: breakTimes.length,
+        allSlotsCount: allSlots.length,
+        slotsAfterBreaksCount: slotsAfterBreaks.length,
+        requestedDateStr: requestedDate.toISOString(),
+        serverTime: new Date().toISOString(),
+        serverTimezoneOffset: new Date().getTimezoneOffset(),
+      },
     };
-
-    // Cache the calculated slots in Redis for 5 minutes (300 seconds)
-    if (this.redisService.isReady()) {
-      await this.redisService.setJson(cacheKey, resultData, 300);
-    }
 
     return resultData;
   }
