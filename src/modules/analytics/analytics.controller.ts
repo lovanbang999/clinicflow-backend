@@ -152,4 +152,26 @@ export class AnalyticsController {
   getDoctorClinicalKPIs(@Req() req: { user: { id: string } }) {
     return this.analyticsService.getDoctorClinicalKPIs(req.user.id);
   }
+
+  @Get('doctor/me/top-services')
+  @Roles(UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_DOCTOR_TOP_SERVICES_RETRIEVED,
+    'Doctor top services retrieved successfully',
+  )
+  @ApiOperation({ summary: 'Top 5 services performed by this doctor' })
+  getDoctorTopServices(@Req() req: { user: { id: string } }) {
+    return this.analyticsService.getDoctorTopServices(req.user.id);
+  }
+
+  @Get('doctor/me/weekly-bookings')
+  @Roles(UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_DOCTOR_WEEKLY_BOOKINGS_RETRIEVED,
+    'Doctor weekly bookings trend retrieved successfully',
+  )
+  @ApiOperation({ summary: 'Daily booking count in the current week for this doctor' })
+  getDoctorWeeklyBookings(@Req() req: { user: { id: string } }) {
+    return this.analyticsService.getDoctorWeeklyBookings(req.user.id);
+  }
 }

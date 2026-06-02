@@ -262,7 +262,7 @@ export class AnalyticsService {
         prevTo = new Date(now.getFullYear(), now.getMonth(), 0);
     }
 
-    const [current, previous] = await Promise.all([
+    const [current, previous, revenueAgg, prevRevenueAgg] = await Promise.all([
       this.bookingRepository.findManyBooking({
         where: { doctorId: userId, bookingDate: { gte: from } },
         select: { status: true, source: true },
@@ -273,6 +273,24 @@ export class AnalyticsService {
           bookingDate: { gte: prevFrom, lte: prevTo },
         },
         select: { status: true },
+      }),
+      this.financeRepository.aggregateInvoice({
+        where: {
+          booking: { doctorId: userId },
+          status: 'PAID',
+          invoiceType: 'CONSULTATION',
+          paidAt: { gte: from },
+        },
+        _sum: { totalAmount: true },
+      }),
+      this.financeRepository.aggregateInvoice({
+        where: {
+          booking: { doctorId: userId },
+          status: 'PAID',
+          invoiceType: 'CONSULTATION',
+          paidAt: { gte: prevFrom, lte: prevTo },
+        },
+        _sum: { totalAmount: true },
       }),
     ]);
 
@@ -299,6 +317,10 @@ export class AnalyticsService {
     const phone = current.filter(
       (b) => (b as { source?: string }).source === 'PHONE',
     ).length;
+
+    const revenue = Number(revenueAgg._sum?.totalAmount ?? 0);
+    const prevRevenue = Number(prevRevenueAgg._sum?.totalAmount ?? 0);
+
     const deltaTotal =
       prevTotal > 0 ? Math.round(((total - prevTotal) / prevTotal) * 100) : 0;
     const deltaCompleted =
@@ -311,6 +333,8 @@ export class AnalyticsService {
             ((absentCancel - prevAbsentCancel) / prevAbsentCancel) * 100,
           )
         : 0;
+    const deltaRevenue =
+      prevRevenue > 0 ? Math.round(((revenue - prevRevenue) / prevRevenue) * 100) : 0;
 
     return {
       total,
@@ -322,6 +346,9 @@ export class AnalyticsService {
       absentCancel,
       prevAbsentCancel,
       deltaAbsentCancel,
+      revenue,
+      prevRevenue,
+      deltaRevenue,
       sourceBreakdown: { online, walkIn, phone },
       // Static KPI placeholders – would require more data in production
       avgMinutes: 18,
@@ -533,5 +560,86 @@ export class AnalyticsService {
         periodMonths: 6,
       },
     };
+  }
+
+  /** Expose top 5 services for a specific doctor */
+  async getDoctorTopServices(userId: string) {
+    const bookings = await this.bookingRepository.findManyBooking({
+      where: {
+        doctorId: userId,
+        status: 'COMPLETED',
+        serviceId: { not: null },
+      },
+      select: {
+        service: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+
+    const freq: Record<string, number> = {};
+    for (const b of bookings) {
+      if (b.service?.name) {
+        freq[b.service.name] = (freq[b.service.name] ?? 0) + 1;
+      }
+    }
+
+    const top = Object.entries(freq)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    return top;
+  }
+
+  /** Expose actual daily booking counts of the current week for a doctor */
+  async getDoctorWeeklyBookings(userId: string) {
+    const now = new Date();
+    const day = now.getDay();
+    // Monday is index 1, Sunday is index 0. Let's adjust diff to get Monday.
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const startOfWeek = new Date(now.setDate(diff));
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+    endOfWeek.setHours(23, 59, 59, 999);
+
+    const bookings = await this.bookingRepository.findManyBooking({
+      where: {
+        doctorId: userId,
+        bookingDate: {
+          gte: startOfWeek,
+          lte: endOfWeek,
+        },
+      },
+      select: {
+        bookingDate: true,
+        status: true,
+      },
+    });
+
+    const days = [
+      { day: 'T2', dow: 1, count: 0 },
+      { day: 'T3', dow: 2, count: 0 },
+      { day: 'T4', dow: 3, count: 0 },
+      { day: 'T5', dow: 4, count: 0 },
+      { day: 'T6', dow: 5, count: 0 },
+      { day: 'T7', dow: 6, count: 0 },
+      { day: 'CN', dow: 0, count: 0 },
+    ];
+
+    for (const b of bookings) {
+      const date = new Date(b.bookingDate);
+      const dow = date.getDay();
+      const match = days.find((d) => d.dow === dow);
+      if (match) {
+        match.count++;
+      }
+    }
+
+    return days.map(({ day, count }) => ({ day, count }));
   }
 }
