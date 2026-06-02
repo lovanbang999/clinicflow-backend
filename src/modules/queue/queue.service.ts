@@ -199,6 +199,21 @@ export class QueueService {
           err instanceof Error ? err.stack : String(err),
         );
       }
+
+      try {
+        await this.notificationsService.createInAppNotification({
+          userId: booking.doctorId,
+          title: 'Bệnh nhân mới vào hàng đợi',
+          content: `Bệnh nhân ${booking.patientProfile.fullName} (STT: ${currentPosition}) đã check-in và đang đợi khám.`,
+          type: 'SYSTEM',
+          metadata: { bookingId: booking.id, status: BookingStatus.CHECKED_IN },
+        });
+      } catch (err) {
+        this.logger.error(
+          `Failed to notify doctor for booking check-in ${booking.id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
     }
 
     return result;
