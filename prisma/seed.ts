@@ -17,6 +17,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaMariaDb } from '@prisma/adapter-mariadb';
 import * as fs from 'fs';
 import * as path from 'path';
+import Redis from 'ioredis';
 
 // ============================================
 // CONFIG & CLIENT
@@ -560,6 +561,17 @@ const PATIENTS = [
 async function main() {
   console.log('🌱 Starting database seed v4.0 (Modular & Expanded)...');
 
+  // Define static, deterministic IDs for key system accounts to prevent JWT/Session validation issues after seeds
+  const STATIC_USER_IDS: Record<string, string> = {
+    'admin@clinic.com': '2a0e4171-e9db-4841-9fb0-f1db89b14c33',
+    'bs.nguyenvana@clinic.com': '7de3e5ae-1f16-408a-be27-6dcea0894eda',
+    'letan.lan@clinic.com': 'e8a38ae9-4fe9-4e78-ba6d-4ee8b69324cc',
+  };
+
+  const STATIC_PATIENT_PROFILE_IDS: Record<string, string> = {
+    'patient.khang@gmail.com': '55257d51-5ed0-496d-a499-6be692075cf7',
+  };
+
   // 1. DELETE ALL DATA
   console.log('\n🗑️  Clearing existing data...');
 
@@ -600,14 +612,48 @@ async function main() {
     () => prisma.user.deleteMany(),
   ];
 
-  for (const action of deleteActions) {
-    try {
-      await action();
-    } catch {
-      // Ignore if table doesn't exist or other minor issues
+  try {
+    // Disable foreign key checks to make deletion deterministic, fast, and prevent transaction deadlocks
+    await prisma.$executeRawUnsafe('SET FOREIGN_KEY_CHECKS = 0;');
+    for (const action of deleteActions) {
+      try {
+        await action();
+      } catch {
+        // Ignore errors for individual tables
+      }
     }
+    await prisma.$executeRawUnsafe('SET FOREIGN_KEY_CHECKS = 1;');
+    console.log('  ✅ All data cleared successfully');
+  } catch (error) {
+    console.log('  ⚠️ Failed to clear database with raw checks. Falling back to normal sequence...');
+    for (const action of deleteActions) {
+      try {
+        await action();
+      } catch {
+        // Ignore fallback errors
+      }
+    }
+    console.log('  ✅ Fallback data clearing completed');
   }
-  console.log('  ✅ All data cleared');
+
+  // 1.5. CLEAR REDIS CACHE
+  console.log('\n🧹 Clearing Redis cache...');
+  try {
+    const redis = new Redis({
+      host: process.env.REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+      password: process.env.REDIS_PASSWORD,
+      db: parseInt(process.env.REDIS_DB || '0', 10),
+    });
+    await redis.flushall();
+    console.log('  ✅ Redis cache cleared successfully');
+    redis.disconnect();
+  } catch (error) {
+    console.log(
+      '  ⚠️ Could not clear Redis cache:',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 
   // 2. SEED ROOMS
   console.log('\n🏠 Creating rooms...');
@@ -872,6 +918,7 @@ async function main() {
   console.log('\n👥 Creating users...');
   await prisma.user.create({
     data: {
+      id: STATIC_USER_IDS['admin@clinic.com'],
       email: 'admin@clinic.com',
       password: await hashPassword('admin123'),
       role: UserRole.ADMIN,
@@ -887,6 +934,7 @@ async function main() {
   for (const p of allProviders) {
     const user = await prisma.user.create({
       data: {
+        id: STATIC_USER_IDS[p.email] || undefined,
         email: p.email,
         password: await hashPassword(
           p.role === UserRole.DOCTOR ? 'doctor123' : 'technician123',
@@ -1045,6 +1093,7 @@ async function main() {
   for (const r of RECEPTIONISTS) {
     await prisma.user.create({
       data: {
+        id: STATIC_USER_IDS[r.email] || undefined,
         email: r.email,
         password: await hashPassword('receptionist123'),
         role: UserRole.RECEPTIONIST,
@@ -1062,6 +1111,7 @@ async function main() {
   for (const p of PATIENTS) {
     await prisma.user.create({
       data: {
+        id: STATIC_USER_IDS[p.email] || undefined,
         email: p.email,
         password: await hashPassword('patient123'),
         role: UserRole.PATIENT,
@@ -1072,6 +1122,7 @@ async function main() {
         isVerified: true,
         patientProfile: {
           create: {
+            id: STATIC_PATIENT_PROFILE_IDS[p.email] || undefined,
             fullName: p.fullName,
             phone: p.phone,
             email: p.email,
