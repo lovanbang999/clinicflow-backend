@@ -10,7 +10,14 @@ import { BulkUpdateWorkingHoursDto } from './dto/bulk-update-working-hours.dto';
 import { CreateBreakTimeDto } from './dto/create-break-time.dto';
 import { CreateOffDayDto } from './dto/create-off-day.dto';
 import { AvailableSlotsQueryDto } from './dto/available-slots-query.dto';
-import { DayOfWeek, UserRole, User, DoctorWorkingHours } from '@prisma/client';
+import {
+  DayOfWeek,
+  UserRole,
+  User,
+  DoctorWorkingHours,
+  OffDayStatus,
+} from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
@@ -41,6 +48,7 @@ export class SchedulesService {
     @Inject(I_CATALOG_REPOSITORY)
     private readonly catalogRepository: ICatalogRepository,
     private readonly redisService: RedisService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -314,15 +322,27 @@ export class SchedulesService {
         doctor: { connect: { id: doctorId } },
         offDate: new Date(date),
         reason,
+        status: OffDayStatus.PENDING,
       },
-      dto.cancelAffected ?? false,
-      affectedAppointments.map((b) => b.id),
+      false, // Do not cancel bookings yet
+      [], // No cancellation yet
     );
+
+    // Notify Admins
+    try {
+      await this.notificationsService.notifyAdmins({
+        title: 'Yêu cầu nghỉ phép mới',
+        content: `Bác sĩ ${doctor.fullName} đã đăng ký nghỉ ngày ${format(offDateObj, 'dd/MM/yyyy')} với lý do: ${reason || 'Không có'}`,
+        metadata: { offDayId: offDay.id, doctorId, date },
+      });
+    } catch (err) {
+      this.logger.error('Failed to notify admins of off day request:', err);
+    }
 
     await this.invalidateDoctorSlotsCache(doctorId, date);
 
     this.logger.log(
-      `Successfully created off day for doctor ${doctorId} on ${date}. Cancelled affected: ${dto.cancelAffected ?? false}`,
+      `Successfully created pending off day for doctor ${doctorId} on ${date}.`,
     );
 
     return {
@@ -330,6 +350,7 @@ export class SchedulesService {
       doctorId: offDay.doctorId,
       date: offDay.offDate.toISOString().split('T')[0],
       reason: offDay.reason,
+      status: offDay.status,
       affectedAppointments: affectedAppointments.map((b) => ({
         id: b.id,
         patientName: b.patientProfile?.fullName ?? 'Unknown',
@@ -360,6 +381,7 @@ export class SchedulesService {
       doctorId: od.doctorId,
       date: od.offDate.toISOString().split('T')[0],
       reason: od.reason,
+      status: od.status,
     }));
   }
 
@@ -461,7 +483,7 @@ export class SchedulesService {
       new Date(date),
     );
 
-    if (offDay) {
+    if (offDay && offDay.status === OffDayStatus.APPROVED) {
       const resultData = {
         availableSlots: [],
         message: `Doctor is not available: ${offDay.reason || 'Off day'}`,
@@ -474,7 +496,7 @@ export class SchedulesService {
             startTime: workingHours.startTime,
             endTime: workingHours.endTime,
           },
-          offDay: { reason: offDay.reason },
+          offDay: { reason: offDay.reason, status: offDay.status },
           requestedDateStr: requestedDate.toISOString(),
           serverTime: new Date().toISOString(),
         },
@@ -495,7 +517,20 @@ export class SchedulesService {
       durationMinutes,
     );
 
-    const slotsAfterBreaks = allSlots.filter((slot) => {
+    const { breakStartTime, breakEndTime } = workingHours;
+    let slotsAfterRecurringBreaks = allSlots;
+    if (breakStartTime && breakEndTime) {
+      slotsAfterRecurringBreaks = allSlots.filter((slot) => {
+        return !this.isTimeConflict(
+          slot,
+          durationMinutes,
+          breakStartTime,
+          breakEndTime,
+        );
+      });
+    }
+
+    const slotsAfterBreaks = slotsAfterRecurringBreaks.filter((slot) => {
       return !breakTimes.some((breakTime) => {
         return this.isTimeConflict(
           slot,
@@ -886,10 +921,27 @@ export class SchedulesService {
     }
 
     for (const item of items) {
-      if (item.enabled && item.startTime >= item.endTime) {
-        throw new BadRequestException(
-          `Start time must be before end time for ${item.dayOfWeek}`,
-        );
+      if (item.enabled) {
+        if (item.startTime >= item.endTime) {
+          throw new BadRequestException(
+            `Start time must be before end time for ${item.dayOfWeek}`,
+          );
+        }
+        if (item.breakStartTime && item.breakEndTime) {
+          if (item.breakStartTime >= item.breakEndTime) {
+            throw new BadRequestException(
+              `Break start time must be before break end time for ${item.dayOfWeek}`,
+            );
+          }
+          if (
+            item.breakStartTime < item.startTime ||
+            item.breakEndTime > item.endTime
+          ) {
+            throw new BadRequestException(
+              `Break time must be within working hours for ${item.dayOfWeek}`,
+            );
+          }
+        }
       }
     }
 
@@ -904,5 +956,127 @@ export class SchedulesService {
     );
 
     return updatedList;
+  }
+
+  async getPendingOffDays() {
+    return this.bookingRepository.findOffDaysWithDoctor({
+      status: OffDayStatus.PENDING,
+    });
+  }
+
+  async approveOffDay(id: string, adminUserId: string) {
+    const offDay = await this.bookingRepository.findDoctorOffDayById(id);
+    if (!offDay) {
+      throw new ApiException(
+        MessageCodes.SCHEDULE_NOT_FOUND || 'SCHEDULE_NOT_FOUND',
+        'Off day request not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    if (offDay.status !== OffDayStatus.PENDING) {
+      throw new BadRequestException('Off day request is already processed');
+    }
+
+    const doctorId = offDay.doctorId;
+    const offDateObj = new Date(offDay.offDate);
+    offDateObj.setHours(0, 0, 0, 0);
+    const offDateEnd = new Date(offDateObj);
+    offDateEnd.setHours(23, 59, 59, 999);
+
+    // Find affected bookings
+    const affectedAppointments =
+      await this.bookingRepository.findAffectedBookingsForDateRange(
+        doctorId,
+        offDateObj,
+        offDateEnd,
+      );
+
+    // Cancel each booking using transaction and send email notifications
+    for (const booking of affectedAppointments) {
+      try {
+        await this.bookingRepository.updateBookingStatusTransaction(
+          booking.id,
+          'CANCELLED',
+          `Bác sĩ nghỉ phép vào ngày ${format(offDateObj, 'dd/MM/yyyy')}: ${offDay.reason || 'Nghỉ phép'}`,
+          adminUserId,
+        );
+
+        // Send email
+        const patientEmail = booking.patientProfile?.email || '';
+        if (patientEmail) {
+          await this.notificationsService.sendBookingCancellation({
+            bookingId: booking.id,
+            patientId: booking.patientProfile?.userId || undefined,
+            patientName: booking.patientProfile?.fullName || 'Bệnh nhân',
+            patientEmail,
+            doctorName: booking.doctor?.fullName || 'Bác sĩ',
+            serviceName: booking.service?.name || 'Khám bệnh',
+            bookingDate: format(new Date(booking.bookingDate), 'dd/MM/yyyy'),
+            startTime: booking.startTime,
+            duration: booking.service?.durationMinutes || 30,
+            status: 'CANCELLED',
+          });
+        }
+      } catch (err) {
+        this.logger.error(
+          `Failed to cancel affected booking ${booking.id}:`,
+          err,
+        );
+      }
+    }
+
+    // Approve the off day request
+    const approvedOffDay = await this.bookingRepository.updateDoctorOffDay(id, {
+      status: OffDayStatus.APPROVED,
+      approver: { connect: { id: adminUserId } },
+    });
+
+    // Invalidate slot cache
+    await this.invalidateDoctorSlotsCache(
+      doctorId,
+      offDay.offDate.toISOString().split('T')[0],
+    );
+
+    // Send in-app notification to the doctor
+    await this.notificationsService.createInAppNotification({
+      userId: doctorId,
+      title: 'Yêu cầu nghỉ phép được phê duyệt',
+      content: `Yêu cầu nghỉ phép ngày ${format(offDateObj, 'dd/MM/yyyy')} của bạn đã được phê duyệt.`,
+      type: 'SYSTEM',
+    });
+
+    return approvedOffDay;
+  }
+
+  async rejectOffDay(id: string, adminUserId: string) {
+    const offDay = await this.bookingRepository.findDoctorOffDayById(id);
+    if (!offDay) {
+      throw new ApiException(
+        MessageCodes.SCHEDULE_NOT_FOUND || 'SCHEDULE_NOT_FOUND',
+        'Off day request not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    if (offDay.status !== OffDayStatus.PENDING) {
+      throw new BadRequestException('Off day request is already processed');
+    }
+
+    // Reject (or delete) the request
+    const rejectedOffDay = await this.bookingRepository.updateDoctorOffDay(id, {
+      status: OffDayStatus.REJECTED,
+      approver: { connect: { id: adminUserId } },
+    });
+
+    // Send in-app notification to the doctor
+    await this.notificationsService.createInAppNotification({
+      userId: offDay.doctorId,
+      title: 'Yêu cầu nghỉ phép bị từ chối',
+      content: `Yêu cầu nghỉ phép ngày ${format(new Date(offDay.offDate), 'dd/MM/yyyy')} của bạn đã bị từ chối.`,
+      type: 'SYSTEM',
+    });
+
+    return rejectedOffDay;
   }
 }

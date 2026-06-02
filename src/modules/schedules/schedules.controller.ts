@@ -257,6 +257,44 @@ export class SchedulesController {
     return this.schedulesService.previewOffDay(doctorId, date);
   }
 
+  @Get('off-days/pending')
+  @Roles(UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_LIST_RETRIEVED,
+    'Pending off days retrieved successfully',
+  )
+  @ApiOperation({ summary: 'Get all pending off days (ADMIN only)' })
+  @ApiResponse({ status: 200, description: 'Pending off days list returned' })
+  getPendingOffDays() {
+    return this.schedulesService.getPendingOffDays();
+  }
+
+  @Post('off-days/:id/approve')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_UPDATED,
+    'Off day request approved successfully',
+  )
+  @ApiOperation({ summary: 'Approve off day request (ADMIN only)' })
+  @ApiResponse({ status: 200, description: 'Off day request approved' })
+  approveOffDay(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.schedulesService.approveOffDay(id, user.id);
+  }
+
+  @Post('off-days/:id/reject')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_UPDATED,
+    'Off day request rejected successfully',
+  )
+  @ApiOperation({ summary: 'Reject off day request (ADMIN only)' })
+  @ApiResponse({ status: 200, description: 'Off day request rejected' })
+  rejectOffDay(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.schedulesService.rejectOffDay(id, user.id);
+  }
+
   @Get('off-days/:doctorId')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR, UserRole.RECEPTIONIST)
   @ResponseMessage(
