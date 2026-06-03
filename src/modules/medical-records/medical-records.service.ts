@@ -38,7 +38,6 @@ import { format } from 'date-fns';
 import { vi } from 'date-fns/locale';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
-
 import { NotificationsService } from '../notifications/notifications.service';
 import { BillingService } from '../billing/billing.service';
 import { SaveSymptomsDto } from './dto/save-symptoms.dto';
@@ -924,9 +923,16 @@ export class MedicalRecordsService {
         chronicConditions: patientProfile.chronicConditions,
       },
       items: visits,
+      visits: visits,
       total,
       page,
       limit,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
     };
   }
 
