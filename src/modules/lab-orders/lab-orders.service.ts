@@ -29,6 +29,7 @@ import { forwardRef } from '@nestjs/common';
 import { LabOrderDeleteInclude } from '../database/types/prisma-payload.types';
 import { Gender } from '@prisma/client';
 import { MedicalRecordsService } from '../medical-records/medical-records.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 export interface InternalService {
   id: string;
@@ -56,6 +57,11 @@ export interface InternalLabOrder extends LabOrder {
   result?: LabResult | null;
   service?: InternalService;
   booking?: InternalBooking;
+  assignedTechnician?: {
+    id: string;
+    fullName: string;
+    avatar: string | null;
+  } | null;
   invoiceItem?: {
     invoice: {
       id: string;
@@ -80,6 +86,7 @@ export class LabOrdersService {
     @Inject(forwardRef(() => BillingService))
     private readonly billingService: BillingService,
     private readonly medicalRecordsService: MedicalRecordsService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -226,6 +233,7 @@ export class LabOrdersService {
           testName: dto.testName,
           testDescription: dto.testDescription,
           serviceId: dto.serviceId,
+          assignedTechnicianId: dto.assignedTechnicianId ?? null,
           status: LabOrderStatus.PENDING,
         },
       });
@@ -429,18 +437,78 @@ export class LabOrdersService {
 
   /**
    * Technician view list of lab orders that have been paid (PAID) and are ready to perform.
+   *
+   * Routing logic (3-tier):
+   * 1. Hard assigned  → order.assignedTechnicianId === currentUser.id
+   * 2. Auto-route     → order.assignedTechnicianId is null AND service.categoryId matches technician specializations
+   * 3. Fallback       → order.assignedTechnicianId is null AND technician has no specializations at all
    */
-  async getReadyToPerformOrders() {
-    const rawOrders = (await this.clinicalRepository.findManyLabOrder({
-      where: {
+  async getReadyToPerformOrders(currentUser?: Express.User) {
+    // Step 1: fetch technician's specialization category IDs
+    let technicianCategoryIds: string[] = [];
+    let hasSpecializations = false;
+
+    if (currentUser?.role === 'TECHNICIAN') {
+      const specializations =
+        await this.prisma.technicianSpecialization.findMany({
+          where: { userId: currentUser.id },
+          select: { categoryId: true },
+        });
+      technicianCategoryIds = specializations.map((s) => s.categoryId);
+      hasSpecializations = technicianCategoryIds.length > 0;
+    }
+
+    // Step 2: Build where clause
+    // ADMIN sees all ready orders (no filter)
+    let whereClause: Record<string, unknown>;
+
+    if (
+      !currentUser ||
+      currentUser.role === 'ADMIN' ||
+      currentUser.role === 'RECEPTIONIST'
+    ) {
+      whereClause = {
         status: { in: [LabOrderStatus.PAID, LabOrderStatus.IN_PROGRESS] },
-      },
+      };
+    } else if (!hasSpecializations) {
+      // Fallback: KTV has no specializations → see all unassigned orders + own assigned orders
+      whereClause = {
+        status: { in: [LabOrderStatus.PAID, LabOrderStatus.IN_PROGRESS] },
+        OR: [
+          { assignedTechnicianId: null },
+          { assignedTechnicianId: currentUser.id },
+        ],
+      };
+    } else {
+      // KTV has specializations → filter by assignment or category match
+      whereClause = {
+        status: { in: [LabOrderStatus.PAID, LabOrderStatus.IN_PROGRESS] },
+        OR: [
+          // Hard assigned to this technician
+          { assignedTechnicianId: currentUser.id },
+          // Auto-route: unassigned + service category matches specialization
+          {
+            assignedTechnicianId: null,
+            service: { categoryId: { in: technicianCategoryIds } },
+          },
+          // Unassigned orders with no service (no category) → visible to all
+          {
+            assignedTechnicianId: null,
+            serviceId: null,
+          },
+        ],
+      };
+    }
+
+    const rawOrders = (await this.clinicalRepository.findManyLabOrder({
+      where: whereClause,
       include: {
         service: {
           select: {
             id: true,
             name: true,
             labFormType: true,
+            categoryId: true,
           } as unknown as Prisma.ServiceSelect,
         },
         booking: {
@@ -456,6 +524,9 @@ export class LabOrdersService {
               },
             },
           },
+        },
+        assignedTechnician: {
+          select: { id: true, fullName: true, avatar: true },
         },
       },
       orderBy: { createdAt: 'desc' },

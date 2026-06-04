@@ -53,6 +53,20 @@ interface Icd10Item {
   name: string;
 }
 
+interface ProviderSeed {
+  email: string;
+  fullName: string;
+  phone: string;
+  role: UserRole;
+  gender: Gender;
+  specialties: string[];
+  qualifications: string[];
+  experience: number;
+  consultationFee: number;
+  bio: string;
+  specializationCategories?: string[];
+}
+
 // ============================================
 // SEED DATA CONSTANTS
 // ============================================
@@ -494,6 +508,7 @@ const TECHNICIANS = [
     experience: 6,
     consultationFee: 0,
     bio: 'Kỹ thuật viên xét nghiệm tận tâm, chính xác.',
+    specializationCategories: ['Xét nghiệm (Lab)'],
   },
   {
     email: 'ktv.tuan@clinic.com',
@@ -506,6 +521,7 @@ const TECHNICIANS = [
     experience: 5,
     consultationFee: 0,
     bio: 'Kỹ thuật viên chuyên về Siêu âm và X-quang.',
+    specializationCategories: ['Chẩn đoán hình ảnh'],
   },
 ];
 
@@ -624,8 +640,10 @@ async function main() {
     }
     await prisma.$executeRawUnsafe('SET FOREIGN_KEY_CHECKS = 1;');
     console.log('  ✅ All data cleared successfully');
-  } catch (error) {
-    console.log('  ⚠️ Failed to clear database with raw checks. Falling back to normal sequence...');
+  } catch {
+    console.log(
+      '  ⚠️ Failed to clear database with raw checks. Falling back to normal sequence...',
+    );
     for (const action of deleteActions) {
       try {
         await action();
@@ -930,7 +948,7 @@ async function main() {
   console.log('  ✅ Admin created');
 
   // 6. SEED DOCTORS & TECHNICIANS
-  const allProviders = [...DOCTORS, ...TECHNICIANS];
+  const allProviders: ProviderSeed[] = [...DOCTORS, ...TECHNICIANS];
   for (const p of allProviders) {
     const user = await prisma.user.create({
       data: {
@@ -982,6 +1000,22 @@ async function main() {
               },
             });
           }
+        }
+      }
+    }
+
+    // Link technician to categories matching their specializations
+    if (p.role === UserRole.TECHNICIAN) {
+      const specCategories = p.specializationCategories || [];
+      for (const catName of specCategories) {
+        const catId = categoryMap.get(catName);
+        if (catId) {
+          await prisma.technicianSpecialization.create({
+            data: {
+              userId: user.id,
+              categoryId: catId,
+            },
+          });
         }
       }
     }

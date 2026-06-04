@@ -251,6 +251,71 @@ export class UsersController {
     return this.usersService.findAll(filterDto);
   }
 
+  @Get('technicians')
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.DOCTOR,
+    UserRole.RECEPTIONIST,
+    UserRole.TECHNICIAN,
+  )
+  @ResponseMessage(
+    MessageCodes.USER_LIST_RETRIEVED,
+    'Technicians retrieved successfully',
+  )
+  @ApiOperation({
+    summary: 'Get all active technicians with specializations',
+    description:
+      'Doctor uses this to select a technician when ordering a lab test. Filter by categoryId to get matching technicians.',
+  })
+  @ApiQuery({
+    name: 'categoryId',
+    required: false,
+    description:
+      'Filter by service category (returns technicians with that specialization)',
+  })
+  getTechnicians(@Query('categoryId') categoryId?: string) {
+    return this.usersService.getTechnicians(categoryId);
+  }
+
+  @Post('technicians/:id/specializations')
+  @Roles(UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.USER_UPDATED,
+    'Specialization added successfully',
+  )
+  @ApiOperation({
+    summary: 'Add specialization category to technician (ADMIN only)',
+  })
+  addTechnicianSpecialization(
+    @Param('id') technicianId: string,
+    @Body('categoryId') categoryId: string,
+  ) {
+    return this.usersService.addTechnicianSpecialization(
+      technicianId,
+      categoryId,
+    );
+  }
+
+  @Delete('technicians/:id/specializations/:categoryId')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.USER_UPDATED,
+    'Specialization removed successfully',
+  )
+  @ApiOperation({
+    summary: 'Remove specialization category from technician (ADMIN only)',
+  })
+  removeTechnicianSpecialization(
+    @Param('id') technicianId: string,
+    @Param('categoryId') categoryId: string,
+  ) {
+    return this.usersService.removeTechnicianSpecialization(
+      technicianId,
+      categoryId,
+    );
+  }
+
   @Get('statistics')
   @Roles(UserRole.ADMIN)
   @ResponseMessage(
