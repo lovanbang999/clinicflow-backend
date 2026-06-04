@@ -57,6 +57,8 @@ model User {
   systemConfigsUpdated          SystemConfig[]         @relation("UpdatedByUser")
   verificationCodes             VerificationCode[]
   visitServiceOrdersAsPerformer VisitServiceOrder[]    @relation("PerformedBy")
+  technicianSpecializations     TechnicianSpecialization[]
+  assignedLabOrders             LabOrder[]             @relation("AssignedTechnician")
 
   @@index([email])
   @@index([role])
@@ -275,10 +277,25 @@ model Category {
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   services    Service[]
+  technicianSpecializations TechnicianSpecialization[]
 
   @@index([isActive])
   @@index([code])
   @@map("categories")
+}
+
+model TechnicianSpecialization {
+  id         String   @id @default(uuid())
+  userId     String
+  categoryId String
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, categoryId])
+  @@index([userId])
+  @@index([categoryId])
+  @@map("technician_specializations")
 }
 
 model Service {
@@ -512,27 +529,29 @@ model VisitServiceOrder {
 }
 
 model LabOrder {
-  id                String             @id @default(uuid())
-  bookingId         String
-  medicalRecordId   String
-  patientProfileId  String
-  doctorId          String
-  testName          String
-  testDescription   String?
-  serviceId         String?
-  status            LabOrderStatus     @default(PENDING)
-  queueNumber       Int?
-  orderedAt         DateTime           @default(now())
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  groupKey          String?
-  suggestedOrder    Int?
-  invoiceItem       InvoiceItem?
-  booking           Booking            @relation(fields: [bookingId], references: [id])
-  medicalRecord     MedicalRecord      @relation(fields: [medicalRecordId], references: [id])
-  service           Service?           @relation(fields: [serviceId], references: [id])
-  result            LabResult?
-  prescriptionItems PrescriptionItem[]
+  id                   String             @id @default(uuid())
+  bookingId            String
+  medicalRecordId      String
+  patientProfileId     String
+  doctorId             String
+  testName             String
+  testDescription      String?
+  serviceId            String?
+  status               LabOrderStatus     @default(PENDING)
+  queueNumber          Int?
+  orderedAt            DateTime           @default(now())
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  groupKey             String?
+  suggestedOrder       Int?
+  assignedTechnicianId String?
+  invoiceItem          InvoiceItem?
+  booking              Booking            @relation(fields: [bookingId], references: [id])
+  medicalRecord        MedicalRecord      @relation(fields: [medicalRecordId], references: [id])
+  service              Service?           @relation(fields: [serviceId], references: [id])
+  assignedTechnician   User?              @relation("AssignedTechnician", fields: [assignedTechnicianId], references: [id])
+  result               LabResult?
+  prescriptionItems    PrescriptionItem[]
 
   @@index([patientProfileId])
   @@index([medicalRecordId])
@@ -540,6 +559,7 @@ model LabOrder {
   @@index([serviceId], map: "lab_orders_serviceId_fkey")
   @@index([doctorId])
   @@index([status])
+  @@index([assignedTechnicianId])
   @@map("lab_orders")
 }
 
