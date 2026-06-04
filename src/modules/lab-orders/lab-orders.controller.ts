@@ -91,8 +91,10 @@ export class LabOrdersController {
   @ApiOperation({
     summary: 'Get PAID lab orders (READY TO PERFORM) — for lab technicians',
   })
-  getReadyToPerformOrders() {
-    return this.labOrdersService.getReadyToPerformOrders();
+  getReadyToPerformOrders(@CurrentUser() user: User) {
+    return this.labOrdersService.getReadyToPerformOrders(
+      user as unknown as Express.User,
+    );
   }
 
   @Get('technician/stats')

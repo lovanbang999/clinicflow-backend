@@ -29,6 +29,7 @@ import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { RedisService } from '../database/services/redis.service';
 import { MailService } from '../notifications/mail.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class UsersService {
@@ -43,6 +44,7 @@ export class UsersService {
     private readonly sequenceService: SequenceService,
     private readonly redisService: RedisService,
     private readonly mailService: MailService,
+    private readonly prisma: PrismaService,
   ) {}
 
   private async clearPublicDoctorsCache() {
@@ -1000,5 +1002,94 @@ export class UsersService {
     const stats = await this.userRepository.getUserStatistics();
 
     return stats;
+  }
+
+  /**
+   * Get all active technicians with their specializations
+   * Optional filter: categoryId — returns only technicians who have that specialization
+   */
+  async getTechnicians(categoryId?: string) {
+    const where: Prisma.UserWhereInput = {
+      role: UserRole.TECHNICIAN,
+      isActive: true,
+      deletedAt: null,
+      ...(categoryId
+        ? {
+            technicianSpecializations: {
+              some: { categoryId },
+            },
+          }
+        : {}),
+    };
+
+    const technicians = await this.userRepository.findMany({
+      where,
+      select: {
+        id: true,
+        fullName: true,
+        avatar: true,
+        phone: true,
+        technicianSpecializations: {
+          select: {
+            id: true,
+            categoryId: true,
+            category: {
+              select: { id: true, name: true, code: true },
+            },
+          },
+        },
+      } as unknown as Prisma.UserSelect,
+      orderBy: { fullName: 'asc' },
+    });
+
+    return technicians;
+  }
+
+  /**
+   * Add a specialization category to a technician (admin only)
+   */
+  async addTechnicianSpecialization(technicianId: string, categoryId: string) {
+    // Verify user exists and is a TECHNICIAN
+    const user = await this.userRepository.findById(technicianId);
+    if (!user || user.role !== UserRole.TECHNICIAN) {
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'Technician not found',
+        404,
+        'TechnicianSpecialization.add',
+      );
+    }
+
+    // Upsert — ignore duplicate (unique constraint)
+    const spec = await this.prisma.technicianSpecialization.upsert({
+      where: { userId_categoryId: { userId: technicianId, categoryId } },
+      create: { userId: technicianId, categoryId },
+      update: {},
+      include: { category: { select: { id: true, name: true, code: true } } },
+    });
+
+    this.logger.log(
+      `Added specialization categoryId=${categoryId} to technician ${technicianId}`,
+    );
+
+    return spec;
+  }
+
+  /**
+   * Remove a specialization from a technician (admin only)
+   */
+  async removeTechnicianSpecialization(
+    technicianId: string,
+    categoryId: string,
+  ) {
+    await this.prisma.technicianSpecialization.deleteMany({
+      where: { userId: technicianId, categoryId },
+    });
+
+    this.logger.log(
+      `Removed specialization categoryId=${categoryId} from technician ${technicianId}`,
+    );
+
+    return null;
   }
 }
