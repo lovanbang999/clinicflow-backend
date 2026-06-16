@@ -46,8 +46,9 @@ export class AdminAnalyticsController {
   )
   @ApiOperation({ summary: 'Top doctors by revenue (ADMIN only)' })
   @ApiResponse({ status: 200, type: TopDoctorsResponseDto })
-  getTopDoctors(@Query() query: { limit?: number } & DateRangeQueryDto) {
-    return this.analyticsService.getTopDoctors(query.limit ?? 5, query);
+  getTopDoctors(@Query() query: { limit?: string } & DateRangeQueryDto) {
+    const limit = query.limit ? parseInt(query.limit, 10) : 5;
+    return this.analyticsService.getTopDoctors(limit, query);
   }
 
   @Get('top-services')
@@ -57,8 +58,9 @@ export class AdminAnalyticsController {
   )
   @ApiOperation({ summary: 'Top services by revenue (ADMIN only)' })
   @ApiResponse({ status: 200, type: TopServicesResponseDto })
-  getTopServices(@Query() query: { limit?: number } & DateRangeQueryDto) {
-    return this.analyticsService.getTopServices(query.limit ?? 5, query);
+  getTopServices(@Query() query: { limit?: string } & DateRangeQueryDto) {
+    const limit = query.limit ? parseInt(query.limit, 10) : 5;
+    return this.analyticsService.getTopServices(limit, query);
   }
 
   @Get('revenue-chart')
@@ -81,5 +83,15 @@ export class AdminAnalyticsController {
   @ApiResponse({ status: 200, type: BookingOverviewResponseDto })
   getBookingOverview(@Query() query: DateRangeQueryDto) {
     return this.analyticsService.getBookingOverview(query);
+  }
+
+  @Get('revenue-report')
+  @ResponseMessage(
+    MessageCodes.ANALYTICS_OVERVIEW_RETRIEVED,
+    'Revenue report retrieved successfully',
+  )
+  @ApiOperation({ summary: 'Revenue report by period (ADMIN only)' })
+  getRevenueReport(@Query() query: DateRangeQueryDto) {
+    return this.analyticsService.getRevenueReport(query);
   }
 }
