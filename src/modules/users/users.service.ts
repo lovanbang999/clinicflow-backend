@@ -821,6 +821,8 @@ export class UsersService {
       updateData.role = updateUserDto.role;
     if (updateUserDto.isActive !== undefined && updateUserDto.isActive !== null)
       updateData.isActive = updateUserDto.isActive;
+    if (updateUserDto.lockReason !== undefined)
+      updateData.lockReason = updateUserDto.lockReason;
 
     // Hash password if provided
     if (

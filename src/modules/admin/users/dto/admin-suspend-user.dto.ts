@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsNotEmpty } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class AdminSuspendUserDto {
   @ApiProperty({
@@ -10,4 +10,13 @@ export class AdminSuspendUserDto {
   @IsBoolean()
   @IsNotEmpty()
   isActive: boolean;
+
+  @ApiProperty({
+    description: 'Reason for suspension/reinstate',
+    required: false,
+    example: 'Violated terms of service',
+  })
+  @IsString()
+  @IsOptional()
+  reason?: string;
 }

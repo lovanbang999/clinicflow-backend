@@ -11,12 +11,14 @@ import { FilterDoctorDto } from './dto/filter-doctor.dto';
 import { AdminCreateDoctorDto } from './dto/admin-create-doctor.dto';
 import { AdminUpdateDoctorProfileDto } from './dto/admin-update-doctor-profile.dto';
 import { AdminSuspendUserDto } from '../users/dto/admin-suspend-user.dto';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class AdminDoctorsService {
   constructor(
     @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
     private readonly usersService: UsersService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async getDoctorStatistics() {
@@ -111,6 +113,13 @@ export class AdminDoctorsService {
               rating: true,
               reviewCount: true,
               consultationFee: true,
+              roomId: true,
+              room: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
             },
           },
         },
@@ -160,6 +169,23 @@ export class AdminDoctorsService {
             rating: true,
             reviewCount: true,
             consultationFee: true,
+            roomId: true,
+            room: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            services: {
+              select: {
+                service: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
           },
         },
         _count: {
@@ -214,6 +240,7 @@ export class AdminDoctorsService {
         bio: dto.bio ?? null,
         rating: dto.rating ?? 0,
         consultationFee: dto.consultationFee ?? 0,
+        roomId: dto.roomId ?? null,
       },
       update: {
         ...(dto.specialties !== undefined && { specialties: dto.specialties }),
@@ -228,6 +255,7 @@ export class AdminDoctorsService {
         ...(dto.consultationFee !== undefined && {
           consultationFee: dto.consultationFee,
         }),
+        ...(dto.roomId !== undefined && { roomId: dto.roomId }),
       },
       select: {
         id: true,
@@ -239,9 +267,31 @@ export class AdminDoctorsService {
         rating: true,
         reviewCount: true,
         consultationFee: true,
+        roomId: true,
+        room: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
         updatedAt: true,
       },
     });
+
+    // If serviceIds is provided, sync DoctorService relations
+    if (dto.serviceIds !== undefined) {
+      await this.prisma.doctorService.deleteMany({
+        where: { doctorProfileId: profile.id },
+      });
+      if (dto.serviceIds.length > 0) {
+        await this.prisma.doctorService.createMany({
+          data: dto.serviceIds.map((serviceId) => ({
+            doctorProfileId: profile.id,
+            serviceId,
+          })),
+        });
+      }
+    }
 
     return profile;
   }
