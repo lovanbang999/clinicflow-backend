@@ -79,4 +79,24 @@ export class AdminUpdateDoctorProfileDto {
   @IsNumber()
   @Min(0)
   consultationFee?: number;
+
+  @ApiProperty({
+    description: 'List of assigned service IDs',
+    example: ['service-uuid-1', 'service-uuid-2'],
+    required: false,
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  serviceIds?: string[];
+
+  @ApiProperty({
+    description: 'Default consultation room UUID for the doctor',
+    example: 'room-uuid-1',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  roomId?: string | null;
 }

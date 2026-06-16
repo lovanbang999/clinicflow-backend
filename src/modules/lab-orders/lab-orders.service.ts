@@ -22,6 +22,8 @@ import {
   LabResult,
   Prisma,
   LabOrder,
+  UserRole,
+  LabFormType,
 } from '@prisma/client';
 import { LabOrdersGateway } from './lab-orders.gateway';
 import { BillingService } from '../billing/billing.service';
@@ -51,6 +53,63 @@ export interface InternalBooking {
   patientProfileId: string;
   doctor: { fullName: string };
   patientProfile: InternalPatientProfile;
+}
+
+export interface RawOrderWithRelations {
+  id: string;
+  bookingId: string;
+  testName: string;
+  testDescription?: string;
+  serviceId?: string;
+  status: LabOrderStatus;
+  patientProfileId: string;
+  service?: {
+    id: string;
+    name: string;
+    labFormType: string;
+  };
+  booking?: {
+    id: string;
+    bookingCode: string;
+    doctorId: string;
+    patientProfileId: string;
+    doctor: {
+      fullName: string;
+      doctorProfile?: {
+        specialties: string[];
+      };
+    };
+    patientProfile?: {
+      fullName: string;
+      patientCode: string | null;
+      gender: Gender;
+      dateOfBirth: Date | null;
+    };
+  };
+  result?: {
+    id: string;
+    resultText?: string;
+    resultFileUrl?: string;
+    isAbnormal?: boolean;
+    abnormalNote?: string;
+    recordedBy: string;
+    resultDate: Date;
+  };
+  medicalRecord?: {
+    id: string;
+    chiefComplaint?: string;
+    clinicalFindings?: string;
+    doctorNotes?: string;
+    diagnosisName?: string;
+    allergies?: string;
+    bloodPressure?: string;
+    heartRate?: number;
+    temperature?: number;
+    spO2?: number;
+    weightKg?: number;
+    heightCm?: number;
+    bmi?: number;
+  };
 }
 
 export interface InternalLabOrder extends LabOrder {
@@ -379,6 +438,22 @@ export class LabOrdersService {
       where: { id },
       include: {
         result: true,
+        medicalRecord: {
+          select: {
+            bloodPressure: true,
+            heartRate: true,
+            temperature: true,
+            spO2: true,
+            weightKg: true,
+            heightCm: true,
+            bmi: true,
+            chiefComplaint: true,
+            clinicalFindings: true,
+            doctorNotes: true,
+            allergies: true,
+            diagnosisName: true,
+          },
+        },
         service: {
           select: {
             id: true,
@@ -392,7 +467,12 @@ export class LabOrdersService {
             bookingCode: true,
             doctorId: true,
             patientProfileId: true,
-            doctor: { select: { fullName: true } },
+            doctor: {
+              select: {
+                fullName: true,
+                doctorProfile: { select: { specialties: true } },
+              },
+            },
             patientProfile: {
               select: {
                 fullName: true,
@@ -404,7 +484,7 @@ export class LabOrdersService {
           },
         },
       },
-    })) as unknown as InternalLabOrder;
+    })) as unknown as RawOrderWithRelations;
 
     if (!rawOrder) {
       throw new ApiException(
@@ -423,13 +503,39 @@ export class LabOrdersService {
       );
     }
 
+    // Query recent 3 completed lab orders of same patient and test/service type
+    const recentResults = await this.prisma.labOrder.findMany({
+      where: {
+        patientProfileId: rawOrder.patientProfileId,
+        id: { not: rawOrder.id },
+        status: LabOrderStatus.COMPLETED,
+        OR: [
+          ...(rawOrder.serviceId ? [{ serviceId: rawOrder.serviceId }] : []),
+          { testName: rawOrder.testName },
+        ],
+      },
+      include: {
+        result: true,
+        assignedTechnician: { select: { fullName: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 3,
+    });
+
     const { booking, ...rest } = rawOrder;
     const order = {
       ...rest,
       booking: booking
-        ? { bookingCode: booking.bookingCode, doctor: booking.doctor }
+        ? {
+            bookingCode: booking.bookingCode,
+            doctor: {
+              fullName: booking.doctor.fullName,
+              specialties: booking.doctor.doctorProfile?.specialties || [],
+            },
+          }
         : undefined,
       patientProfile: booking?.patientProfile,
+      recentResults,
     };
 
     return order;
@@ -573,43 +679,140 @@ export class LabOrdersService {
     return { pending, inProgress, completedToday };
   }
 
-  async getTechnicianHistory() {
-    const rawOrders = await this.clinicalRepository.findManyLabOrder({
-      where: {
-        status: LabOrderStatus.COMPLETED,
-      },
-      include: {
-        result: true,
-        booking: {
-          select: {
-            bookingCode: true,
-            doctor: { select: { fullName: true } },
+  async getTechnicianHistory(
+    user: User,
+    query: {
+      startDate?: string;
+      endDate?: string;
+      categoryId?: string;
+      labFormType?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
+  ) {
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.LabOrderWhereInput = {
+      status: LabOrderStatus.COMPLETED,
+    };
+
+    // 1. Role filter: only show assigned to this technician if role is TECHNICIAN
+    if (user.role === UserRole.TECHNICIAN) {
+      where.OR = [
+        { assignedTechnicianId: user.id },
+        { result: { recordedBy: user.id } },
+      ];
+    }
+
+    // 2. Date range filter (using updatedAt for completion time)
+    if (query.startDate || query.endDate) {
+      where.updatedAt = {};
+      if (query.startDate) {
+        where.updatedAt.gte = new Date(query.startDate);
+      }
+      if (query.endDate) {
+        const end = new Date(query.endDate);
+        end.setHours(23, 59, 59, 999);
+        where.updatedAt.lte = end;
+      }
+    }
+
+    // 3. Category / labFormType filter
+    if (query.categoryId || query.labFormType) {
+      where.service = {};
+      if (query.categoryId) {
+        where.service.categoryId = query.categoryId;
+      }
+      if (query.labFormType) {
+        where.service.labFormType = query.labFormType as LabFormType;
+      }
+    }
+
+    // 4. Search patient name, code, booking code
+    if (query.search) {
+      where.booking = {
+        OR: [
+          { bookingCode: { contains: query.search } },
+          {
             patientProfile: {
-              select: {
-                fullName: true,
-                patientCode: true,
-                gender: true,
-                dateOfBirth: true,
+              OR: [
+                { fullName: { contains: query.search } },
+                {
+                  patientCode: { contains: query.search },
+                },
+              ],
+            },
+          },
+        ],
+      };
+    }
+
+    const [total, rawOrders] = await Promise.all([
+      this.prisma.labOrder.count({ where }),
+      this.clinicalRepository.findManyLabOrder({
+        where,
+        include: {
+          result: true,
+          service: {
+            select: {
+              id: true,
+              name: true,
+              labFormType: true,
+              categoryId: true,
+            },
+          },
+          booking: {
+            select: {
+              bookingCode: true,
+              doctor: {
+                select: {
+                  fullName: true,
+                  doctorProfile: { select: { specialties: true } },
+                },
+              },
+              patientProfile: {
+                select: {
+                  fullName: true,
+                  patientCode: true,
+                  gender: true,
+                  dateOfBirth: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: { updatedAt: 'desc' },
-      take: 50,
-    });
+        orderBy: { updatedAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
 
-    const orders = rawOrders.map((order) => {
+    const items = rawOrders.map((order) => {
       const { booking, ...rest } = order;
       if (!booking) return rest;
       return {
         ...rest,
-        booking: { bookingCode: booking.bookingCode, doctor: booking.doctor },
+        booking: {
+          bookingCode: booking.bookingCode,
+          doctor: {
+            fullName: booking.doctor.fullName,
+            specialties: booking.doctor.doctorProfile?.specialties || [],
+          },
+        },
         patientProfile: booking.patientProfile,
       };
     });
 
-    return orders;
+    return {
+      items,
+      total,
+      pages: Math.ceil(total / limit),
+      page,
+      limit,
+    };
   }
 
   async addResult(

@@ -38,6 +38,7 @@ import {
   Prisma,
   ServiceOrderStatus,
   BookingPriority,
+  User,
 } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { LabOrdersGateway } from '../lab-orders/lab-orders.gateway';
@@ -882,6 +883,181 @@ export class BillingService {
       page,
       limit,
     };
+  }
+
+  async exportInvoicesToCsv(params: {
+    status?: InvoiceStatus;
+    invoiceType?: InvoiceType;
+    patientProfileId?: string;
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+    currentUser?: User;
+  }) {
+    if (
+      params.currentUser &&
+      params.currentUser.role !== 'ADMIN' &&
+      params.currentUser.role !== 'RECEPTIONIST'
+    ) {
+      throw new ApiException(
+        MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+        'Unauthorized access to financial records',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    const {
+      status,
+      patientProfileId,
+      invoiceType,
+      startDate,
+      endDate,
+      search,
+    } = params;
+
+    const where: Prisma.InvoiceWhereInput = {};
+    if (status) where.status = status;
+    if (patientProfileId) where.patientProfileId = patientProfileId;
+    if (invoiceType) where.invoiceType = invoiceType;
+    if (search) {
+      where.OR = [
+        { invoiceNumber: { contains: search } },
+        {
+          booking: {
+            patientProfile: {
+              fullName: { contains: search },
+            },
+          },
+        },
+        {
+          booking: {
+            patientProfile: {
+              patientCode: { contains: search },
+            },
+          },
+        },
+      ];
+    }
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate)
+        (where.createdAt as Prisma.DateTimeFilter).gte = new Date(startDate);
+      if (endDate)
+        (where.createdAt as Prisma.DateTimeFilter).lte = new Date(endDate);
+    }
+
+    const invoices = await this.financeRepository.findManyInvoice({
+      where,
+      include: {
+        booking: {
+          include: {
+            patientProfile: { select: { fullName: true, patientCode: true } },
+          },
+        },
+        payments: {
+          select: {
+            amountPaid: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const escapeCsv = (
+      val:
+        | string
+        | number
+        | boolean
+        | Date
+        | null
+        | undefined
+        | { toString(): string },
+    ) => {
+      if (val === null || val === undefined) return '';
+      const str =
+        typeof val === 'object' && val !== null ? val.toString() : String(val);
+      if (
+        str.includes(',') ||
+        str.includes('"') ||
+        str.includes('\n') ||
+        str.includes('\r')
+      ) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const translateInvoiceType = (type: InvoiceType) => {
+      switch (type) {
+        case InvoiceType.CONSULTATION:
+          return 'Khám bệnh/Tư vấn';
+        case InvoiceType.SERVICE:
+          return 'Dịch vụ/Xét nghiệm';
+        case InvoiceType.PHARMACY:
+          return 'Dược phẩm';
+        default:
+          return type;
+      }
+    };
+
+    const translateInvoiceStatus = (status: InvoiceStatus) => {
+      switch (status) {
+        case InvoiceStatus.DRAFT:
+          return 'Nháp';
+        case InvoiceStatus.OPEN:
+          return 'Chờ thanh toán';
+        case InvoiceStatus.ISSUED:
+          return 'Chờ thanh toán (Đã phát hành)';
+        case InvoiceStatus.PAID:
+          return 'Đã thanh toán';
+        case InvoiceStatus.CANCELLED:
+          return 'Đã hủy';
+        case InvoiceStatus.REFUNDED:
+          return 'Đã hoàn tiền';
+        default:
+          return status;
+      }
+    };
+
+    const headers = [
+      'Mã hóa đơn',
+      'Mã lịch hẹn',
+      'Tên bệnh nhân',
+      'Mã bệnh nhân',
+      'Loại hóa đơn',
+      'Tổng tiền (VND)',
+      'Đã thanh toán (VND)',
+      'Trạng thái',
+      'Ngày thanh toán',
+    ];
+
+    const rows = invoices.map((invoice) => {
+      const paidAmount =
+        invoice.status === 'PAID'
+          ? Number(invoice.totalAmount)
+          : invoice.payments.reduce((sum, p) => sum + Number(p.amountPaid), 0);
+
+      const paidAtStr = invoice.paidAt
+        ? format(new Date(invoice.paidAt), 'dd/MM/yyyy HH:mm')
+        : '';
+
+      return [
+        invoice.invoiceNumber,
+        invoice.booking?.bookingCode || '',
+        invoice.booking?.patientProfile?.fullName || '',
+        invoice.booking?.patientProfile?.patientCode || '',
+        translateInvoiceType(invoice.invoiceType),
+        Number(invoice.totalAmount),
+        paidAmount,
+        translateInvoiceStatus(invoice.status),
+        paidAtStr,
+      ].map(escapeCsv);
+    });
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((row) => row.join(',')),
+    ].join('\n');
+    return csvContent;
   }
 
   /**

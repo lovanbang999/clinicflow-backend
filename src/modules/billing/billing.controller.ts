@@ -10,6 +10,7 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -21,6 +22,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole, InvoiceStatus, InvoiceType, User } from '@prisma/client';
+import { Response } from 'express';
 import { BillingService } from './billing.service';
 import {
   CreateInvoiceDto,
@@ -112,7 +114,7 @@ export class BillingController {
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
-    @CurrentUser() user?: any,
+    @CurrentUser() user?: User,
   ) {
     return this.billingService.listInvoices({
       status,
@@ -162,6 +164,43 @@ export class BillingController {
     @Param('bookingId', ParseUUIDPipe) bookingId: string,
   ) {
     return this.billingService.getPendingLabOrdersForBilling(bookingId);
+  }
+
+  @Get('invoices/export')
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ApiOperation({ summary: 'Export invoices as CSV' })
+  @ApiQuery({ name: 'status', required: false, enum: InvoiceStatus })
+  @ApiQuery({ name: 'invoiceType', required: false, enum: InvoiceType })
+  @ApiQuery({ name: 'patientProfileId', required: false })
+  @ApiQuery({ name: 'startDate', required: false })
+  @ApiQuery({ name: 'endDate', required: false })
+  @ApiQuery({ name: 'search', required: false })
+  async exportInvoices(
+    @Res() res: Response,
+    @Query('status') status?: InvoiceStatus,
+    @Query('invoiceType') invoiceType?: InvoiceType,
+    @Query('patientProfileId') patientProfileId?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('search') search?: string,
+    @CurrentUser() user?: User,
+  ) {
+    const csvContent = await this.billingService.exportInvoicesToCsv({
+      status,
+      invoiceType,
+      patientProfileId,
+      startDate,
+      endDate,
+      search,
+      currentUser: user,
+    });
+
+    const filename = `invoices_${new Date().toISOString().split('T')[0]}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    res.write('\ufeff');
+    res.write(csvContent);
+    res.end();
   }
 
   @Get('invoices/:id')

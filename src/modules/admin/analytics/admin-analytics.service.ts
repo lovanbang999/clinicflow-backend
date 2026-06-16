@@ -64,12 +64,18 @@ export class AdminAnalyticsService {
       lte: filterLte,
     });
 
+    type InvoiceGroupByTypeRow = {
+      invoiceType: string;
+      _sum: { totalAmount?: number | null };
+    };
+
     const [
       totalPatients,
       totalDoctors,
       totalBookings,
       periodPatients,
       comparisonPatients,
+      revenueByTypeRaw,
     ] = await Promise.all([
       this.profileRepository.countPatientProfile({}),
       this.userRepository.count({
@@ -91,7 +97,28 @@ export class AdminAnalyticsService {
             },
           })
         : Promise.resolve(0),
+      this.financeRepository.groupByInvoice({
+        by: ['invoiceType'],
+        where: {
+          status: 'PAID',
+          paidAt: { gte: filterGte || startOfMonth, lte: filterLte },
+        },
+        _sum: { totalAmount: true },
+      }) as Promise<InvoiceGroupByTypeRow[]>,
     ]);
+
+    const revenueByType = {
+      CONSULTATION: 0,
+      SERVICE: 0,
+      PHARMACY: 0,
+    };
+    for (const r of revenueByTypeRaw) {
+      if (r.invoiceType in revenueByType) {
+        revenueByType[
+          r.invoiceType as 'CONSULTATION' | 'SERVICE' | 'PHARMACY'
+        ] = Number(r._sum?.totalAmount ?? 0);
+      }
+    }
 
     const allPaid = await this.fetchPaidInvoices({});
     const totalRevenue = allPaid.reduce(
@@ -150,6 +177,7 @@ export class AdminAnalyticsService {
       totalDoctors,
       totalBookings,
       totalRevenue,
+      revenueByType,
       trends: {
         newPatientsThisMonth: periodPatients,
         newPatientsLastMonth: comparisonPatients,
@@ -448,5 +476,100 @@ export class AdminAnalyticsService {
       .slice(0, limit);
 
     return { topServices };
+  }
+
+  async getRevenueReport(query: DateRangeQueryDto) {
+    const { from, to } = query;
+    const filterGte = from ? new Date(from) : undefined;
+    const filterLte = to ? new Date(to) : undefined;
+
+    const invoices = await this.financeRepository.findManyInvoice({
+      where: {
+        status: 'PAID',
+        ...(filterGte || filterLte
+          ? { paidAt: { gte: filterGte, lte: filterLte } }
+          : {}),
+      },
+      include: {
+        booking: {
+          select: {
+            patientProfile: {
+              select: {
+                fullName: true,
+                patientCode: true,
+              },
+            },
+            doctor: {
+              select: {
+                fullName: true,
+              },
+            },
+          },
+        },
+        payments: {
+          select: {
+            paymentMethod: true,
+          },
+        },
+      },
+      orderBy: { paidAt: 'desc' },
+    });
+
+    const totalRevenue = invoices.reduce(
+      (sum, inv) => sum + Number(inv.totalAmount),
+      0,
+    );
+    const invoiceCount = invoices.length;
+    const averageOrderValue =
+      invoiceCount > 0 ? Math.round(totalRevenue / invoiceCount) : 0;
+
+    const revenueByType = {
+      CONSULTATION: 0,
+      SERVICE: 0,
+      PHARMACY: 0,
+    };
+
+    const paymentMethodCount = {
+      CASH: 0,
+      CARD: 0,
+      BANK_TRANSFER: 0,
+      INSURANCE: 0,
+    };
+
+    for (const inv of invoices) {
+      if (inv.invoiceType in revenueByType) {
+        revenueByType[
+          inv.invoiceType as 'CONSULTATION' | 'SERVICE' | 'PHARMACY'
+        ] += Number(inv.totalAmount);
+      }
+      for (const p of inv.payments) {
+        if (p.paymentMethod in paymentMethodCount) {
+          paymentMethodCount[
+            p.paymentMethod as 'CASH' | 'CARD' | 'BANK_TRANSFER' | 'INSURANCE'
+          ] += Number(inv.totalAmount);
+        }
+      }
+    }
+
+    return {
+      summary: {
+        totalRevenue,
+        invoiceCount,
+        averageOrderValue,
+        revenueByType,
+        paymentMethodRevenue: paymentMethodCount,
+      },
+      invoices: invoices.map((inv) => ({
+        id: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        invoiceType: inv.invoiceType,
+        totalAmount: Number(inv.totalAmount),
+        paidAt: inv.paidAt,
+        patientName: inv.booking?.patientProfile?.fullName ?? 'Khách vãng lai',
+        patientCode: inv.booking?.patientProfile?.patientCode ?? '—',
+        doctorName: inv.booking?.doctor?.fullName ?? '—',
+        paymentMethod: inv.payments[0]?.paymentMethod ?? 'CASH',
+      })),
+    };
   }
 }

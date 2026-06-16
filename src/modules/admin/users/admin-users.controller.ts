@@ -20,12 +20,13 @@ import {
   ApiQuery,
   ApiResponse,
 } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { UserRole, User } from '@prisma/client';
 import { UsersService } from '../../users/users.service';
 import { AdminCreateUserDto } from './dto/admin-create-user.dto';
 import { FilterUserDto } from '../../users/dto/filter-user.dto';
 import { AdminSuspendUserDto } from './dto/admin-suspend-user.dto';
 import { Roles } from 'src/common/decorators/roles.decorator';
+import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { UpdateUserDto } from 'src/modules/users/dto/update-user.dto';
@@ -196,8 +197,18 @@ export class AdminUsersController {
   @ApiResponse({ status: 200, description: 'User status updated successfully' })
   @ApiResponse({ status: 404, description: 'User not found' })
   @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required' })
-  suspendUser(@Param('id') id: string, @Body() dto: AdminSuspendUserDto) {
-    return this.usersService.update(id, { isActive: dto.isActive });
+  suspendUser(
+    @Param('id') id: string,
+    @Body() dto: AdminSuspendUserDto,
+    @CurrentUser() currentUser: User,
+  ) {
+    if (currentUser && currentUser.id === id) {
+      throw new ForbiddenException('Cannot lock your own account');
+    }
+    return this.usersService.update(id, {
+      isActive: dto.isActive,
+      lockReason: dto.isActive ? null : dto.reason || null,
+    });
   }
 
   /**

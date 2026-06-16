@@ -35,7 +35,7 @@ export class AdminRoomsService {
       this.prisma.room.findMany({
         where,
         include: {
-          _count: { select: { scheduleSlots: true } },
+          _count: { select: { scheduleSlots: true, doctorProfiles: true } },
         },
         skip: (page - 1) * limit,
         take: limit,
@@ -59,7 +59,7 @@ export class AdminRoomsService {
     const room = await this.prisma.room.findUnique({
       where: { id },
       include: {
-        _count: { select: { scheduleSlots: true } },
+        _count: { select: { scheduleSlots: true, doctorProfiles: true } },
       },
     });
 

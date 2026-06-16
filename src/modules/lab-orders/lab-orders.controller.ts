@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -117,8 +118,25 @@ export class LabOrdersController {
   @ApiOperation({
     summary: 'Get history of completed lab orders for technician',
   })
-  getTechnicianHistory() {
-    return this.labOrdersService.getTechnicianHistory();
+  getTechnicianHistory(
+    @CurrentUser() user: User,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('categoryId') categoryId?: string,
+    @Query('labFormType') labFormType?: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.labOrdersService.getTechnicianHistory(user, {
+      startDate,
+      endDate,
+      categoryId,
+      labFormType,
+      search,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+    });
   }
 
   @Get(':id')

@@ -32,6 +32,7 @@ model User {
   gender                        Gender?
   address                       String?
   isActive                      Boolean                @default(false)
+  lockReason                    String?
   isVerified                    Boolean                @default(false)
   isPasswordTemp                Boolean                @default(false)
   deletedAt                     DateTime?
@@ -112,8 +113,11 @@ model DoctorProfile {
   updatedAt         DateTime        @updatedAt
   user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   services          DoctorService[]
+  roomId            String?
+  room              Room?           @relation(fields: [roomId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([roomId])
   @@map("doctor_profiles")
 }
 
@@ -221,6 +225,7 @@ model Room {
   bookings           Booking[]
   scheduleSlots      DoctorScheduleSlot[]
   visitServiceOrders VisitServiceOrder[]  @relation("VSORoom")
+  doctorProfiles     DoctorProfile[]
 
   @@index([isActive])
   @@map("rooms")

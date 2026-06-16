@@ -93,6 +93,15 @@ export class UpdateUserDto {
   isActive?: boolean;
 
   @ApiProperty({
+    description: 'Reason for locking/suspending the user',
+    example: 'Violated policies',
+    required: false,
+  })
+  @ValidateIf((o, v) => v !== undefined && v !== null)
+  @IsString()
+  lockReason?: string | null;
+
+  @ApiProperty({
     description: 'New password',
     example: 'NewPassword123!',
     required: false,
