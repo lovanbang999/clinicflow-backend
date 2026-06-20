@@ -119,10 +119,11 @@ jobs:
 
             echo "📝 Writing .env file from secrets..."
             cat > .env << 'ENVEOF'
-            POSTGRES_USER=${{ secrets.POSTGRES_USER }}
-            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-            POSTGRES_DB=${{ secrets.POSTGRES_DB }}
-            DATABASE_URL=postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/${{ secrets.POSTGRES_DB }}
+            MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+            MYSQL_USER=${{ secrets.MYSQL_USER }}
+            MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+            MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
+            DATABASE_URL=mysql://${{ secrets.MYSQL_USER }}:${{ secrets.MYSQL_PASSWORD }}@mysql:3306/${{ secrets.MYSQL_DATABASE }}
             PORT=8080
             NODE_ENV=production
             JWT_SECRET=${{ secrets.JWT_SECRET }}
@@ -138,7 +139,11 @@ jobs:
             CLOUDINARY_CLOUD_NAME=${{ secrets.CLOUDINARY_CLOUD_NAME }}
             CLOUDINARY_API_KEY=${{ secrets.CLOUDINARY_API_KEY }}
             CLOUDINARY_API_SECRET=${{ secrets.CLOUDINARY_API_SECRET }}
-            CLOUDIARY_FOLDER=${{ secrets.CLOUDIARY_FOLDER }}
+            CLOUDINARY_FOLDER=${{ secrets.CLOUDINARY_FOLDER }}
+            REDIS_HOST=redis
+            REDIS_PORT=6379
+            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+            REDIS_DB=0
             ENVEOF
 
             echo "🔐 Logging into GitHub Container Registry..."
@@ -148,10 +153,10 @@ jobs:
             export BACKEND_IMAGE=ghcr.io/${{ github.repository_owner }}/smartclinic-backend:latest
             docker compose pull backend
 
-            echo "🗄️ Ensuring PostgreSQL is running..."
-            docker compose up -d postgres
-            echo "⏳ Waiting for PostgreSQL to be healthy..."
-            timeout 60 sh -c 'until docker compose exec postgres pg_isready -U ${{ secrets.POSTGRES_USER }} -d ${{ secrets.POSTGRES_DB }} 2>/dev/null; do sleep 2; done'
+            echo "🗄️ Ensuring MySQL and Redis are running..."
+            docker compose up -d mysql redis
+            echo "⏳ Waiting for MySQL to be healthy..."
+            timeout 60 sh -c 'until docker compose exec mysql mysqladmin ping -h localhost -u"${{ secrets.MYSQL_USER }}" -p"${{ secrets.MYSQL_PASSWORD }}" 2>/dev/null; do sleep 2; done'
 
             echo "🚀 Restarting backend service..."
             docker compose up -d --no-deps --remove-orphans backend
