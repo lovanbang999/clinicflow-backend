@@ -20,10 +20,13 @@ import { I_SYSTEM_REPOSITORY } from './interfaces/system.repository.interface';
 import { PrismaSystemRepository } from './repositories/prisma-system.repository';
 import { I_AI_REPOSITORY } from './interfaces/ai.repository.interface';
 import { PrismaAiRepository } from './repositories/prisma-ai.repository';
+import { SequenceService } from './services/sequence.service';
+import { RedisModule } from './redis.module';
+import { RedisService } from './services/redis.service';
 
 @Global()
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, RedisModule],
   providers: [
     {
       provide: I_USER_REPOSITORY,
@@ -65,6 +68,8 @@ import { PrismaAiRepository } from './repositories/prisma-ai.repository';
       provide: I_AI_REPOSITORY,
       useClass: PrismaAiRepository,
     },
+    SequenceService,
+    RedisService,
   ],
   exports: [
     I_USER_REPOSITORY,
@@ -77,6 +82,9 @@ import { PrismaAiRepository } from './repositories/prisma-ai.repository';
     I_FINANCE_REPOSITORY,
     I_SYSTEM_REPOSITORY,
     I_AI_REPOSITORY,
+    SequenceService,
+    RedisModule,
+    RedisService,
   ],
 })
 export class DatabaseModule {}

@@ -22,12 +22,10 @@ import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { FilterBookingDto } from './dto/filter-booking.dto';
 import { QueueGateway } from '../queue/queue.gateway';
 import { QueueService } from '../queue/queue.service';
+import { SequenceService } from '../database/services/sequence.service';
 import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { ApiException } from 'src/common/exceptions/api.exception';
-import {
-  ResponseHelper,
-  ApiResponse,
-} from 'src/common/interfaces/api-response.interface';
+
 import { BillingService } from '../billing/billing.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -50,6 +48,7 @@ import {
   IClinicalRepository,
   I_CLINICAL_REPOSITORY,
 } from '../database/interfaces/clinical.repository.interface';
+import { RedisService } from '../database/services/redis.service';
 
 // Reusable select for patientProfile in booking includes
 const patientProfileSelect = {
@@ -82,6 +81,8 @@ export class BookingsService {
     @Inject(I_CLINICAL_REPOSITORY)
     private readonly clinicalRepository: IClinicalRepository,
     private readonly notificationsService: NotificationsService,
+    private readonly sequenceService: SequenceService,
+    private readonly redisService: RedisService,
   ) {}
 
   /**
@@ -151,7 +152,7 @@ export class BookingsService {
       throw new ApiException(
         MessageCodes.BOOKING_INVALID_TIME,
         'Time slot is no longer available or is temporarily locked',
-        400,
+        409,
         'Booking validation failed',
       );
     }
@@ -159,6 +160,32 @@ export class BookingsService {
     const bookingCode = await this.generateBookingCode(bookingDate);
 
     const booking = await this.bookingRepository.transaction(async (tx) => {
+      // DB-level double check inside transaction
+      const confirmedBookings = await tx.booking.count({
+        where: {
+          doctorId,
+          bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
+          startTime,
+          status: {
+            in: [
+              BookingStatus.PENDING,
+              BookingStatus.CONFIRMED,
+              BookingStatus.CHECKED_IN,
+              BookingStatus.IN_PROGRESS,
+              BookingStatus.AWAITING_RESULTS,
+            ],
+          },
+        },
+      });
+
+      if (confirmedBookings >= maxSlotsPerHour) {
+        throw new ApiException(
+          MessageCodes.BOOKING_INVALID_TIME,
+          'Time slot is no longer available (Race condition prevented)',
+          409,
+        );
+      }
+
       const newBooking = await tx.booking.create({
         data: {
           patientProfileId,
@@ -218,14 +245,20 @@ export class BookingsService {
     });
 
     this.bookingNotification.sendBookingNotification(booking).catch((error) => {
-      console.error('Failed to send booking notification:', error);
+      this.logger.error(
+        'Failed to send booking notification',
+        error instanceof Error ? error.stack : String(error),
+      );
     });
 
     // Auto-create invoice
     try {
       await this.billingService.createInvoice({ bookingId: booking.id });
     } catch (e) {
-      console.error('Failed to auto-create invoice:', e);
+      this.logger.error(
+        'Failed to auto-create invoice',
+        e instanceof Error ? e.stack : String(e),
+      );
     }
 
     // Notify admins and receptionists of new booking
@@ -238,12 +271,10 @@ export class BookingsService {
       metadata: { bookingId: booking.id, source: 'ONLINE' },
     });
 
-    return ResponseHelper.success(
-      booking,
-      MessageCodes.BOOKING_CREATED,
-      'Booking created successfully',
-      201,
-    );
+    // Invalidate slot cache for this doctor and date
+    await this.invalidateDoctorSlotsCache(doctorId, bookingDate);
+
+    return booking;
   }
 
   /**
@@ -337,6 +368,36 @@ export class BookingsService {
     const bookingCode = await this.generateBookingCode(bookingDate);
 
     const booking = (await this.bookingRepository.transaction(async (tx) => {
+      if (isPreBooked && startTime) {
+        // DB-level double check inside transaction
+        const confirmedBookings = await tx.booking.count({
+          where: {
+            doctorId,
+            bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
+            startTime,
+            status: {
+              in: [
+                BookingStatus.PENDING,
+                BookingStatus.CONFIRMED,
+                BookingStatus.CHECKED_IN,
+                BookingStatus.IN_PROGRESS,
+                BookingStatus.AWAITING_RESULTS,
+              ],
+            },
+          },
+        });
+
+        const maxSlotsPerHour =
+          service?.maxSlotsPerHour ?? slot?.maxPatients ?? 1;
+        if (confirmedBookings >= maxSlotsPerHour) {
+          throw new ApiException(
+            MessageCodes.BOOKING_INVALID_TIME,
+            'Time slot is no longer available (Race condition prevented)',
+            409,
+          );
+        }
+      }
+
       const newBooking = await tx.booking.create({
         data: {
           patientProfileId,
@@ -377,7 +438,10 @@ export class BookingsService {
     })) as unknown as BookingWithRelations;
 
     this.bookingNotification.sendBookingNotification(booking).catch((error) => {
-      console.error('Failed to send booking notification:', error);
+      this.logger.error(
+        'Failed to send booking notification',
+        error instanceof Error ? error.stack : String(error),
+      );
     });
 
     // Auto-create invoice — chỉ khi serviceId đã xác định
@@ -390,20 +454,19 @@ export class BookingsService {
             : 'Walk-in generated invoice',
         });
       } catch (e) {
-        console.error('Failed to auto-create invoice:', e);
+        this.logger.error(
+          'Failed to auto-create invoice',
+          e instanceof Error ? e.stack : String(e),
+        );
       }
     }
 
     await this.bookingNotification.notifyAdminsOfBooking(booking, 'CREATED');
 
-    return ResponseHelper.success(
-      booking,
-      MessageCodes.BOOKING_CREATED,
-      isPreBooked
-        ? 'Pre-booking created and confirmed successfully'
-        : 'Walk-in booking created successfully',
-      201,
-    );
+    // Invalidate slot cache for this doctor and date
+    await this.invalidateDoctorSlotsCache(doctorId, bookingDate);
+
+    return booking;
   }
 
   /**
@@ -421,7 +484,7 @@ export class BookingsService {
   async createDirectServiceBooking(
     dto: import('./dto/create-direct-service-booking.dto').CreateDirectServiceBookingDto,
     createdById: string,
-  ): Promise<ApiResponse<any>> {
+  ) {
     const {
       patientProfileId,
       doctorId,
@@ -507,6 +570,36 @@ export class BookingsService {
     }
 
     const result = await this.bookingRepository.transaction(async (tx) => {
+      if (isPreBooked && startTime) {
+        // DB-level double check inside transaction
+        const confirmedBookings = await tx.booking.count({
+          where: {
+            doctorId,
+            bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
+            startTime,
+            status: {
+              in: [
+                BookingStatus.PENDING,
+                BookingStatus.CONFIRMED,
+                BookingStatus.CHECKED_IN,
+                BookingStatus.IN_PROGRESS,
+                BookingStatus.AWAITING_RESULTS,
+              ],
+            },
+          },
+        });
+
+        const maxSlotsPerHour =
+          primaryService.maxSlotsPerHour ?? slot?.maxPatients ?? 1;
+        if (confirmedBookings >= maxSlotsPerHour) {
+          throw new ApiException(
+            MessageCodes.BOOKING_INVALID_TIME,
+            'Time slot is no longer available (Race condition prevented)',
+            409,
+          );
+        }
+      }
+
       // 1. Create Booking
       const newBooking = await tx.booking.create({
         data: {
@@ -617,12 +710,13 @@ export class BookingsService {
       }
 
       // 4. Create Invoices (split by type: LAB and CONSULTATION)
-      let currentInvoiceCount = await tx.invoice.count();
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const prefix = `INV-${dateStr}-`;
 
       // Create LAB invoice
       if (labOrdersToInvoice.length > 0) {
-        const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(currentInvoiceCount + 1).padStart(4, '0')}`;
-        currentInvoiceCount++;
+        const count = await this.sequenceService.generateNextSequence(prefix);
+        const invoiceNumber = `${prefix}${String(count).padStart(4, '0')}`;
         const totalAmount = labOrdersToInvoice.reduce(
           (sum, item) => sum + Number(item.service.price),
           0,
@@ -659,8 +753,8 @@ export class BookingsService {
 
       // Create SERVICE (Specialist) invoice
       if (visitOrdersToInvoice.length > 0) {
-        const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(currentInvoiceCount + 1).padStart(4, '0')}`;
-        currentInvoiceCount++;
+        const count = await this.sequenceService.generateNextSequence(prefix);
+        const invoiceNumber = `${prefix}${String(count).padStart(4, '0')}`;
         const totalAmount = visitOrdersToInvoice.reduce(
           (sum, item) => sum + Number(item.service.price),
           0,
@@ -707,12 +801,10 @@ export class BookingsService {
       metadata: { bookingId: result.id, source: 'DIRECT_SERVICE' },
     });
 
-    return ResponseHelper.success(
-      result,
-      'BOOKING.DIRECT_SERVICE_CREATED',
-      'Direct service booking created successfully',
-      201,
-    );
+    // Invalidate slot cache for this doctor and date
+    await this.invalidateDoctorSlotsCache(doctorId, bookingDate);
+
+    return result;
   }
 
   /**
@@ -724,7 +816,7 @@ export class BookingsService {
     serviceId: string,
     doctorId: string,
     newDoctorId?: string,
-  ): Promise<ApiResponse<any>> {
+  ) {
     const booking = await this.bookingRepository.findUniqueBooking({
       where: { id: bookingId },
       include: BookingInclude,
@@ -802,7 +894,10 @@ export class BookingsService {
         notes: `Specialized service: ${service.name} — assigned by doctor`,
       });
     } catch (e) {
-      console.error('Failed to auto-create specialized invoice:', e);
+      this.logger.error(
+        'Failed to auto-create specialized invoice',
+        e instanceof Error ? e.stack : String(e),
+      );
     }
 
     // 5. Notify receptionists
@@ -811,14 +906,10 @@ export class BookingsService {
       service.name,
     );
 
-    return ResponseHelper.success(
-      updated,
-      'BOOKING.SERVICE_UPDATED',
-      'Booking service and specialist updated successfully. Patient referred to reception.',
-    );
+    return updated;
   }
 
-  async findAll(filterDto: FilterBookingDto): Promise<ApiResponse<any>> {
+  async findAll(filterDto: FilterBookingDto) {
     const {
       patientProfileId,
       doctorId,
@@ -881,20 +972,15 @@ export class BookingsService {
       this.bookingRepository.count({ where }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        bookings,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    return {
+      bookings,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      MessageCodes.BOOKING_LIST_RETRIEVED,
-      'Bookings retrieved successfully',
-      200,
-    );
+    };
   }
 
   /**
@@ -991,12 +1077,7 @@ export class BookingsService {
       // Staff (Admin/Receptionist) always allowed
     }
 
-    return ResponseHelper.success(
-      booking,
-      MessageCodes.BOOKING_RETRIEVED,
-      'Booking retrieved successfully',
-      200,
-    );
+    return booking;
   }
 
   /**
@@ -1010,8 +1091,7 @@ export class BookingsService {
   ) {
     const { status, reason, doctorNotes } = updateStatusDto;
 
-    const bookingResponse = await this.findOne(id, currentUser);
-    const booking = bookingResponse.data;
+    const booking = await this.findOne(id, currentUser);
 
     if (!booking) {
       throw new ApiException(
@@ -1174,7 +1254,10 @@ export class BookingsService {
       this.bookingNotification
         .sendCancellationNotification(updatedBooking)
         .catch((error) => {
-          console.error('Failed to send cancellation notification:', error);
+          this.logger.error(
+            'Failed to send cancellation notification',
+            error instanceof Error ? error.stack : String(error),
+          );
         });
     }
 
@@ -1182,7 +1265,10 @@ export class BookingsService {
       this.bookingNotification
         .sendStatusSpecificNotification(updatedBooking)
         .catch((error) => {
-          console.error('Failed to send confirmation notification:', error);
+          this.logger.error(
+            'Failed to send confirmation notification',
+            error instanceof Error ? error.stack : String(error),
+          );
         });
     }
 
@@ -1200,12 +1286,13 @@ export class BookingsService {
       );
     }
 
-    return ResponseHelper.success(
-      updatedBooking,
-      MessageCodes.BOOKING_UPDATED,
-      'Booking status updated successfully',
-      200,
+    // Invalidate slot cache for this doctor and date
+    await this.invalidateDoctorSlotsCache(
+      updatedBooking.doctorId,
+      updatedBooking.bookingDate,
     );
+
+    return updatedBooking;
   }
 
   /**
@@ -1216,8 +1303,8 @@ export class BookingsService {
     userId: string,
     reason?: string,
     currentUser?: User,
-  ): Promise<ApiResponse<any>> {
-    const result = await this.updateStatus(
+  ) {
+    const booking = await this.updateStatus(
       id,
       {
         status: BookingStatus.CANCELLED,
@@ -1227,8 +1314,7 @@ export class BookingsService {
       currentUser,
     );
 
-    const booking = result.data;
-    if (!booking) return result;
+    if (!booking) return null;
 
     // Notify admins of cancellation
     await this.bookingNotification.notifyAdminsOfBooking(
@@ -1237,35 +1323,21 @@ export class BookingsService {
       reason ? `Lý do: ${reason}` : undefined,
     );
 
-    return ResponseHelper.success(
-      result.data,
-      MessageCodes.BOOKING_CANCELLED,
-      'Booking cancelled successfully',
-      200,
-    );
+    return booking;
   }
 
   /**
    * Delete booking (soft delete — effectively cancel)
    */
-  async remove(
-    id: string,
-    userId: string,
-    currentUser?: User,
-  ): Promise<ApiResponse<any>> {
-    const result = await this.cancelBooking(
+  async remove(id: string, userId: string, currentUser?: User) {
+    const booking = await this.cancelBooking(
       id,
       userId,
       'Booking deleted',
       currentUser,
     );
 
-    return ResponseHelper.success(
-      result.data,
-      MessageCodes.BOOKING_DELETED,
-      'Booking deleted successfully',
-      200,
-    );
+    return booking;
   }
 
   /**
@@ -1276,8 +1348,7 @@ export class BookingsService {
     userId: string,
     currentUser?: Express.User,
   ) {
-    const bookingResponse = await this.findOne(id, currentUser);
-    const booking = bookingResponse.data;
+    const booking = await this.findOne(id, currentUser);
 
     if (!booking) {
       throw new ApiException(
@@ -1367,7 +1438,7 @@ export class BookingsService {
       page?: number;
       limit?: number;
     },
-  ): Promise<ApiResponse<any>> {
+  ) {
     const { status, page = 1, limit = 10 } = options;
 
     // Find the PatientProfile belonging to this user
@@ -1377,15 +1448,10 @@ export class BookingsService {
     });
 
     if (!profile) {
-      return ResponseHelper.success(
-        {
-          bookings: [],
-          pagination: { total: 0, page, limit, totalPages: 0 },
-        },
-        MessageCodes.BOOKING_LIST_RETRIEVED,
-        'My bookings retrieved successfully',
-        200,
-      );
+      return {
+        bookings: [],
+        pagination: { total: 0, page, limit, totalPages: 0 },
+      };
     }
 
     const where: Prisma.BookingWhereInput = {
@@ -1393,7 +1459,15 @@ export class BookingsService {
     };
 
     if (status) {
-      where.status = status as BookingStatus;
+      if (status === 'upcoming')
+        where.status = {
+          in: ['PENDING', 'CONFIRMED', 'CHECKED_IN', 'QUEUED', 'IN_PROGRESS'],
+        };
+      else if (status === 'completed') where.status = 'COMPLETED';
+      else if (status === 'cancelled')
+        where.status = { in: ['CANCELLED', 'NO_SHOW'] };
+      else if (status !== 'all')
+        where.status = status as import('@prisma/client').BookingStatus;
     }
 
     const [bookings, total] = await Promise.all([
@@ -1426,20 +1500,15 @@ export class BookingsService {
       this.bookingRepository.count({ where }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        bookings,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    return {
+      bookings,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      MessageCodes.BOOKING_LIST_RETRIEVED,
-      'My bookings retrieved successfully',
-      200,
-    );
+    };
   }
 
   /**
@@ -1456,20 +1525,15 @@ export class BookingsService {
     });
 
     if (!profile) {
-      return ResponseHelper.success(
-        {
-          stats: {
-            upcomingBookings: 0,
-            completedBookings: 0,
-            waitingBookings: 0,
-            totalBookings: 0,
-          },
-          nextBooking: null,
+      return {
+        stats: {
+          upcomingBookings: 0,
+          completedBookings: 0,
+          waitingBookings: 0,
+          totalBookings: 0,
         },
-        MessageCodes.BOOKING_LIST_RETRIEVED,
-        'Dashboard statistics retrieved successfully',
-        200,
-      );
+        nextBooking: null,
+      };
     }
 
     const patientProfileId = profile.id;
@@ -1509,20 +1573,15 @@ export class BookingsService {
       orderBy: [{ bookingDate: 'asc' }, { startTime: 'asc' }],
     });
 
-    return ResponseHelper.success(
-      {
-        stats: {
-          upcomingBookings,
-          completedBookings,
-          waitingBookings,
-          totalBookings,
-        },
-        nextBooking,
+    return {
+      stats: {
+        upcomingBookings,
+        completedBookings,
+        waitingBookings,
+        totalBookings,
       },
-      MessageCodes.BOOKING_LIST_RETRIEVED,
-      'Dashboard statistics retrieved successfully',
-      200,
-    );
+      nextBooking,
+    };
   }
 
   /**
@@ -1537,7 +1596,7 @@ export class BookingsService {
       limit?: number;
       currentUser?: User;
     },
-  ): Promise<ApiResponse<any>> {
+  ) {
     const { search, page = 1, limit = 10 } = options;
 
     const patientWhere: Prisma.PatientProfileWhereInput = {};
@@ -1620,20 +1679,15 @@ export class BookingsService {
       }),
     );
 
-    return ResponseHelper.success(
-      {
-        patients,
-        pagination: {
-          total: totalDistinct.length,
-          page,
-          limit,
-          totalPages: Math.ceil(totalDistinct.length / limit),
-        },
+    return {
+      patients,
+      pagination: {
+        total: totalDistinct.length,
+        page,
+        limit,
+        totalPages: Math.ceil(totalDistinct.length / limit),
       },
-      MessageCodes.BOOKING_LIST_RETRIEVED,
-      'My patients retrieved successfully',
-      200,
-    );
+    };
   }
 
   async checkIn(bookingId: string, userId: string) {
@@ -1652,22 +1706,31 @@ export class BookingsService {
     const compact = bookingDate.replace(/-/g, '');
     const prefix = `BK-${compact}-`;
 
-    const lastBooking = await this.bookingRepository.findFirst({
-      where: { bookingCode: { startsWith: prefix } },
-      orderBy: { bookingCode: 'desc' },
-      select: { bookingCode: true },
-    });
-
-    let nextNumber = 1;
-    if (lastBooking) {
-      const parts = lastBooking.bookingCode.split('-');
-      const lastNumber = parseInt(parts[parts.length - 1], 10);
-      if (!isNaN(lastNumber)) {
-        nextNumber = lastNumber + 1;
-      }
-    }
+    const nextNumber = await this.sequenceService.generateNextSequence(prefix);
 
     return `${prefix}${String(nextNumber).padStart(4, '0')}`;
+  }
+
+  /**
+   * Safe pattern eviction for doctor available slots cache
+   */
+  private async invalidateDoctorSlotsCache(
+    doctorId: string,
+    date: Date | string,
+  ): Promise<void> {
+    if (this.redisService.isReady()) {
+      let dateStr: string;
+      if (date instanceof Date) {
+        // Safe conversion of local date to YYYY-MM-DD
+        const offset = date.getTimezoneOffset();
+        const localDate = new Date(date.getTime() - offset * 60 * 1000);
+        dateStr = localDate.toISOString().split('T')[0];
+      } else {
+        dateStr = date;
+      }
+      const pattern = `cache:slots:${doctorId}:${dateStr}:*`;
+      await this.redisService.delPattern(pattern);
+    }
   }
 
   /**
@@ -1687,7 +1750,7 @@ export class BookingsService {
     });
   }
 
-  async getReceptionistDashboardStats(): Promise<ApiResponse<any>> {
+  async getReceptionistDashboardStats() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
@@ -1727,15 +1790,11 @@ export class BookingsService {
       }
     });
 
-    return ResponseHelper.success(
-      {
-        pending: { value: result.pending, trend: 0, trendDir: 'neutral' },
-        confirmed: { value: result.confirmed, trend: 0, trendDir: 'neutral' },
-        completed: { value: result.completed, trend: 0, trendDir: 'neutral' },
-        cancelled: { value: result.cancelled, trend: 0, trendDir: 'neutral' },
-      },
-      MessageCodes.BOOKING_LIST_RETRIEVED,
-      'Receptionist dashboard stats fetched successfully',
-    );
+    return {
+      pending: { value: result.pending, trend: 0, trendDir: 'neutral' },
+      confirmed: { value: result.confirmed, trend: 0, trendDir: 'neutral' },
+      completed: { value: result.completed, trend: 0, trendDir: 'neutral' },
+      cancelled: { value: result.cancelled, trend: 0, trendDir: 'neutral' },
+    };
   }
 }

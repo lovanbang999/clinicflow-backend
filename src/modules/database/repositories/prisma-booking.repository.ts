@@ -151,6 +151,8 @@ export class PrismaBookingRepository implements IBookingRepository {
       dayOfWeek: DayOfWeek;
       startTime: string;
       endTime: string;
+      breakStartTime?: string | null;
+      breakEndTime?: string | null;
     }[],
   ): Promise<DoctorWorkingHours[]> {
     return this.prisma.$transaction(async (tx) => {
@@ -165,12 +167,19 @@ export class PrismaBookingRepository implements IBookingRepository {
           where: {
             doctorId_dayOfWeek: { doctorId, dayOfWeek: item.dayOfWeek },
           },
-          update: { startTime: item.startTime, endTime: item.endTime },
+          update: {
+            startTime: item.startTime,
+            endTime: item.endTime,
+            breakStartTime: item.breakStartTime ?? null,
+            breakEndTime: item.breakEndTime ?? null,
+          },
           create: {
             doctorId,
             dayOfWeek: item.dayOfWeek,
             startTime: item.startTime,
             endTime: item.endTime,
+            breakStartTime: item.breakStartTime ?? null,
+            breakEndTime: item.breakEndTime ?? null,
           },
         });
       }
@@ -257,6 +266,42 @@ export class PrismaBookingRepository implements IBookingRepository {
   ): Promise<DoctorOffDay> {
     return this.prisma.doctorOffDay.delete({
       where: { doctorId_offDate: { doctorId, offDate: date } },
+    });
+  }
+
+  async findDoctorOffDayById(id: string): Promise<DoctorOffDay | null> {
+    return this.prisma.doctorOffDay.findUnique({
+      where: { id },
+    });
+  }
+
+  async findOffDaysWithDoctor(where: Prisma.DoctorOffDayWhereInput): Promise<
+    (DoctorOffDay & {
+      doctor: { id: string; fullName: string; email: string };
+    })[]
+  > {
+    return this.prisma.doctorOffDay.findMany({
+      where,
+      include: {
+        doctor: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: { offDate: 'asc' },
+    });
+  }
+
+  async updateDoctorOffDay(
+    id: string,
+    data: Prisma.DoctorOffDayUpdateInput,
+  ): Promise<DoctorOffDay> {
+    return this.prisma.doctorOffDay.update({
+      where: { id },
+      data,
     });
   }
 

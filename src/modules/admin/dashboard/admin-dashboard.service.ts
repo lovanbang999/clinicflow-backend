@@ -16,7 +16,6 @@ import {
   I_USER_REPOSITORY,
 } from '../../database/interfaces/user.repository.interface';
 import { Inject } from '@nestjs/common';
-import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { UserRole, BookingStatus } from '@prisma/client';
 import { DateRangeQueryDto } from '../analytics/dto/date-range.query.dto';
 
@@ -152,26 +151,21 @@ export class AdminDashboardService {
           : 0;
     }
 
-    return ResponseHelper.success(
-      {
-        totalUsers: totalPatients,
-        totalDoctors,
-        totalBookings,
-        totalRevenue,
-        trends: {
-          newPatientsThisMonth: periodPatients,
-          newPatientsLastMonth: comparisonPatients,
-          newBookingsThisMonth: periodBookings,
-          newBookingsLastMonth: from ? 0 : lastMonthBookings,
-          currentMonthRevenue: periodRevenue,
-          lastMonthRevenue,
-          revenueGrowthPct,
-        },
+    return {
+      totalUsers: totalPatients,
+      totalDoctors,
+      totalBookings,
+      totalRevenue,
+      trends: {
+        newPatientsThisMonth: periodPatients,
+        newPatientsLastMonth: comparisonPatients,
+        newBookingsThisMonth: periodBookings,
+        newBookingsLastMonth: from ? 0 : lastMonthBookings,
+        currentMonthRevenue: periodRevenue,
+        lastMonthRevenue,
+        revenueGrowthPct,
       },
-      'ADMIN.DASHBOARD.OVERVIEW',
-      'Dashboard overview retrieved successfully',
-      200,
-    );
+    };
   }
 
   // GET /admin/dashboard/monthly-stats?month=YYYY-MM
@@ -221,17 +215,12 @@ export class AdminDashboardService {
     const successRate =
       bookingCount > 0 ? Math.round((completedCount / bookingCount) * 100) : 0;
 
-    return ResponseHelper.success(
-      {
-        month: `${year}-${String(monthIndex + 1).padStart(2, '0')}`,
-        bookingCount,
-        newPatients,
-        successRate,
-        revenue,
-      },
-      'ADMIN.DASHBOARD.MONTHLY_STATS',
-      'Monthly statistics retrieved successfully',
-      200,
-    );
+    return {
+      month: `${year}-${String(monthIndex + 1).padStart(2, '0')}`,
+      bookingCount,
+      newPatients,
+      successRate,
+      revenue,
+    };
   }
 }

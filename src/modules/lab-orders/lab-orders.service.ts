@@ -10,15 +10,11 @@ import {
   IProfileRepository,
   I_PROFILE_REPOSITORY,
 } from '../database/interfaces/profile.repository.interface';
-import { Injectable, HttpStatus, Inject } from '@nestjs/common';
+import { Injectable, HttpStatus, Inject, Logger } from '@nestjs/common';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { CreateLabOrderDto } from './dto/create-lab-order.dto';
 import { UploadLabResultDto } from './dto/upload-lab-result.dto';
-import {
-  ResponseHelper,
-  ApiResponse,
-} from '../../common/interfaces/api-response.interface';
 import {
   LabOrderStatus,
   InvoiceStatus,
@@ -26,6 +22,8 @@ import {
   LabResult,
   Prisma,
   LabOrder,
+  UserRole,
+  LabFormType,
 } from '@prisma/client';
 import { LabOrdersGateway } from './lab-orders.gateway';
 import { BillingService } from '../billing/billing.service';
@@ -33,6 +31,7 @@ import { forwardRef } from '@nestjs/common';
 import { LabOrderDeleteInclude } from '../database/types/prisma-payload.types';
 import { Gender } from '@prisma/client';
 import { MedicalRecordsService } from '../medical-records/medical-records.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 export interface InternalService {
   id: string;
@@ -56,10 +55,72 @@ export interface InternalBooking {
   patientProfile: InternalPatientProfile;
 }
 
+export interface RawOrderWithRelations {
+  id: string;
+  bookingId: string;
+  testName: string;
+  testDescription?: string;
+  serviceId?: string;
+  status: LabOrderStatus;
+  patientProfileId: string;
+  service?: {
+    id: string;
+    name: string;
+    labFormType: string;
+  };
+  booking?: {
+    id: string;
+    bookingCode: string;
+    doctorId: string;
+    patientProfileId: string;
+    doctor: {
+      fullName: string;
+      doctorProfile?: {
+        specialties: string[];
+      };
+    };
+    patientProfile?: {
+      fullName: string;
+      patientCode: string | null;
+      gender: Gender;
+      dateOfBirth: Date | null;
+    };
+  };
+  result?: {
+    id: string;
+    resultText?: string;
+    resultFileUrl?: string;
+    isAbnormal?: boolean;
+    abnormalNote?: string;
+    recordedBy: string;
+    resultDate: Date;
+  };
+  medicalRecord?: {
+    id: string;
+    chiefComplaint?: string;
+    clinicalFindings?: string;
+    doctorNotes?: string;
+    diagnosisName?: string;
+    allergies?: string;
+    bloodPressure?: string;
+    heartRate?: number;
+    temperature?: number;
+    spO2?: number;
+    weightKg?: number;
+    heightCm?: number;
+    bmi?: number;
+  };
+}
+
 export interface InternalLabOrder extends LabOrder {
   result?: LabResult | null;
   service?: InternalService;
   booking?: InternalBooking;
+  assignedTechnician?: {
+    id: string;
+    fullName: string;
+    avatar: string | null;
+  } | null;
   invoiceItem?: {
     invoice: {
       id: string;
@@ -71,6 +132,8 @@ export interface InternalLabOrder extends LabOrder {
 
 @Injectable()
 export class LabOrdersService {
+  private readonly logger = new Logger(LabOrdersService.name);
+
   constructor(
     @Inject(I_CLINICAL_REPOSITORY)
     private readonly clinicalRepository: IClinicalRepository,
@@ -82,6 +145,7 @@ export class LabOrdersService {
     @Inject(forwardRef(() => BillingService))
     private readonly billingService: BillingService,
     private readonly medicalRecordsService: MedicalRecordsService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -190,6 +254,9 @@ export class LabOrdersService {
     });
 
     if (!medicalRecord) {
+      this.logger.log(
+        `Medical record not found for booking: ${dto.bookingId}. Creating new one.`,
+      );
       medicalRecord = await this.clinicalRepository.createMedicalRecord({
         data: {
           bookingId: dto.bookingId,
@@ -204,6 +271,9 @@ export class LabOrdersService {
       // Advance step to SERVICES_ORDERED if it's currently at SYMPTOMS_TAKEN or less
       const currentStep = medicalRecord?.visitStep;
       if (currentStep === 'SYMPTOMS_TAKEN') {
+        this.logger.log(
+          `Advancing medical record step to SERVICES_ORDERED for record: ${medicalRecord?.id}`,
+        );
         await tx.medicalRecord.update({
           where: { id: medicalRecord?.id },
           data: {
@@ -222,20 +292,30 @@ export class LabOrdersService {
           testName: dto.testName,
           testDescription: dto.testDescription,
           serviceId: dto.serviceId,
+          assignedTechnicianId: dto.assignedTechnicianId ?? null,
           status: LabOrderStatus.PENDING,
         },
       });
     });
 
-    // Automatically sync to draft invoice
-    await this.billingService.syncLabInvoice(dto.bookingId);
-
-    return ResponseHelper.success(
-      labOrder,
-      'LAB.ORDER_CREATED',
-      'Lab order created. Receptionist must create a LAB invoice to collect payment.',
-      201,
+    this.logger.log(
+      `Lab order created successfully: ${labOrder.id} for booking: ${dto.bookingId}`,
     );
+
+    // Automatically sync to draft invoice
+    try {
+      await this.billingService.syncLabInvoice(dto.bookingId);
+      this.logger.log(
+        `Successfully synced lab invoice for booking: ${dto.bookingId}`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to sync lab invoice for booking ${dto.bookingId} after creating lab order`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+
+    return labOrder;
   }
 
   async getOrdersByBooking(bookingId: string, currentUser?: Express.User) {
@@ -277,7 +357,7 @@ export class LabOrdersService {
       orderBy: { createdAt: 'desc' },
     })) as unknown as InternalLabOrder[];
 
-    return ResponseHelper.success(orders, 'LAB.FETCHED', '', 200);
+    return orders;
   }
 
   /**
@@ -306,12 +386,7 @@ export class LabOrdersService {
       },
       orderBy: { createdAt: 'asc' },
     });
-    return ResponseHelper.success(
-      orders,
-      'LAB.PENDING_UNBILLED_FETCHED',
-      '',
-      200,
-    );
+    return orders;
   }
 
   async getPendingOrders() {
@@ -355,7 +430,7 @@ export class LabOrdersService {
       };
     });
 
-    return ResponseHelper.success(orders, 'LAB.FETCHED_PENDING', '', 200);
+    return orders;
   }
 
   async getOrderById(id: string, currentUser?: Express.User) {
@@ -363,6 +438,22 @@ export class LabOrdersService {
       where: { id },
       include: {
         result: true,
+        medicalRecord: {
+          select: {
+            bloodPressure: true,
+            heartRate: true,
+            temperature: true,
+            spO2: true,
+            weightKg: true,
+            heightCm: true,
+            bmi: true,
+            chiefComplaint: true,
+            clinicalFindings: true,
+            doctorNotes: true,
+            allergies: true,
+            diagnosisName: true,
+          },
+        },
         service: {
           select: {
             id: true,
@@ -376,7 +467,12 @@ export class LabOrdersService {
             bookingCode: true,
             doctorId: true,
             patientProfileId: true,
-            doctor: { select: { fullName: true } },
+            doctor: {
+              select: {
+                fullName: true,
+                doctorProfile: { select: { specialties: true } },
+              },
+            },
             patientProfile: {
               select: {
                 fullName: true,
@@ -388,7 +484,7 @@ export class LabOrdersService {
           },
         },
       },
-    })) as unknown as InternalLabOrder;
+    })) as unknown as RawOrderWithRelations;
 
     if (!rawOrder) {
       throw new ApiException(
@@ -407,37 +503,118 @@ export class LabOrdersService {
       );
     }
 
+    // Query recent 3 completed lab orders of same patient and test/service type
+    const recentResults = await this.prisma.labOrder.findMany({
+      where: {
+        patientProfileId: rawOrder.patientProfileId,
+        id: { not: rawOrder.id },
+        status: LabOrderStatus.COMPLETED,
+        OR: [
+          ...(rawOrder.serviceId ? [{ serviceId: rawOrder.serviceId }] : []),
+          { testName: rawOrder.testName },
+        ],
+      },
+      include: {
+        result: true,
+        assignedTechnician: { select: { fullName: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 3,
+    });
+
     const { booking, ...rest } = rawOrder;
     const order = {
       ...rest,
       booking: booking
-        ? { bookingCode: booking.bookingCode, doctor: booking.doctor }
+        ? {
+            bookingCode: booking.bookingCode,
+            doctor: {
+              fullName: booking.doctor.fullName,
+              specialties: booking.doctor.doctorProfile?.specialties || [],
+            },
+          }
         : undefined,
       patientProfile: booking?.patientProfile,
+      recentResults,
     };
 
-    return ResponseHelper.success(
-      order,
-      'LAB.FETCHED_BY_ID',
-      'Lab order fetched successfully',
-      200,
-    );
+    return order;
   }
 
   /**
    * Technician view list of lab orders that have been paid (PAID) and are ready to perform.
+   *
+   * Routing logic (3-tier):
+   * 1. Hard assigned  → order.assignedTechnicianId === currentUser.id
+   * 2. Auto-route     → order.assignedTechnicianId is null AND service.categoryId matches technician specializations
+   * 3. Fallback       → order.assignedTechnicianId is null AND technician has no specializations at all
    */
-  async getReadyToPerformOrders() {
-    const rawOrders = (await this.clinicalRepository.findManyLabOrder({
-      where: {
+  async getReadyToPerformOrders(currentUser?: Express.User) {
+    // Step 1: fetch technician's specialization category IDs
+    let technicianCategoryIds: string[] = [];
+    let hasSpecializations = false;
+
+    if (currentUser?.role === 'TECHNICIAN') {
+      const specializations =
+        await this.prisma.technicianSpecialization.findMany({
+          where: { userId: currentUser.id },
+          select: { categoryId: true },
+        });
+      technicianCategoryIds = specializations.map((s) => s.categoryId);
+      hasSpecializations = technicianCategoryIds.length > 0;
+    }
+
+    // Step 2: Build where clause
+    // ADMIN sees all ready orders (no filter)
+    let whereClause: Record<string, unknown>;
+
+    if (
+      !currentUser ||
+      currentUser.role === 'ADMIN' ||
+      currentUser.role === 'RECEPTIONIST'
+    ) {
+      whereClause = {
         status: { in: [LabOrderStatus.PAID, LabOrderStatus.IN_PROGRESS] },
-      },
+      };
+    } else if (!hasSpecializations) {
+      // Fallback: KTV has no specializations → see all unassigned orders + own assigned orders
+      whereClause = {
+        status: { in: [LabOrderStatus.PAID, LabOrderStatus.IN_PROGRESS] },
+        OR: [
+          { assignedTechnicianId: null },
+          { assignedTechnicianId: currentUser.id },
+        ],
+      };
+    } else {
+      // KTV has specializations → filter by assignment or category match
+      whereClause = {
+        status: { in: [LabOrderStatus.PAID, LabOrderStatus.IN_PROGRESS] },
+        OR: [
+          // Hard assigned to this technician
+          { assignedTechnicianId: currentUser.id },
+          // Auto-route: unassigned + service category matches specialization
+          {
+            assignedTechnicianId: null,
+            service: { categoryId: { in: technicianCategoryIds } },
+          },
+          // Unassigned orders with no service (no category) → visible to all
+          {
+            assignedTechnicianId: null,
+            serviceId: null,
+          },
+        ],
+      };
+    }
+
+    const rawOrders = (await this.clinicalRepository.findManyLabOrder({
+      where: whereClause,
       include: {
         service: {
           select: {
             id: true,
             name: true,
             labFormType: true,
+            categoryId: true,
           } as unknown as Prisma.ServiceSelect,
         },
         booking: {
@@ -454,6 +631,9 @@ export class LabOrdersService {
             },
           },
         },
+        assignedTechnician: {
+          select: { id: true, fullName: true, avatar: true },
+        },
       },
       orderBy: { createdAt: 'desc' },
     })) as unknown as InternalLabOrder[];
@@ -468,12 +648,7 @@ export class LabOrdersService {
       };
     });
 
-    return ResponseHelper.success(
-      orders,
-      'LAB.FETCHED_READY',
-      'Ready to perform orders',
-      200,
-    );
+    return orders;
   }
 
   async getTechnicianStats() {
@@ -501,56 +676,143 @@ export class LabOrdersService {
       }),
     ]);
 
-    return ResponseHelper.success(
-      { pending, inProgress, completedToday },
-      'LAB.TECHNICIAN_STATS',
-      'Technician stats fetched',
-      200,
-    );
+    return { pending, inProgress, completedToday };
   }
 
-  async getTechnicianHistory() {
-    const rawOrders = await this.clinicalRepository.findManyLabOrder({
-      where: {
-        status: LabOrderStatus.COMPLETED,
-      },
-      include: {
-        result: true,
-        booking: {
-          select: {
-            bookingCode: true,
-            doctor: { select: { fullName: true } },
+  async getTechnicianHistory(
+    user: User,
+    query: {
+      startDate?: string;
+      endDate?: string;
+      categoryId?: string;
+      labFormType?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
+  ) {
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.LabOrderWhereInput = {
+      status: LabOrderStatus.COMPLETED,
+    };
+
+    // 1. Role filter: only show assigned to this technician if role is TECHNICIAN
+    if (user.role === UserRole.TECHNICIAN) {
+      where.OR = [
+        { assignedTechnicianId: user.id },
+        { result: { recordedBy: user.id } },
+      ];
+    }
+
+    // 2. Date range filter (using updatedAt for completion time)
+    if (query.startDate || query.endDate) {
+      where.updatedAt = {};
+      if (query.startDate) {
+        where.updatedAt.gte = new Date(query.startDate);
+      }
+      if (query.endDate) {
+        const end = new Date(query.endDate);
+        end.setHours(23, 59, 59, 999);
+        where.updatedAt.lte = end;
+      }
+    }
+
+    // 3. Category / labFormType filter
+    if (query.categoryId || query.labFormType) {
+      where.service = {};
+      if (query.categoryId) {
+        where.service.categoryId = query.categoryId;
+      }
+      if (query.labFormType) {
+        where.service.labFormType = query.labFormType as LabFormType;
+      }
+    }
+
+    // 4. Search patient name, code, booking code
+    if (query.search) {
+      where.booking = {
+        OR: [
+          { bookingCode: { contains: query.search } },
+          {
             patientProfile: {
-              select: {
-                fullName: true,
-                patientCode: true,
-                gender: true,
-                dateOfBirth: true,
+              OR: [
+                { fullName: { contains: query.search } },
+                {
+                  patientCode: { contains: query.search },
+                },
+              ],
+            },
+          },
+        ],
+      };
+    }
+
+    const [total, rawOrders] = await Promise.all([
+      this.prisma.labOrder.count({ where }),
+      this.clinicalRepository.findManyLabOrder({
+        where,
+        include: {
+          result: true,
+          service: {
+            select: {
+              id: true,
+              name: true,
+              labFormType: true,
+              categoryId: true,
+            },
+          },
+          booking: {
+            select: {
+              bookingCode: true,
+              doctor: {
+                select: {
+                  fullName: true,
+                  doctorProfile: { select: { specialties: true } },
+                },
+              },
+              patientProfile: {
+                select: {
+                  fullName: true,
+                  patientCode: true,
+                  gender: true,
+                  dateOfBirth: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: { updatedAt: 'desc' },
-      take: 50,
-    });
+        orderBy: { updatedAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
 
-    const orders = rawOrders.map((order) => {
+    const items = rawOrders.map((order) => {
       const { booking, ...rest } = order;
       if (!booking) return rest;
       return {
         ...rest,
-        booking: { bookingCode: booking.bookingCode, doctor: booking.doctor },
+        booking: {
+          bookingCode: booking.bookingCode,
+          doctor: {
+            fullName: booking.doctor.fullName,
+            specialties: booking.doctor.doctorProfile?.specialties || [],
+          },
+        },
         patientProfile: booking.patientProfile,
       };
     });
 
-    return ResponseHelper.success(
-      orders,
-      'LAB.TECHNICIAN_HISTORY',
-      'Technician history fetched',
-      200,
-    );
+    return {
+      items,
+      total,
+      pages: Math.ceil(total / limit),
+      page,
+      limit,
+    };
   }
 
   async addResult(
@@ -611,30 +873,42 @@ export class LabOrdersService {
       },
     );
 
+    this.logger.log(
+      `Result added for lab order: ${labOrderId} by user: ${resultAuthorId}`,
+    );
+
     // Push real-time event to the doctor viewing this booking
-    this.labOrdersGateway.broadcastLabResultCompleted(order.bookingId, {
-      labOrderId,
-      testName: order.testName,
-    });
+    try {
+      this.labOrdersGateway.broadcastLabResultCompleted(order.bookingId, {
+        labOrderId,
+        testName: order.testName,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to broadcast lab result completed event: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     // CRITICAL: Check if all orders are now done and advance MedicalRecord step
-    await this.medicalRecordsService.checkAndAdvanceToResultsReady(
-      order.medicalRecordId,
-    );
+    try {
+      await this.medicalRecordsService.checkAndAdvanceToResultsReady(
+        order.medicalRecordId,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to check and advance medical record step to RESULTS_READY for record ${order.medicalRecordId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
 
-    return ResponseHelper.success(
-      updatedOrder,
-      'LAB.RESULT_ADDED',
-      'Lab result saved',
-      200,
-    );
+    return updatedOrder;
   }
 
   async updateStatus(
     labOrderId: string,
     status: LabOrderStatus,
     currentUser?: User,
-  ): Promise<ApiResponse<any>> {
+  ): Promise<any> {
     if (
       currentUser?.role !== 'TECHNICIAN' &&
       currentUser?.role !== 'ADMIN' &&
@@ -675,18 +949,24 @@ export class LabOrdersService {
       data: { status },
     });
 
+    this.logger.log(
+      `Lab order ${labOrderId} status updated from ${order.status} to ${status}`,
+    );
+
     if (status === LabOrderStatus.COMPLETED) {
-      await this.medicalRecordsService.checkAndAdvanceToResultsReady(
-        order.medicalRecordId,
-      );
+      try {
+        await this.medicalRecordsService.checkAndAdvanceToResultsReady(
+          order.medicalRecordId,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Failed to check and advance medical record step to RESULTS_READY for record ${order.medicalRecordId}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
     }
 
-    return ResponseHelper.success(
-      updatedOrder,
-      'LAB.STATUS_UPDATED',
-      'Lab order status updated',
-      200,
-    );
+    return updatedOrder;
   }
 
   async deleteOrder(
@@ -742,29 +1022,49 @@ export class LabOrdersService {
     // Explicitly remove the invoice item BEFORE deleting the lab order
     // This ensures we clean up the billing side while the link is still active.
     if (order.invoiceItem) {
-      await this.billingService.removeInvoiceItem(
-        order.invoiceItem.invoiceId,
-        order.invoiceItem.id,
-      );
+      try {
+        await this.billingService.removeInvoiceItem(
+          order.invoiceItem.invoiceId,
+          order.invoiceItem.id,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Failed to remove invoice item ${order.invoiceItem.id} for lab order ${labOrderId}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
     }
 
     await this.clinicalRepository.deleteLabOrder({
       where: { id: labOrderId },
     });
 
+    this.logger.log(
+      `Lab order deleted successfully: ${labOrderId} associated with booking: ${order.bookingId}`,
+    );
+
     // Auto-sync after deletion to remove from draft invoice
-    await this.billingService.syncLabInvoice(order.bookingId);
+    try {
+      await this.billingService.syncLabInvoice(order.bookingId);
+    } catch (err) {
+      this.logger.error(
+        `Failed to sync lab invoice for booking ${order.bookingId} after deleting lab order`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
 
     // CRITICAL: If this was the last pending/active order, advance medical record step
-    await this.medicalRecordsService.checkAndAdvanceToResultsReady(
-      order.medicalRecordId,
-    );
+    try {
+      await this.medicalRecordsService.checkAndAdvanceToResultsReady(
+        order.medicalRecordId,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to check and advance medical record step to RESULTS_READY for record ${order.medicalRecordId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
 
-    return ResponseHelper.success(
-      null,
-      'LAB.ORDER_DELETED',
-      'Lab order deleted',
-      200,
-    );
+    return null;
   }
 }

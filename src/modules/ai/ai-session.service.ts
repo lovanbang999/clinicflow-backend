@@ -131,4 +131,134 @@ export class AiSessionService {
     });
     return session !== null;
   }
+
+  /**
+   * List paginated chat sessions for a user, newest first.
+   * Includes message count and first user message as preview.
+   */
+  async listSessions(
+    userId: string,
+    page: number = 1,
+    limit: number = 20,
+  ): Promise<{
+    sessions: {
+      id: string;
+      startedAt: Date;
+      endedAt: Date | null;
+      outcome: string;
+      totalTokens: number;
+      messageCount: number;
+      firstMessage: string | null;
+    }[];
+    total: number;
+  }> {
+    const skip = (page - 1) * limit;
+
+    const [sessions, total] = await Promise.all([
+      this.aiRepository.findManyAiChatSession({
+        where: { userId },
+        orderBy: { startedAt: 'desc' },
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          startedAt: true,
+          endedAt: true,
+          outcome: true,
+          totalTokens: true,
+          messages: {
+            where: { role: 'USER' },
+            orderBy: { createdAt: 'asc' },
+            take: 1,
+            select: { content: true },
+          },
+          _count: { select: { messages: true } },
+        },
+      }),
+      this.aiRepository.findManyAiChatSession({
+        where: { userId },
+        select: { id: true },
+      }),
+    ]);
+
+    return {
+      sessions: sessions.map((s) => ({
+        id: s.id,
+        startedAt: s.startedAt,
+        endedAt: s.endedAt,
+        outcome: s.outcome,
+        totalTokens: s.totalTokens,
+        messageCount: (s as { _count: { messages: number } })._count.messages,
+        firstMessage:
+          (s as { messages: { content: string }[] }).messages[0]?.content ??
+          null,
+      })),
+      total: total.length,
+    };
+  }
+
+  /**
+   * Get all messages for a specific session.
+   * Returns null if session doesn't belong to the user.
+   */
+  async getSessionMessages(
+    sessionId: string,
+    userId: string,
+  ): Promise<{
+    session: {
+      id: string;
+      startedAt: Date;
+      endedAt: Date | null;
+      outcome: string;
+    };
+    messages: {
+      id: string;
+      role: string;
+      content: string;
+      toolName: string | null;
+      createdAt: Date;
+    }[];
+  } | null> {
+    const session = await this.aiRepository.findFirstAiChatSession({
+      where: { id: sessionId, userId },
+      select: {
+        id: true,
+        startedAt: true,
+        endedAt: true,
+        outcome: true,
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            role: true,
+            content: true,
+            toolName: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    if (!session) return null;
+
+    return {
+      session: {
+        id: session.id,
+        startedAt: session.startedAt,
+        endedAt: session.endedAt,
+        outcome: session.outcome,
+      },
+      messages: (
+        session as {
+          messages: {
+            id: string;
+            role: string;
+            content: string;
+            toolName: string | null;
+            createdAt: Date;
+          }[];
+        }
+      ).messages,
+    };
+  }
 }

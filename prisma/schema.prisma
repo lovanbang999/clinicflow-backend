@@ -32,7 +32,9 @@ model User {
   gender                        Gender?
   address                       String?
   isActive                      Boolean                @default(false)
+  lockReason                    String?
   isVerified                    Boolean                @default(false)
+  isPasswordTemp                Boolean                @default(false)
   deletedAt                     DateTime?
   createdAt                     DateTime               @default(now())
   updatedAt                     DateTime               @updatedAt
@@ -56,6 +58,8 @@ model User {
   systemConfigsUpdated          SystemConfig[]         @relation("UpdatedByUser")
   verificationCodes             VerificationCode[]
   visitServiceOrdersAsPerformer VisitServiceOrder[]    @relation("PerformedBy")
+  technicianSpecializations     TechnicianSpecialization[]
+  assignedLabOrders             LabOrder[]             @relation("AssignedTechnician")
 
   @@index([email])
   @@index([role])
@@ -109,21 +113,26 @@ model DoctorProfile {
   updatedAt         DateTime        @updatedAt
   user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   services          DoctorService[]
+  roomId            String?
+  room              Room?           @relation(fields: [roomId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([roomId])
   @@map("doctor_profiles")
 }
 
 model DoctorWorkingHours {
-  id        String    @id @default(uuid())
-  doctorId  String
-  dayOfWeek DayOfWeek
-  startTime String
-  endTime   String
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  doctor    User      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  id             String    @id @default(uuid())
+  doctorId       String
+  dayOfWeek      DayOfWeek
+  startTime      String
+  endTime        String
+  breakStartTime String?
+  breakEndTime   String?
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  doctor         User      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
 
   @@unique([doctorId, dayOfWeek])
   @@index([doctorId])
@@ -145,14 +154,15 @@ model DoctorBreakTime {
 }
 
 model DoctorOffDay {
-  id         String   @id @default(uuid())
+  id         String       @id @default(uuid())
   doctorId   String
-  offDate    DateTime @db.Date
+  offDate    DateTime     @db.Date
   reason     String?
   approvedBy String?
-  createdAt  DateTime @default(now())
-  approver   User?    @relation("ApprovedOffDays", fields: [approvedBy], references: [id])
-  doctor     User     @relation("DoctorOffDays", fields: [doctorId], references: [id], onDelete: Cascade)
+  status     OffDayStatus @default(PENDING)
+  createdAt  DateTime     @default(now())
+  approver   User?        @relation("ApprovedOffDays", fields: [approvedBy], references: [id])
+  doctor     User         @relation("DoctorOffDays", fields: [doctorId], references: [id], onDelete: Cascade)
 
   @@unique([doctorId, offDate])
   @@index([doctorId])
@@ -184,6 +194,7 @@ model DoctorScheduleSlot {
 
   @@index([doctorId, date])
   @@index([roomId, date])
+  @@index([status, date])
   @@map("doctor_schedule_slots")
 }
 
@@ -214,6 +225,7 @@ model Room {
   bookings           Booking[]
   scheduleSlots      DoctorScheduleSlot[]
   visitServiceOrders VisitServiceOrder[]  @relation("VSORoom")
+  doctorProfiles     DoctorProfile[]
 
   @@index([isActive])
   @@map("rooms")
@@ -270,10 +282,25 @@ model Category {
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   services    Service[]
+  technicianSpecializations TechnicianSpecialization[]
 
   @@index([isActive])
   @@index([code])
   @@map("categories")
+}
+
+model TechnicianSpecialization {
+  id         String   @id @default(uuid())
+  userId     String
+  categoryId String
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, categoryId])
+  @@index([userId])
+  @@index([categoryId])
+  @@map("technician_specializations")
 }
 
 model Service {
@@ -357,6 +384,8 @@ model Booking {
   @@index([doctorId, bookingDate, isPreBooked])
   @@index([doctorId, bookingDate, startTime])
   @@index([doctorId, bookingDate, status])
+  @@index([patientProfileId, status])
+  @@index([bookingDate, status])
   @@index([bookedBy], map: "bookings_bookedBy_fkey")
   @@index([cancelledBy], map: "bookings_cancelledBy_fkey")
   @@index([roomId], map: "bookings_roomId_fkey")
@@ -373,6 +402,7 @@ model SlotReservation {
   expiresAt        DateTime
   createdAt        DateTime @default(now())
 
+  @@unique([doctorId, bookingDate, startTime])
   @@index([doctorId, bookingDate, startTime])
   @@index([expiresAt])
   @@map("slot_reservations")
@@ -504,27 +534,29 @@ model VisitServiceOrder {
 }
 
 model LabOrder {
-  id                String             @id @default(uuid())
-  bookingId         String
-  medicalRecordId   String
-  patientProfileId  String
-  doctorId          String
-  testName          String
-  testDescription   String?
-  serviceId         String?
-  status            LabOrderStatus     @default(PENDING)
-  queueNumber       Int?
-  orderedAt         DateTime           @default(now())
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  groupKey          String?
-  suggestedOrder    Int?
-  invoiceItem       InvoiceItem?
-  booking           Booking            @relation(fields: [bookingId], references: [id])
-  medicalRecord     MedicalRecord      @relation(fields: [medicalRecordId], references: [id])
-  service           Service?           @relation(fields: [serviceId], references: [id])
-  result            LabResult?
-  prescriptionItems PrescriptionItem[]
+  id                   String             @id @default(uuid())
+  bookingId            String
+  medicalRecordId      String
+  patientProfileId     String
+  doctorId             String
+  testName             String
+  testDescription      String?
+  serviceId            String?
+  status               LabOrderStatus     @default(PENDING)
+  queueNumber          Int?
+  orderedAt            DateTime           @default(now())
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  groupKey             String?
+  suggestedOrder       Int?
+  assignedTechnicianId String?
+  invoiceItem          InvoiceItem?
+  booking              Booking            @relation(fields: [bookingId], references: [id])
+  medicalRecord        MedicalRecord      @relation(fields: [medicalRecordId], references: [id])
+  service              Service?           @relation(fields: [serviceId], references: [id])
+  assignedTechnician   User?              @relation("AssignedTechnician", fields: [assignedTechnicianId], references: [id])
+  result               LabResult?
+  prescriptionItems    PrescriptionItem[]
 
   @@index([patientProfileId])
   @@index([medicalRecordId])
@@ -532,6 +564,7 @@ model LabOrder {
   @@index([serviceId], map: "lab_orders_serviceId_fkey")
   @@index([doctorId])
   @@index([status])
+  @@index([assignedTechnicianId])
   @@map("lab_orders")
 }
 
@@ -663,6 +696,7 @@ model Invoice {
   @@index([status])
   @@index([paidAt])
   @@index([einvoiceStatus])
+  @@index([status, createdAt])
   @@map("invoices")
 }
 
@@ -1016,4 +1050,19 @@ enum AiMessageRole {
   USER
   MODEL
   TOOL
+}
+
+model SequenceCounter {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@map("sequence_counters")
+}
+
+enum OffDayStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }

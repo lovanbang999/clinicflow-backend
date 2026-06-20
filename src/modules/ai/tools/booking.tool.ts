@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { BookingsService } from '../../bookings/bookings.service';
-import { BookingSource, BookingPriority } from '@prisma/client';
+import { BookingSource, BookingPriority, Booking } from '@prisma/client';
 import { CreateBookingDto } from '../../bookings/dto/create-booking.dto';
 
 @Injectable()
@@ -27,12 +27,30 @@ export class BookingTool {
       v !== 'unknown' &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
-    if (!isValidUuid(patientProfileId) || !isValidUuid(doctorId)) {
+    if (!isValidUuid(patientProfileId)) {
       return {
         status: 'error',
         error: true,
         message:
-          'Thiếu hoặc sai thông tin bắt buộc (patientProfileId / doctorId). Vui lòng thử lại.',
+          'SYSTEM_INSTRUCTION: patientProfileId không hợp lệ hoặc bị thiếu. Hãy yêu cầu bệnh nhân đăng nhập hoặc cung cấp hồ sơ.',
+      };
+    }
+
+    if (!isValidUuid(doctorId)) {
+      return {
+        status: 'error',
+        error: true,
+        message:
+          'SYSTEM_INSTRUCTION: doctorId bị thiếu hoặc không hợp lệ (không phải UUID). BẠN KHÔNG ĐƯỢC TỰ ĐIỀN TÊN BÁC SĨ VÀO ĐÂY. Hãy gọi [getDoctorInfo] để lấy UUID chính xác của bác sĩ trước khi gọi lại tool này.',
+      };
+    }
+
+    if (!isValidUuid(serviceId)) {
+      return {
+        status: 'error',
+        error: true,
+        message:
+          'SYSTEM_INSTRUCTION: serviceId bị thiếu hoặc không hợp lệ. Hãy gọi [getSpecialtyBySymptoms] hoặc [getDoctorInfo] để lấy serviceId hợp lệ.',
       };
     }
 
@@ -48,9 +66,12 @@ export class BookingTool {
     } as unknown as CreateBookingDto;
 
     try {
-      const result = await this.bookingsService.create(createDto, userId);
+      const result = (await this.bookingsService.create(
+        createDto,
+        userId,
+      )) as Booking;
 
-      if (!result?.data?.id) {
+      if (!result?.id) {
         return {
           status: 'error',
           error: true,
@@ -60,15 +81,15 @@ export class BookingTool {
 
       return {
         status: 'success',
-        bookingId: result.data.id,
-        bookingCode: result.data.bookingCode,
+        bookingId: result.id,
+        bookingCode: result.bookingCode,
         message: 'Đặt lịch thành công',
         details: {
-          id: result.data.id,
-          bookingDate: result.data.bookingDate,
-          startTime: result.data.startTime,
-          endTime: result.data.endTime,
-          status: result.data.status,
+          id: result.id,
+          bookingDate: result.bookingDate,
+          startTime: result.startTime,
+          endTime: result.endTime,
+          status: result.status,
         },
       };
     } catch (error) {
@@ -124,7 +145,7 @@ export class BookingTool {
         error: true,
         slotUnavailable: isConflict,
         message: isConflict
-          ? `Khung giờ này vừa được bệnh nhân khác đặt. Hãy gọi lại [getAvailableSlots] để lấy danh sách lịch trống mới nhất rồi cho bệnh nhân chọn lại.`
+          ? `Khung giờ này vừa được bệnh nhân khác đặt. Hãy gọi lại [getAvailableSlots] to lấy danh sách lịch trống mới nhất rồi cho bệnh nhân chọn lại.`
           : `Đặt lịch thất bại: ${detail}. Vui lòng thử lại hoặc đặt lịch tại quầy.`,
       };
     }

@@ -1,4 +1,10 @@
-import { Injectable, HttpStatus, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  HttpStatus,
+  forwardRef,
+  Inject,
+  Logger,
+} from '@nestjs/common';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import {
@@ -22,8 +28,7 @@ import {
   IClinicalRepository,
   I_CLINICAL_REPOSITORY,
 } from '../database/interfaces/clinical.repository.interface';
-import { Inject } from '@nestjs/common';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
+
 import {
   InvoiceStatus,
   InvoiceType,
@@ -33,12 +38,14 @@ import {
   Prisma,
   ServiceOrderStatus,
   BookingPriority,
+  User,
 } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { LabOrdersGateway } from '../lab-orders/lab-orders.gateway';
 import { QueueGateway } from '../queue/queue.gateway';
 import { format } from 'date-fns';
 import { QueueService } from '../queue/queue.service';
+import { SequenceService } from '../database/services/sequence.service';
 
 @Injectable()
 export class BillingService {
@@ -56,7 +63,10 @@ export class BillingService {
     private readonly labOrdersGateway: LabOrdersGateway,
     private readonly queueGateway: QueueGateway,
     private readonly queueService: QueueService,
+    private readonly sequenceService: SequenceService,
   ) {}
+
+  private readonly logger = new Logger(BillingService.name);
 
   private formatVNCurrency(amount: number): string {
     return new Intl.NumberFormat('vi-VN', {
@@ -257,7 +267,11 @@ export class BillingService {
       const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
       const nowVN = new Date(Date.now() + VN_OFFSET_MS);
       const todayUTC = new Date(
-        Date.UTC(nowVN.getUTCFullYear(), nowVN.getUTCMonth(), nowVN.getUTCDate()),
+        Date.UTC(
+          nowVN.getUTCFullYear(),
+          nowVN.getUTCMonth(),
+          nowVN.getUTCDate(),
+        ),
       );
       // bookingDate is stored as UTC midnight of the Vietnam local date
       const bookingDayUTC = new Date(
@@ -285,8 +299,10 @@ export class BillingService {
     }
 
     // Generate invoice number: INV-YYYYMMDD-XXXX
-    const count = await this.financeRepository.countInvoice({});
-    const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const prefix = `INV-${dateStr}-`;
+    const count = await this.sequenceService.generateNextSequence(prefix);
+    const invoiceNumber = `${prefix}${String(count).padStart(4, '0')}`;
 
     const result = await this.financeRepository.transaction(async (tx) => {
       const seedSubtotal =
@@ -432,12 +448,7 @@ export class BillingService {
       return updatedInv;
     });
 
-    return ResponseHelper.success(
-      result,
-      'BILLING.INVOICE_CREATED',
-      'Invoice created successfully',
-      201,
-    );
+    return result;
   }
 
   async deleteInvoice(id: string, currentUser?: Express.User) {
@@ -471,12 +482,7 @@ export class BillingService {
     }
 
     await this.financeRepository.deleteInvoice({ where: { id } });
-    return ResponseHelper.success(
-      null,
-      'BILLING.INVOICE_DELETED',
-      'Invoice deleted',
-      200,
-    );
+    return null;
   }
 
   async syncLabInvoice(bookingId: string) {
@@ -516,7 +522,7 @@ export class BillingService {
         invoiceType: InvoiceType.SERVICE,
       });
       this.labOrdersGateway.server.emit('billing_list_refresh', { bookingId });
-      return result.data;
+      return result;
     }
 
     await this.financeRepository.transaction(async (tx) => {
@@ -704,12 +710,7 @@ export class BillingService {
       orderBy: { createdAt: 'asc' },
     });
 
-    return ResponseHelper.success(
-      invoices,
-      'BILLING.INVOICES_FETCHED',
-      'Invoices retrieved for booking',
-      200,
-    );
+    return invoices;
   }
 
   // Get invoice by invoice ID.
@@ -766,12 +767,7 @@ export class BillingService {
 
     await this.validateInvoiceAccess(invoice.patientProfileId, currentUser);
 
-    return ResponseHelper.success(
-      invoice,
-      'BILLING.INVOICE_FETCHED',
-      'Invoice retrieved',
-      200,
-    );
+    return invoice;
   }
 
   /**
@@ -881,20 +877,187 @@ export class BillingService {
       this.financeRepository.countInvoice({ where }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        invoices,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
+    return {
+      items: invoices,
+      total,
+      page,
+      limit,
+    };
+  }
+
+  async exportInvoicesToCsv(params: {
+    status?: InvoiceStatus;
+    invoiceType?: InvoiceType;
+    patientProfileId?: string;
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+    currentUser?: User;
+  }) {
+    if (
+      params.currentUser &&
+      params.currentUser.role !== 'ADMIN' &&
+      params.currentUser.role !== 'RECEPTIONIST'
+    ) {
+      throw new ApiException(
+        MessageCodes.BOOKING_ACCESS_FORBIDDEN,
+        'Unauthorized access to financial records',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    const {
+      status,
+      patientProfileId,
+      invoiceType,
+      startDate,
+      endDate,
+      search,
+    } = params;
+
+    const where: Prisma.InvoiceWhereInput = {};
+    if (status) where.status = status;
+    if (patientProfileId) where.patientProfileId = patientProfileId;
+    if (invoiceType) where.invoiceType = invoiceType;
+    if (search) {
+      where.OR = [
+        { invoiceNumber: { contains: search } },
+        {
+          booking: {
+            patientProfile: {
+              fullName: { contains: search },
+            },
+          },
+        },
+        {
+          booking: {
+            patientProfile: {
+              patientCode: { contains: search },
+            },
+          },
+        },
+      ];
+    }
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate)
+        (where.createdAt as Prisma.DateTimeFilter).gte = new Date(startDate);
+      if (endDate)
+        (where.createdAt as Prisma.DateTimeFilter).lte = new Date(endDate);
+    }
+
+    const invoices = await this.financeRepository.findManyInvoice({
+      where,
+      include: {
+        booking: {
+          include: {
+            patientProfile: { select: { fullName: true, patientCode: true } },
+          },
+        },
+        payments: {
+          select: {
+            amountPaid: true,
+          },
         },
       },
-      'BILLING.INVOICES_LISTED',
-      'Invoices retrieved',
-      200,
-    );
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const escapeCsv = (
+      val:
+        | string
+        | number
+        | boolean
+        | Date
+        | null
+        | undefined
+        | { toString(): string },
+    ) => {
+      if (val === null || val === undefined) return '';
+      const str =
+        typeof val === 'object' && val !== null ? val.toString() : String(val);
+      if (
+        str.includes(',') ||
+        str.includes('"') ||
+        str.includes('\n') ||
+        str.includes('\r')
+      ) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const translateInvoiceType = (type: InvoiceType) => {
+      switch (type) {
+        case InvoiceType.CONSULTATION:
+          return 'Khám bệnh/Tư vấn';
+        case InvoiceType.SERVICE:
+          return 'Dịch vụ/Xét nghiệm';
+        case InvoiceType.PHARMACY:
+          return 'Dược phẩm';
+        default:
+          return type;
+      }
+    };
+
+    const translateInvoiceStatus = (status: InvoiceStatus) => {
+      switch (status) {
+        case InvoiceStatus.DRAFT:
+          return 'Nháp';
+        case InvoiceStatus.OPEN:
+          return 'Chờ thanh toán';
+        case InvoiceStatus.ISSUED:
+          return 'Chờ thanh toán (Đã phát hành)';
+        case InvoiceStatus.PAID:
+          return 'Đã thanh toán';
+        case InvoiceStatus.CANCELLED:
+          return 'Đã hủy';
+        case InvoiceStatus.REFUNDED:
+          return 'Đã hoàn tiền';
+        default:
+          return status;
+      }
+    };
+
+    const headers = [
+      'Mã hóa đơn',
+      'Mã lịch hẹn',
+      'Tên bệnh nhân',
+      'Mã bệnh nhân',
+      'Loại hóa đơn',
+      'Tổng tiền (VND)',
+      'Đã thanh toán (VND)',
+      'Trạng thái',
+      'Ngày thanh toán',
+    ];
+
+    const rows = invoices.map((invoice) => {
+      const paidAmount =
+        invoice.status === 'PAID'
+          ? Number(invoice.totalAmount)
+          : invoice.payments.reduce((sum, p) => sum + Number(p.amountPaid), 0);
+
+      const paidAtStr = invoice.paidAt
+        ? format(new Date(invoice.paidAt), 'dd/MM/yyyy HH:mm')
+        : '';
+
+      return [
+        invoice.invoiceNumber,
+        invoice.booking?.bookingCode || '',
+        invoice.booking?.patientProfile?.fullName || '',
+        invoice.booking?.patientProfile?.patientCode || '',
+        translateInvoiceType(invoice.invoiceType),
+        Number(invoice.totalAmount),
+        paidAmount,
+        translateInvoiceStatus(invoice.status),
+        paidAtStr,
+      ].map(escapeCsv);
+    });
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((row) => row.join(',')),
+    ].join('\n');
+    return csvContent;
   }
 
   /**
@@ -911,12 +1074,7 @@ export class BillingService {
       orderBy: { createdAt: 'asc' },
     });
 
-    return ResponseHelper.success(
-      orders,
-      'BILLING.PENDING_LABS_FETCHED',
-      'Pending unbilled lab orders',
-      200,
-    );
+    return orders;
   }
 
   // Invoice Items
@@ -987,12 +1145,7 @@ export class BillingService {
       return newItem;
     });
 
-    return ResponseHelper.success(
-      item,
-      'BILLING.ITEM_ADDED',
-      'Item added to invoice',
-      201,
-    );
+    return item;
   }
 
   /**
@@ -1040,12 +1193,7 @@ export class BillingService {
       await this.recalculateTotals(tx, invoiceId);
     });
 
-    return ResponseHelper.success(
-      null,
-      'BILLING.ITEM_REMOVED',
-      'Item removed',
-      200,
-    );
+    return null;
   }
 
   // Payment Confirmation
@@ -1145,6 +1293,15 @@ export class BillingService {
     }
 
     const insuranceCovered = dto.insuranceCovered ?? 0;
+
+    if (insuranceCovered > dto.amountPaid) {
+      throw new ApiException(
+        'BILLING.INSURANCE_EXCEEDS_PAYMENT',
+        'Insurance covered amount cannot exceed the total amount paid',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     const patientPaid = dto.amountPaid - insuranceCovered;
 
     // Calculate total paid after this payment
@@ -1243,17 +1400,15 @@ export class BillingService {
               const startOfDay = new Date();
               startOfDay.setHours(0, 0, 0, 0);
 
+              const dateStr = startOfDay
+                .toISOString()
+                .slice(0, 10)
+                .replace(/-/g, '');
               for (const vsoId of vsoIds) {
-                const lastOrder = await tx.visitServiceOrder.findFirst({
-                  where: {
-                    createdAt: { gte: startOfDay },
-                    queueNumber: { not: null },
-                  },
-                  orderBy: { queueNumber: 'desc' },
-                  select: { queueNumber: true },
-                });
                 const nextQueueNumber: number =
-                  (Number(lastOrder?.queueNumber) || 0) + 1;
+                  await this.sequenceService.generateNextSequence(
+                    `QUEUE_VSO_${dateStr}`,
+                  );
 
                 await tx.visitServiceOrder.update({
                   where: { id: vsoId },
@@ -1270,17 +1425,15 @@ export class BillingService {
             const startOfDay = new Date();
             startOfDay.setHours(0, 0, 0, 0);
 
+            const dateStrLab = startOfDay
+              .toISOString()
+              .slice(0, 10)
+              .replace(/-/g, '');
             for (const labOrderId of labOrderIds) {
-              const lastOrder = await tx.labOrder.findFirst({
-                where: {
-                  createdAt: { gte: startOfDay },
-                  queueNumber: { not: null },
-                },
-                orderBy: { queueNumber: 'desc' },
-                select: { queueNumber: true },
-              });
               const nextQueueNumber: number =
-                (Number(lastOrder?.queueNumber) || 0) + 1;
+                await this.sequenceService.generateNextSequence(
+                  `QUEUE_LAB_${dateStrLab}`,
+                );
 
               await tx.labOrder.update({
                 where: { id: labOrderId },
@@ -1409,17 +1562,15 @@ export class BillingService {
             const startOfDayVso = new Date();
             startOfDayVso.setHours(0, 0, 0, 0);
 
+            const dateStrVso = startOfDayVso
+              .toISOString()
+              .slice(0, 10)
+              .replace(/-/g, '');
             for (const vsoId of directVsoIds) {
-              const lastVsoOrder = await tx.visitServiceOrder.findFirst({
-                where: {
-                  createdAt: { gte: startOfDayVso },
-                  queueNumber: { not: null },
-                },
-                orderBy: { queueNumber: 'desc' },
-                select: { queueNumber: true },
-              });
               const nextVsoQueueNumber =
-                (Number(lastVsoOrder?.queueNumber) || 0) + 1;
+                await this.sequenceService.generateNextSequence(
+                  `QUEUE_VSO_${dateStrVso}`,
+                );
 
               await tx.visitServiceOrder.update({
                 where: { id: vsoId },
@@ -1531,17 +1682,15 @@ export class BillingService {
           totalAmount: this.formatVNCurrency(Number(updated.totalAmount)),
           invoiceUrl: `${process.env.FRONTEND_URL}/patient/billing/${updated.id}`,
         })
-        .catch((err) => console.error('Failed to send invoice email', err));
+        .catch((err) =>
+          this.logger.error(
+            'Failed to send invoice email',
+            err instanceof Error ? err.stack : String(err),
+          ),
+        );
     }
 
-    return ResponseHelper.success(
-      updated,
-      'BILLING.PAYMENT_ADDED',
-      shouldAutoFinalize
-        ? 'Payment added and invoice finalized'
-        : 'Payment added',
-      200,
-    );
+    return updated;
   }
 
   /**
@@ -1636,7 +1785,12 @@ export class BillingService {
           ),
           invoiceUrl: `${process.env.FRONTEND_URL}/patient/billing/${updatedInvoice.id}`,
         })
-        .catch((err) => console.error('Failed to send invoice email', err));
+        .catch((err) =>
+          this.logger.error(
+            'Failed to send invoice email',
+            err instanceof Error ? err.stack : String(err),
+          ),
+        );
     }
 
     // Notify admins of payment
@@ -1653,12 +1807,7 @@ export class BillingService {
       } as Prisma.InputJsonValue,
     });
 
-    return ResponseHelper.success(
-      updatedInvoice,
-      'BILLING.INVOICE_FINALIZED',
-      'Invoice finalized and PAID',
-      200,
-    );
+    return updatedInvoice;
   }
 
   /**
@@ -1680,18 +1829,15 @@ export class BillingService {
 
     if (!patientProfile) {
       // If user has no patient profile, return empty list
-      return ResponseHelper.success(
-        {
-          invoices: [],
+      return {
+        invoices: [],
+        pagination: {
           total: 0,
-          page: params.page,
-          limit: params.limit,
+          page: params.page ?? 1,
+          limit: params.limit ?? 10,
           totalPages: 0,
         },
-        'BILLING.INVOICES_LISTED',
-        'No patient profile found',
-        200,
-      );
+      };
     }
 
     return this.listInvoices({
@@ -1871,12 +2017,7 @@ export class BillingService {
       };
     });
 
-    return ResponseHelper.success(
-      queueItems,
-      'BILLING.WORKSPACE_QUEUE_FETCHED',
-      'Workspace queue retrieved',
-      200,
-    );
+    return queueItems;
   }
 
   async getWorkspaceKpis() {
@@ -1931,16 +2072,11 @@ export class BillingService {
       0,
     );
 
-    return ResponseHelper.success(
-      {
-        awaitingPaymentCount,
-        completedPaymentCount,
-        totalRevenue,
-        totalInvoicesValue,
-      },
-      'BILLING.WORKSPACE_KPIS_FETCHED',
-      'Workspace KPIs retrieved',
-      200,
-    );
+    return {
+      awaitingPaymentCount,
+      completedPaymentCount,
+      totalRevenue,
+      totalInvoicesValue,
+    };
   }
 }

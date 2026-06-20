@@ -5,19 +5,20 @@ import {
 } from '../../database/interfaces/user.repository.interface';
 import { UsersService } from '../../users/users.service';
 import { Prisma, UserRole, BookingStatus } from '@prisma/client';
-import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { ApiException } from '../../../common/exceptions/api.exception';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
 import { FilterDoctorDto } from './dto/filter-doctor.dto';
 import { AdminCreateDoctorDto } from './dto/admin-create-doctor.dto';
 import { AdminUpdateDoctorProfileDto } from './dto/admin-update-doctor-profile.dto';
 import { AdminSuspendUserDto } from '../users/dto/admin-suspend-user.dto';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class AdminDoctorsService {
   constructor(
     @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
     private readonly usersService: UsersService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async getDoctorStatistics() {
@@ -52,19 +53,14 @@ export class AdminDoctorsService {
       }
     }
 
-    return ResponseHelper.success(
-      {
-        totalDoctors,
-        activeDoctors,
-        inactiveDoctors: totalDoctors - activeDoctors,
-        onLeaveDoctors: 0,
-        newThisMonth,
-        bySpecialty,
-      },
-      'ADMIN.DOCTORS.STATISTICS',
-      'Doctor statistics retrieved successfully',
-      200,
-    );
+    return {
+      totalDoctors,
+      activeDoctors,
+      inactiveDoctors: totalDoctors - activeDoctors,
+      onLeaveDoctors: 0,
+      newThisMonth,
+      bySpecialty,
+    };
   }
 
   /**
@@ -117,6 +113,13 @@ export class AdminDoctorsService {
               rating: true,
               reviewCount: true,
               consultationFee: true,
+              roomId: true,
+              room: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
             },
           },
         },
@@ -127,20 +130,15 @@ export class AdminDoctorsService {
       this.userRepository.count({ where }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        doctors,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    return {
+      doctors,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      'ADMIN.DOCTORS.LIST',
-      'Doctors retrieved successfully',
-      200,
-    );
+    };
   }
 
   /**
@@ -171,6 +169,23 @@ export class AdminDoctorsService {
             rating: true,
             reviewCount: true,
             consultationFee: true,
+            roomId: true,
+            room: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            services: {
+              select: {
+                service: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
           },
         },
         _count: {
@@ -192,12 +207,7 @@ export class AdminDoctorsService {
       );
     }
 
-    return ResponseHelper.success(
-      doctor,
-      'ADMIN.DOCTORS.DETAIL',
-      'Doctor retrieved successfully',
-      200,
-    );
+    return doctor;
   }
 
   /**
@@ -230,6 +240,7 @@ export class AdminDoctorsService {
         bio: dto.bio ?? null,
         rating: dto.rating ?? 0,
         consultationFee: dto.consultationFee ?? 0,
+        roomId: dto.roomId ?? null,
       },
       update: {
         ...(dto.specialties !== undefined && { specialties: dto.specialties }),
@@ -244,6 +255,7 @@ export class AdminDoctorsService {
         ...(dto.consultationFee !== undefined && {
           consultationFee: dto.consultationFee,
         }),
+        ...(dto.roomId !== undefined && { roomId: dto.roomId }),
       },
       select: {
         id: true,
@@ -255,16 +267,33 @@ export class AdminDoctorsService {
         rating: true,
         reviewCount: true,
         consultationFee: true,
+        roomId: true,
+        room: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
         updatedAt: true,
       },
     });
 
-    return ResponseHelper.success(
-      profile,
-      'ADMIN.DOCTORS.PROFILE_UPDATED',
-      'Doctor profile updated successfully',
-      200,
-    );
+    // If serviceIds is provided, sync DoctorService relations
+    if (dto.serviceIds !== undefined) {
+      await this.prisma.doctorService.deleteMany({
+        where: { doctorProfileId: profile.id },
+      });
+      if (dto.serviceIds.length > 0) {
+        await this.prisma.doctorService.createMany({
+          data: dto.serviceIds.map((serviceId) => ({
+            doctorProfileId: profile.id,
+            serviceId,
+          })),
+        });
+      }
+    }
+
+    return profile;
   }
 
   /**
@@ -289,12 +318,7 @@ export class AdminDoctorsService {
       isActive: dto.isActive,
     });
 
-    return ResponseHelper.success(
-      updated,
-      'ADMIN.DOCTORS.STATUS_UPDATED',
-      `Doctor ${dto.isActive ? 'reinstated' : 'suspended'} successfully`,
-      200,
-    );
+    return updated;
   }
 
   /**

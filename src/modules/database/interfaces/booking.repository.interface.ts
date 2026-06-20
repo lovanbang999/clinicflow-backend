@@ -68,6 +68,8 @@ export interface IBookingRepository {
       dayOfWeek: DayOfWeek;
       startTime: string;
       endTime: string;
+      breakStartTime?: string | null;
+      breakEndTime?: string | null;
     }[],
   ): Promise<DoctorWorkingHours[]>;
 
@@ -93,6 +95,16 @@ export interface IBookingRepository {
   ): Promise<DoctorOffDay[]>;
   findDoctorOffDay(doctorId: string, date: Date): Promise<DoctorOffDay | null>;
   deleteDoctorOffDay(doctorId: string, date: Date): Promise<DoctorOffDay>;
+  findDoctorOffDayById(id: string): Promise<DoctorOffDay | null>;
+  findOffDaysWithDoctor(where: Prisma.DoctorOffDayWhereInput): Promise<
+    (DoctorOffDay & {
+      doctor: { id: string; fullName: string; email: string };
+    })[]
+  >;
+  updateDoctorOffDay(
+    id: string,
+    data: Prisma.DoctorOffDayUpdateInput,
+  ): Promise<DoctorOffDay>;
 
   findDoctorScheduleSlot(
     doctorId: string,

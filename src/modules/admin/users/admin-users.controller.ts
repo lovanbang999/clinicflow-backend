@@ -20,15 +20,18 @@ import {
   ApiQuery,
   ApiResponse,
 } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { UserRole, User } from '@prisma/client';
 import { UsersService } from '../../users/users.service';
 import { AdminCreateUserDto } from './dto/admin-create-user.dto';
 import { FilterUserDto } from '../../users/dto/filter-user.dto';
 import { AdminSuspendUserDto } from './dto/admin-suspend-user.dto';
 import { Roles } from 'src/common/decorators/roles.decorator';
+import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { UpdateUserDto } from 'src/modules/users/dto/update-user.dto';
+import { ResponseMessage } from 'src/common/decorators/response-message.decorator';
+import { MessageCodes } from 'src/common/constants/message-codes.const';
 
 @ApiTags('admin - users')
 @ApiBearerAuth('JWT-auth')
@@ -43,6 +46,10 @@ export class AdminUsersController {
    * List all users with filtering + pagination
    */
   @Get('users')
+  @ResponseMessage(
+    MessageCodes.USER_LIST_RETRIEVED,
+    'Users retrieved successfully',
+  )
   @ApiOperation({
     summary: 'List all users (ADMIN only)',
     description:
@@ -89,6 +96,10 @@ export class AdminUsersController {
    * Aggregate statistics for User Management stat cards
    */
   @Get('users/statistics')
+  @ResponseMessage(
+    MessageCodes.USER_STATISTICS_RETRIEVED,
+    'User statistics retrieved successfully',
+  )
   @ApiOperation({
     summary: 'User statistics (ADMIN only)',
     description:
@@ -109,6 +120,10 @@ export class AdminUsersController {
    * Get single user detail
    */
   @Get('users/:id')
+  @ResponseMessage(
+    MessageCodes.USER_RETRIEVED,
+    'User details retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get user by ID (ADMIN only)' })
   @ApiParam({ name: 'id', description: 'User UUID' })
   @ApiResponse({ status: 200, description: 'User retrieved successfully' })
@@ -124,6 +139,7 @@ export class AdminUsersController {
    */
   @Post('users')
   @HttpCode(HttpStatus.CREATED)
+  @ResponseMessage(MessageCodes.USER_CREATED, 'User created successfully')
   @ApiOperation({
     summary: 'Create a new user (ADMIN only)',
     description:
@@ -147,6 +163,7 @@ export class AdminUsersController {
    * Update user information (name, email, role, etc.)
    */
   @Patch('users/:id')
+  @ResponseMessage(MessageCodes.USER_UPDATED, 'User updated successfully')
   @ApiOperation({
     summary: 'Update user (ADMIN only)',
     description:
@@ -166,6 +183,10 @@ export class AdminUsersController {
    * Suspend or reinstate a user account
    */
   @Patch('users/:id/suspend')
+  @ResponseMessage(
+    MessageCodes.USER_UPDATED,
+    'User status updated successfully',
+  )
   @ApiOperation({
     summary: 'Suspend or reinstate a user (ADMIN only)',
     description:
@@ -176,8 +197,18 @@ export class AdminUsersController {
   @ApiResponse({ status: 200, description: 'User status updated successfully' })
   @ApiResponse({ status: 404, description: 'User not found' })
   @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required' })
-  suspendUser(@Param('id') id: string, @Body() dto: AdminSuspendUserDto) {
-    return this.usersService.update(id, { isActive: dto.isActive });
+  suspendUser(
+    @Param('id') id: string,
+    @Body() dto: AdminSuspendUserDto,
+    @CurrentUser() currentUser: User,
+  ) {
+    if (currentUser && currentUser.id === id) {
+      throw new ForbiddenException('Cannot lock your own account');
+    }
+    return this.usersService.update(id, {
+      isActive: dto.isActive,
+      lockReason: dto.isActive ? null : dto.reason || null,
+    });
   }
 
   /**
@@ -186,6 +217,7 @@ export class AdminUsersController {
    */
   @Delete('users/:id')
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(MessageCodes.USER_DELETED, 'User soft-deleted successfully')
   @ApiOperation({
     summary: 'Soft-delete a user (ADMIN only)',
     description:

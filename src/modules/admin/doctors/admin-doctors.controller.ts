@@ -29,6 +29,8 @@ import { DoctorStatsResponseDto } from './dto/doctor-stats.response.dto';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
+import { ResponseMessage } from 'src/common/decorators/response-message.decorator';
+import { MessageCodes } from 'src/common/constants/message-codes.const';
 
 @ApiTags('admin - doctors')
 @ApiBearerAuth('JWT-auth')
@@ -43,6 +45,10 @@ export class AdminDoctorsController {
    * Doctor statistics (ADMIN only)
    */
   @Get('doctors/statistics')
+  @ResponseMessage(
+    MessageCodes.DOCTOR_STATS_RETRIEVED,
+    'Doctor statistics retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Doctor statistics (ADMIN only)',
     description:
@@ -64,6 +70,10 @@ export class AdminDoctorsController {
    * Paginated & filterable list of all users with role DOCTOR.
    */
   @Get('doctors')
+  @ResponseMessage(
+    MessageCodes.DOCTOR_LIST_RETRIEVED,
+    'Doctors retrieved successfully',
+  )
   @ApiOperation({
     summary: 'List all doctors (ADMIN only)',
     description:
@@ -102,6 +112,7 @@ export class AdminDoctorsController {
    */
   @Post('doctors')
   @HttpCode(HttpStatus.CREATED)
+  @ResponseMessage(MessageCodes.USER_CREATED, 'Doctor created successfully')
   @ApiOperation({
     summary: 'Create a new doctor (ADMIN only)',
     description: 'Creates a user with DOCTOR role and an empty DoctorProfile.',
@@ -118,6 +129,10 @@ export class AdminDoctorsController {
    * Full detail of a single doctor including booking stats.
    */
   @Get('doctors/:id')
+  @ResponseMessage(
+    MessageCodes.DOCTOR_RETRIEVED,
+    'Doctor retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get doctor by ID (ADMIN only)' })
   @ApiParam({ name: 'id', description: 'Doctor user UUID' })
   @ApiResponse({ status: 200, description: 'Doctor retrieved successfully' })
@@ -132,6 +147,10 @@ export class AdminDoctorsController {
    * Update DoctorProfile fields (specialties, qualifications, experience, bio).
    */
   @Patch('doctors/:id/profile')
+  @ResponseMessage(
+    MessageCodes.DOCTOR_PROFILE_UPDATED,
+    'Doctor profile updated successfully',
+  )
   @ApiOperation({
     summary: 'Update doctor profile (ADMIN only)',
     description:
@@ -157,6 +176,10 @@ export class AdminDoctorsController {
    * Suspend or reinstate a doctor account.
    */
   @Patch('doctors/:id/status')
+  @ResponseMessage(
+    MessageCodes.DOCTOR_STATUS_UPDATED,
+    'Doctor status updated successfully',
+  )
   @ApiOperation({
     summary: 'Suspend or reinstate a doctor (ADMIN only)',
     description:

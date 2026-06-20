@@ -26,6 +26,8 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { UserRole } from '@prisma/client';
+import { ResponseMessage } from '../../common/decorators/response-message.decorator';
+import { MessageCodes } from '../../common/constants/message-codes.const';
 
 @ApiTags('services')
 @Controller('services')
@@ -36,6 +38,7 @@ export class ServicesController {
 
   @Post()
   @Roles(UserRole.ADMIN)
+  @ResponseMessage(MessageCodes.SERVICE_CREATED, 'Service created successfully')
   @ApiOperation({ summary: 'Create a new service (ADMIN only)' })
   @ApiResponse({
     status: 201,
@@ -68,6 +71,10 @@ export class ServicesController {
 
   @Get()
   @Public()
+  @ResponseMessage(
+    MessageCodes.SERVICE_LIST_RETRIEVED,
+    'Services retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get all services (public)' })
   @ApiQuery({
     name: 'isActive',
@@ -132,6 +139,10 @@ export class ServicesController {
 
   @Get(':id')
   @Public()
+  @ResponseMessage(
+    MessageCodes.SERVICE_RETRIEVED,
+    'Service retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get service by ID (public)' })
   @ApiResponse({
     status: 200,
@@ -147,6 +158,10 @@ export class ServicesController {
 
   @Get(':id/statistics')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
+  @ResponseMessage(
+    MessageCodes.SERVICE_STATISTICS_RETRIEVED,
+    'Service statistics retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get service statistics (ADMIN/RECEPTIONIST only)',
   })
@@ -174,6 +189,7 @@ export class ServicesController {
 
   @Patch(':id')
   @Roles(UserRole.ADMIN)
+  @ResponseMessage(MessageCodes.SERVICE_UPDATED, 'Service updated successfully')
   @ApiOperation({ summary: 'Update service (ADMIN only)' })
   @ApiResponse({
     status: 200,
@@ -194,6 +210,7 @@ export class ServicesController {
   @Delete(':id')
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(MessageCodes.SERVICE_DELETED, 'Service deleted successfully')
   @ApiOperation({ summary: 'Delete service (soft delete, ADMIN only)' })
   @ApiResponse({
     status: 200,
@@ -213,6 +230,10 @@ export class ServicesController {
 
   @Patch(':id/restore')
   @Roles(UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.SERVICE_RESTORED,
+    'Service restored successfully',
+  )
   @ApiOperation({ summary: 'Restore deleted service (ADMIN only)' })
   @ApiResponse({
     status: 200,

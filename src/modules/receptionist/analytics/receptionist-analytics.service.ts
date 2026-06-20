@@ -12,7 +12,7 @@ import {
   IProfileRepository,
 } from '../../database/interfaces/profile.repository.interface';
 import { BookingStatus, InvoiceStatus } from '@prisma/client';
-import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
+
 import { DateRangeQueryDto } from '../../admin/analytics/dto/date-range.query.dto';
 
 @Injectable()
@@ -38,61 +38,89 @@ export class ReceptionistAnalyticsService {
     const filterGte = from ? new Date(from) : startOfDay;
     const filterLte = to ? new Date(to) : undefined;
 
-    const [totalRevenueRaw, checkIns, newPatients, pendingInvoices] =
-      await Promise.all([
-        // Total Paid Revenue in period
-        this.financeRepository.aggregateInvoice({
-          where: {
-            status: InvoiceStatus.PAID,
-            paidAt: { gte: filterGte, lte: filterLte },
+    const [
+      totalRevenueRaw,
+      checkIns,
+      newPatients,
+      pendingInvoices,
+      revenueByCategoryRaw,
+    ] = await Promise.all([
+      // Total Paid Revenue in period
+      this.financeRepository.aggregateInvoice({
+        where: {
+          status: InvoiceStatus.PAID,
+          paidAt: { gte: filterGte, lte: filterLte },
+        },
+        _sum: { totalAmount: true },
+      }),
+      // Successful Check-ins
+      this.bookingRepository.countBooking({
+        where: {
+          status: {
+            in: [
+              BookingStatus.CHECKED_IN,
+              BookingStatus.IN_PROGRESS,
+              BookingStatus.COMPLETED,
+            ],
           },
-          _sum: { totalAmount: true },
-        }),
-        // Successful Check-ins
-        this.bookingRepository.countBooking({
-          where: {
-            status: {
-              in: [
-                BookingStatus.CHECKED_IN,
-                BookingStatus.IN_PROGRESS,
-                BookingStatus.COMPLETED,
-              ],
-            },
-            checkedInAt: { gte: filterGte, lte: filterLte },
+          checkedInAt: { gte: filterGte, lte: filterLte },
+        },
+      }),
+      // New Patients registered
+      this.profileRepository.countPatientProfile({
+        where: {
+          createdAt: { gte: filterGte, lte: filterLte },
+        },
+      }),
+      // Pending/Draft Invoices
+      this.financeRepository.countInvoice({
+        where: {
+          status: {
+            in: [InvoiceStatus.DRAFT, InvoiceStatus.OPEN, InvoiceStatus.ISSUED],
           },
-        }),
-        // New Patients registered
-        this.profileRepository.countPatientProfile({
-          where: {
-            createdAt: { gte: filterGte, lte: filterLte },
-          },
-        }),
-        // Pending/Draft Invoices
-        this.financeRepository.countInvoice({
-          where: {
-            status: {
-              in: [
-                InvoiceStatus.DRAFT,
-                InvoiceStatus.OPEN,
-                InvoiceStatus.ISSUED,
-              ],
-            },
-            createdAt: { gte: filterGte, lte: filterLte },
-          },
-        }),
-      ]);
+          createdAt: { gte: filterGte, lte: filterLte },
+        },
+      }),
+      // Revenue by category
+      this.financeRepository.groupByInvoice({
+        by: ['invoiceType'],
+        where: {
+          status: InvoiceStatus.PAID,
+          paidAt: { gte: filterGte, lte: filterLte },
+        },
+        _sum: { totalAmount: true },
+      }),
+    ]);
 
-    return ResponseHelper.success(
-      {
-        totalRevenue: Number(totalRevenueRaw._sum?.totalAmount ?? 0),
-        checkIns,
-        newPatients,
-        pendingInvoices,
-      },
-      'RECEPTIONIST.ANALYTICS.OVERVIEW',
-      'Receptionist overview stats retrieved successfully',
-      200,
-    );
+    const revenueByCategory = {
+      CONSULTATION: 0,
+      SERVICE: 0,
+      PHARMACY: 0,
+    };
+
+    if (Array.isArray(revenueByCategoryRaw)) {
+      (
+        revenueByCategoryRaw as {
+          invoiceType: string;
+          _sum: { totalAmount: number | null };
+        }[]
+      ).forEach((row) => {
+        if (row && row.invoiceType && row._sum?.totalAmount) {
+          const type = row.invoiceType as keyof typeof revenueByCategory;
+          if (type in revenueByCategory) {
+            revenueByCategory[type] = Number(row._sum.totalAmount);
+          }
+        }
+      });
+    }
+
+    return {
+      totalRevenue: Number(totalRevenueRaw._sum?.totalAmount ?? 0),
+      checkIns,
+      newPatients,
+      pendingInvoices,
+      revenueByCategory,
+    };
   }
 
   async getRevenueTrend(query: DateRangeQueryDto) {
@@ -151,12 +179,7 @@ export class ReceptionistAnalyticsService {
       }),
     );
 
-    return ResponseHelper.success(
-      { chart },
-      'RECEPTIONIST.ANALYTICS.REVENUE_TREND',
-      'Revenue trend retrieved successfully',
-      200,
-    );
+    return { chart };
   }
 
   async getOperationalStats(query: DateRangeQueryDto) {
@@ -262,26 +285,21 @@ export class ReceptionistAnalyticsService {
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5);
 
-    return ResponseHelper.success(
-      {
-        bookingSources: bookingSourcesTyped.map((s) => ({
-          label: s.source,
-          value: s._count?._all ?? 0,
-        })),
-        appointmentStatuses: appointmentStatusesTyped.map((s) => ({
-          label: s.status,
-          value: s._count?._all ?? 0,
-        })),
-        paymentMethods: paymentMethodsTyped.map((p) => ({
-          label: p.paymentMethod,
-          value: Number(p._sum?.amountPaid ?? 0),
-          count: p._count?._all ?? 0,
-        })),
-        topServices,
-      },
-      'RECEPTIONIST.ANALYTICS.OPERATIONAL',
-      'Operational stats retrieved successfully',
-      200,
-    );
+    return {
+      bookingSources: bookingSourcesTyped.map((s) => ({
+        label: s.source,
+        value: s._count?._all ?? 0,
+      })),
+      appointmentStatuses: appointmentStatusesTyped.map((s) => ({
+        label: s.status,
+        value: s._count?._all ?? 0,
+      })),
+      paymentMethods: paymentMethodsTyped.map((p) => ({
+        label: p.paymentMethod,
+        value: Number(p._sum?.amountPaid ?? 0),
+        count: p._count?._all ?? 0,
+      })),
+      topServices,
+    };
   }
 }

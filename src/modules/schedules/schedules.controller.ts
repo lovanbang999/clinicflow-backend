@@ -27,7 +27,11 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
-import { UserRole, DayOfWeek } from '@prisma/client';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
+import { UserRole, DayOfWeek, User } from '@prisma/client';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ResponseMessage } from '../../common/decorators/response-message.decorator';
+import { MessageCodes } from '../../common/constants/message-codes.const';
 
 @ApiTags('schedules')
 @Controller('schedules')
@@ -38,6 +42,10 @@ export class SchedulesController {
 
   @Post('working-hours')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_CREATED,
+    'Working hours saved successfully',
+  )
   @ApiOperation({
     summary: 'Create or update working hours (ADMIN/DOCTOR only)',
   })
@@ -72,6 +80,10 @@ export class SchedulesController {
 
   @Get('working-hours/:doctorId')
   @Public()
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_LIST_RETRIEVED,
+    'Working hours retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get working hours for a doctor (public)' })
   @ApiResponse({
     status: 200,
@@ -101,6 +113,10 @@ export class SchedulesController {
   @Delete('working-hours/:doctorId/:dayOfWeek')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR)
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_DELETED,
+    'Working hours deleted successfully',
+  )
   @ApiOperation({
     summary: 'Delete working hours (ADMIN/DOCTOR only)',
   })
@@ -121,6 +137,10 @@ export class SchedulesController {
 
   @Post('break-times')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR, UserRole.RECEPTIONIST)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_CREATED,
+    'Break time created successfully',
+  )
   @ApiOperation({
     summary: 'Create break time (ADMIN/DOCTOR/RECEPTIONIST only)',
   })
@@ -154,6 +174,10 @@ export class SchedulesController {
 
   @Get('break-times/:doctorId')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR, UserRole.RECEPTIONIST)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_LIST_RETRIEVED,
+    'Break times retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get break times for a doctor (ADMIN/DOCTOR/RECEPTIONIST only)',
   })
@@ -174,6 +198,10 @@ export class SchedulesController {
   @Delete('break-times/:id')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR, UserRole.RECEPTIONIST)
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_DELETED,
+    'Break time deleted successfully',
+  )
   @ApiOperation({
     summary: 'Delete break time (ADMIN/DOCTOR/RECEPTIONIST only)',
   })
@@ -191,6 +219,10 @@ export class SchedulesController {
 
   @Post('off-days')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_CREATED,
+    'Off day created successfully',
+  )
   @ApiOperation({ summary: 'Create off day (ADMIN/DOCTOR only)' })
   @ApiResponse({
     status: 201,
@@ -205,6 +237,10 @@ export class SchedulesController {
 
   @Get('off-days/preview')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_LIST_RETRIEVED,
+    'Preview retrieved successfully',
+  )
   @ApiOperation({
     summary:
       'Preview affected appointments for a potential off day (ADMIN/DOCTOR only).',
@@ -221,8 +257,50 @@ export class SchedulesController {
     return this.schedulesService.previewOffDay(doctorId, date);
   }
 
+  @Get('off-days/pending')
+  @Roles(UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_LIST_RETRIEVED,
+    'Pending off days retrieved successfully',
+  )
+  @ApiOperation({ summary: 'Get all pending off days (ADMIN only)' })
+  @ApiResponse({ status: 200, description: 'Pending off days list returned' })
+  getPendingOffDays() {
+    return this.schedulesService.getPendingOffDays();
+  }
+
+  @Post('off-days/:id/approve')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_UPDATED,
+    'Off day request approved successfully',
+  )
+  @ApiOperation({ summary: 'Approve off day request (ADMIN only)' })
+  @ApiResponse({ status: 200, description: 'Off day request approved' })
+  approveOffDay(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.schedulesService.approveOffDay(id, user.id);
+  }
+
+  @Post('off-days/:id/reject')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_UPDATED,
+    'Off day request rejected successfully',
+  )
+  @ApiOperation({ summary: 'Reject off day request (ADMIN only)' })
+  @ApiResponse({ status: 200, description: 'Off day request rejected' })
+  rejectOffDay(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.schedulesService.rejectOffDay(id, user.id);
+  }
+
   @Get('off-days/:doctorId')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR, UserRole.RECEPTIONIST)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_LIST_RETRIEVED,
+    'Off days retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get off days for a doctor (ADMIN/DOCTOR/RECEPTIONIST only)',
   })
@@ -243,6 +321,10 @@ export class SchedulesController {
   @Delete('off-days/:doctorId/:date')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR)
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_DELETED,
+    'Off day deleted successfully',
+  )
   @ApiOperation({
     summary: 'Delete off day (ADMIN/DOCTOR only)',
   })
@@ -263,6 +345,10 @@ export class SchedulesController {
 
   @Get('available-slots')
   @Public()
+  @ResponseMessage(
+    MessageCodes.AVAILABLE_SLOTS_RETRIEVED,
+    'Available slots retrieved successfully',
+  )
   @ApiOperation({
     summary:
       'Get available time slots for a doctor on a specific date (public)',
@@ -302,9 +388,11 @@ export class SchedulesController {
   }
 
   @Post('reserve-slot')
-  @Public()
+  @Authenticated()
+  @ResponseMessage(MessageCodes.SLOT_RESERVED, 'Slot reserved successfully')
   @ApiOperation({ summary: 'Temporarily lock a time slot for 5 minutes' })
   reserveSlot(
+    @CurrentUser() user: User,
     @Body()
     dto: {
       doctorId: string;
@@ -318,13 +406,17 @@ export class SchedulesController {
       dto.date,
       dto.startTime,
       dto.patientProfileId,
+      user,
     );
   }
 
   @Post('release-slot')
-  @Public()
+  @Authenticated()
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage(MessageCodes.SLOT_RELEASED, 'Slot released successfully')
   @ApiOperation({ summary: 'Release a temporarily locked time slot' })
   releaseSlot(
+    @CurrentUser() user: User,
     @Body()
     dto: {
       doctorId: string;
@@ -338,11 +430,16 @@ export class SchedulesController {
       dto.date,
       dto.startTime,
       dto.patientProfileId,
+      user,
     );
   }
 
   @Post('working-hours/bulk')
   @Roles(UserRole.ADMIN, UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.SCHEDULE_CREATED,
+    'Bulk working hours updated successfully',
+  )
   @ApiOperation({
     summary: 'Bulk create/update/delete working hours (ADMIN/DOCTOR only)',
   })

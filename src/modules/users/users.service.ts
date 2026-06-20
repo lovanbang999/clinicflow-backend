@@ -1,6 +1,7 @@
 import {
   IUserRepository,
   I_USER_REPOSITORY,
+  PublicDoctorResult,
 } from '../database/interfaces/user.repository.interface';
 import {
   IProfileRepository,
@@ -14,7 +15,8 @@ import {
   RegisterPatientDto,
   CreateGuestPatientDto,
 } from './dto/quick-create-patient.dto';
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { SequenceService } from '../database/services/sequence.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -23,19 +25,40 @@ import { FilterPatientDto } from './dto/filter-patient.dto';
 import { UpdatePatientProfileDto } from './dto/update-patient-profile.dto';
 import { Prisma, UserRole, Gender } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
+import { RedisService } from '../database/services/redis.service';
+import { MailService } from '../notifications/mail.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
     @Inject(I_PROFILE_REPOSITORY)
     private readonly profileRepository: IProfileRepository,
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
+    private readonly sequenceService: SequenceService,
+    private readonly redisService: RedisService,
+    private readonly mailService: MailService,
+    private readonly prisma: PrismaService,
   ) {}
+
+  private async clearPublicDoctorsCache() {
+    try {
+      if (this.redisService.isReady()) {
+        await this.redisService.delPattern('cache:doctors:public:*');
+      }
+    } catch (error) {
+      this.logger.error(
+        'Failed to clear public doctors cache:',
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
 
   /**
    * Create a new user (ADMIN only)
@@ -112,20 +135,21 @@ export class UsersService {
       doctorProfileData,
     );
 
-    return ResponseHelper.success(
-      user,
-      MessageCodes.USER_CREATED,
-      'User created successfully',
-      201,
+    this.logger.log(
+      `Successfully created user ${user.id} with role ${role} by Admin`,
     );
+
+    return user;
   }
 
   /**
    * Internal helper to generate a unique patient code (BN-YYYY-NNNN)
    */
   private async generatePatientCode(): Promise<string> {
-    const count = await this.profileRepository.countTotalPatients();
-    return `BN-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
+    const year = new Date().getFullYear();
+    const prefix = `BN-${year}-`;
+    const count = await this.sequenceService.generateNextSequence(prefix);
+    return `${prefix}${String(count).padStart(4, '0')}`;
   }
 
   /**
@@ -150,12 +174,7 @@ export class UsersService {
     );
 
     if (existingUser) {
-      return ResponseHelper.success(
-        existingUser,
-        MessageCodes.USER_ALREADY_EXISTS,
-        'Patient already has an account',
-        200,
-      );
+      return existingUser;
     }
 
     // 2. Check if Guest PatientProfile with this phone exists
@@ -164,7 +183,8 @@ export class UsersService {
 
     if (existingGuest) {
       // Upgrade Guest to User
-      const hashedPassword = await bcrypt.hash(phone, 10);
+      const tempPassword = Math.random().toString(36).substring(2, 10);
+      const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
       const userData = {
         email,
@@ -174,6 +194,7 @@ export class UsersService {
         role: UserRole.PATIENT,
         isActive: true,
         isVerified: true,
+        isPasswordTemp: true,
         ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
         ...(gender && { gender }),
         ...(address && { address }),
@@ -195,16 +216,29 @@ export class UsersService {
           profileData,
         );
 
-      return ResponseHelper.success(
-        upgradedUserWithProfile,
-        MessageCodes.USER_UPDATED,
-        'Guest patient upgraded to account successfully',
-        200,
+      this.logger.log(
+        `Successfully upgraded guest patient profile ${existingGuest.id} to user account ${upgradedUserWithProfile.id}. Temp password: ${tempPassword}`,
       );
+
+      // Send welcome email with temporary password asynchronously
+      void this.mailService
+        .sendTemporaryPasswordEmail(email, fullName, tempPassword)
+        .catch((err: unknown) => {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          this.logger.error(
+            `Failed to send temp password email to upgraded guest: ${errMsg}`,
+          );
+        });
+
+      return {
+        ...upgradedUserWithProfile,
+        tempPassword,
+      };
     }
 
     // 3. Create fresh User and PatientProfile
-    const hashedPassword = await bcrypt.hash(phone, 10);
+    const tempPassword = Math.random().toString(36).substring(2, 10);
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
     const patientCode = await this.generatePatientCode();
 
     const userData = {
@@ -215,6 +249,7 @@ export class UsersService {
       role: UserRole.PATIENT,
       isActive: true,
       isVerified: true,
+      isPasswordTemp: true,
       ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
       ...(gender && { gender }),
       ...(address && { address }),
@@ -238,12 +273,24 @@ export class UsersService {
       profileData,
     );
 
-    return ResponseHelper.success(
-      result,
-      MessageCodes.USER_CREATED,
-      'Patient account created successfully',
-      201,
+    this.logger.log(
+      `Successfully registered new patient ${result.id} with patient code ${patientCode}. Temp password: ${tempPassword}`,
     );
+
+    // Send welcome email with temporary password asynchronously
+    void this.mailService
+      .sendTemporaryPasswordEmail(email, fullName, tempPassword)
+      .catch((err: unknown) => {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `Failed to send temp password email to new patient: ${errMsg}`,
+        );
+      });
+
+    return {
+      ...result,
+      tempPassword,
+    };
   }
 
   /**
@@ -264,21 +311,16 @@ export class UsersService {
     const existingUser = await this.userRepository.findByPhone(phone);
 
     if (existingUser) {
-      return ResponseHelper.success(
-        {
-          id: existingUser.id,
-          fullName: existingUser.fullName,
-          phone: existingUser.phone,
-          dateOfBirth: existingUser.dateOfBirth,
-          gender: existingUser.gender,
-          address: existingUser.address,
-          role: UserRole.PATIENT,
-          patientProfile: existingUser.patientProfile,
-        },
-        MessageCodes.USER_RETRIEVED,
-        'Patient already exists with a system account',
-        200,
-      );
+      return {
+        id: existingUser.id,
+        fullName: existingUser.fullName,
+        phone: existingUser.phone,
+        dateOfBirth: existingUser.dateOfBirth,
+        gender: existingUser.gender,
+        address: existingUser.address,
+        role: UserRole.PATIENT,
+        patientProfile: existingUser.patientProfile,
+      };
     }
 
     // 2. Check if Guest PatientProfile with this phone exists
@@ -286,24 +328,19 @@ export class UsersService {
       await this.profileRepository.findGuestPatientByPhone(phone);
 
     if (existingGuest) {
-      return ResponseHelper.success(
-        {
+      return {
+        id: existingGuest.id,
+        fullName: existingGuest.fullName,
+        phone: existingGuest.phone,
+        dateOfBirth: existingGuest.dateOfBirth,
+        gender: existingGuest.gender,
+        address: existingGuest.address,
+        role: UserRole.PATIENT,
+        patientProfile: {
           id: existingGuest.id,
-          fullName: existingGuest.fullName,
-          phone: existingGuest.phone,
-          dateOfBirth: existingGuest.dateOfBirth,
-          gender: existingGuest.gender,
-          address: existingGuest.address,
-          role: UserRole.PATIENT,
-          patientProfile: {
-            id: existingGuest.id,
-            patientCode: existingGuest.patientCode,
-          },
+          patientCode: existingGuest.patientCode,
         },
-        MessageCodes.USER_RETRIEVED,
-        'Guest patient found',
-        200,
-      );
+      };
     }
 
     // 3. Create new Guest Profile
@@ -324,24 +361,23 @@ export class UsersService {
       { data: guestData },
     );
 
-    return ResponseHelper.success(
-      {
-        id: guestProfile.id,
-        fullName: guestProfile.fullName,
-        phone: guestProfile.phone,
-        dateOfBirth: guestProfile.dateOfBirth,
-        gender: guestProfile.gender,
-        address: guestProfile.address,
-        role: UserRole.PATIENT,
-        patientProfile: {
-          id: guestProfile.id,
-          patientCode: guestProfile.patientCode,
-        },
-      },
-      MessageCodes.USER_CREATED,
-      'Guest patient created successfully',
-      201,
+    this.logger.log(
+      `Successfully created guest patient profile ${guestProfile.id} with patient code ${patientCode}`,
     );
+
+    return {
+      id: guestProfile.id,
+      fullName: guestProfile.fullName,
+      phone: guestProfile.phone,
+      dateOfBirth: guestProfile.dateOfBirth,
+      gender: guestProfile.gender,
+      address: guestProfile.address,
+      role: UserRole.PATIENT,
+      patientProfile: {
+        id: guestProfile.id,
+        patientCode: guestProfile.patientCode,
+      },
+    };
   }
 
   /**
@@ -426,20 +462,12 @@ export class UsersService {
       };
     });
 
-    return ResponseHelper.success(
-      {
-        users,
-        pagination: {
-          total,
-          page: pPage,
-          limit: pLimit,
-          totalPages: Math.ceil(total / pLimit),
-        },
-      },
-      MessageCodes.USER_LIST_RETRIEVED,
-      'Patient profiles retrieved successfully',
-      200,
-    );
+    return {
+      items: users,
+      total,
+      page: pPage,
+      limit: pLimit,
+    };
   }
 
   /**
@@ -456,16 +484,11 @@ export class UsersService {
       this.bookingRepository.countActiveAppointmentsGroup(startOfToday),
     ]);
 
-    return ResponseHelper.success(
-      {
-        totalPatients,
-        newToday,
-        activeAppointments,
-      },
-      MessageCodes.PATIENT_STATS_RETRIEVED,
-      'Patient statistics retrieved successfully',
-      200,
-    );
+    return {
+      totalPatients,
+      newToday,
+      activeAppointments,
+    };
   }
 
   /**
@@ -532,12 +555,11 @@ export class UsersService {
       );
     }
 
-    return ResponseHelper.success(
-      result,
-      MessageCodes.PATIENT_UPDATED,
-      'Patient profile updated successfully',
-      200,
+    this.logger.log(
+      `Successfully updated patient profile ${id} and its associated user account (if any)`,
     );
+
+    return result;
   }
 
   /**
@@ -547,6 +569,7 @@ export class UsersService {
     const {
       role,
       isActive,
+      isVerified,
       search,
       page = 1,
       limit = 10,
@@ -569,6 +592,10 @@ export class UsersService {
       where.isActive = isActive;
     }
 
+    if (typeof isVerified === 'boolean') {
+      where.isVerified = isVerified;
+    }
+
     if (search) {
       where.OR = [
         { fullName: { contains: search } },
@@ -585,20 +612,15 @@ export class UsersService {
       sortOrder,
     );
 
-    return ResponseHelper.success(
-      {
-        users,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    return {
+      users,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      MessageCodes.USER_LIST_RETRIEVED,
-      'Users retrieved successfully',
-      200,
-    );
+    };
   }
 
   /**
@@ -612,6 +634,23 @@ export class UsersService {
     limit?: number;
   }) {
     const { serviceId, page = 1, limit = 100 } = filters;
+    const cacheKey = `cache:doctors:public:${serviceId || 'all'}:${page}:${limit}`;
+
+    // Try to get from Redis cache first
+    if (this.redisService.isReady()) {
+      const cached = await this.redisService.getJson<{
+        users: PublicDoctorResult[];
+        pagination: {
+          total: number;
+          page: number;
+          limit: number;
+          totalPages: number;
+        };
+      }>(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    }
 
     const skip = (page - 1) * limit;
 
@@ -637,20 +676,29 @@ export class UsersService {
       limit,
     );
 
-    return ResponseHelper.success(
-      {
-        users,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    const result = {
+      users,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      MessageCodes.USER_LIST_RETRIEVED,
-      'Doctors retrieved successfully',
-      200,
-    );
+    };
+
+    // Save to Redis cache (TTL: 2 hours = 7200 seconds)
+    try {
+      if (this.redisService.isReady()) {
+        await this.redisService.setJson(cacheKey, result, 7200);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to cache public doctors:`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+
+    return result;
   }
 
   /**
@@ -668,12 +716,7 @@ export class UsersService {
       );
     }
 
-    return ResponseHelper.success(
-      user,
-      MessageCodes.USER_RETRIEVED,
-      'Doctor retrieved successfully',
-      200,
-    );
+    return user;
   }
 
   /**
@@ -691,12 +734,7 @@ export class UsersService {
       );
     }
 
-    return ResponseHelper.success(
-      user,
-      MessageCodes.USER_RETRIEVED,
-      'User retrieved successfully',
-      200,
-    );
+    return user;
   }
 
   /**
@@ -788,6 +826,8 @@ export class UsersService {
       updateData.role = updateUserDto.role;
     if (updateUserDto.isActive !== undefined && updateUserDto.isActive !== null)
       updateData.isActive = updateUserDto.isActive;
+    if (updateUserDto.lockReason !== undefined)
+      updateData.lockReason = updateUserDto.lockReason;
 
     // Hash password if provided
     if (
@@ -807,6 +847,32 @@ export class UsersService {
       updateData.dateOfBirth = new Date(updateUserDto.dateOfBirth);
     }
 
+    // Auto-update PatientProfile if role is PATIENT and medical fields are passed
+    if (existingUser.role === 'PATIENT') {
+      const patientFields: Prisma.PatientProfileUpdateWithoutUserInput = {};
+      if (updateUserDto.bloodType !== undefined) {
+        patientFields.bloodType = updateUserDto.bloodType;
+      }
+      if (updateUserDto.heightCm !== undefined) {
+        patientFields.heightCm = updateUserDto.heightCm;
+      }
+      if (updateUserDto.weightKg !== undefined) {
+        patientFields.weightKg = updateUserDto.weightKg;
+      }
+      if (updateUserDto.allergies !== undefined) {
+        patientFields.allergies = updateUserDto.allergies;
+      }
+      if (updateUserDto.chronicConditions !== undefined) {
+        patientFields.chronicConditions = updateUserDto.chronicConditions;
+      }
+
+      if (Object.keys(patientFields).length > 0) {
+        updateData.patientProfile = {
+          update: patientFields,
+        };
+      }
+    }
+
     // Update user
     // Auto-update DoctorProfile if role is DOCTOR and data is passed
     // NOTE: This complex nested update is handled gracefully by Prisma directly.
@@ -815,12 +881,17 @@ export class UsersService {
 
     const updatedUser = await this.userRepository.update(id, updateData);
 
-    return ResponseHelper.success(
-      updatedUser,
-      MessageCodes.USER_UPDATED,
-      'User updated successfully',
-      200,
-    );
+    this.logger.log(`Successfully updated user ${id}`);
+
+    // Evict public doctors cache if updated user is a doctor
+    if (
+      existingUser.role === UserRole.DOCTOR ||
+      updateUserDto.role === UserRole.DOCTOR
+    ) {
+      await this.clearPublicDoctorsCache();
+    }
+
+    return updatedUser;
   }
 
   /**
@@ -890,15 +961,17 @@ export class UsersService {
     // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // Update password
-    await this.userRepository.update(userId, { password: hashedPassword });
+    // Update password and clear temp flag
+    await this.userRepository.update(userId, {
+      password: hashedPassword,
+      isPasswordTemp: false,
+    });
 
-    return ResponseHelper.success(
-      null,
-      MessageCodes.USER_UPDATED,
-      'Password changed successfully',
-      200,
+    this.logger.log(
+      `Successfully changed password for user ${userId} and cleared temporary flag`,
     );
+
+    return null;
   }
 
   /**
@@ -919,12 +992,14 @@ export class UsersService {
     // Soft delete: stamp deletedAt and deactivate
     const deletedUser = await this.userRepository.softDelete(id);
 
-    return ResponseHelper.success(
-      deletedUser,
-      MessageCodes.USER_DELETED,
-      'User deleted successfully',
-      200,
-    );
+    this.logger.log(`Successfully soft deleted user ${id}`);
+
+    // Evict public doctors cache if deleted user is a doctor
+    if (user.role === UserRole.DOCTOR) {
+      await this.clearPublicDoctorsCache();
+    }
+
+    return deletedUser;
   }
 
   /**
@@ -933,11 +1008,95 @@ export class UsersService {
   async getStatistics() {
     const stats = await this.userRepository.getUserStatistics();
 
-    return ResponseHelper.success(
-      stats,
-      MessageCodes.USER_LIST_RETRIEVED,
-      'User statistics retrieved successfully',
-      200,
+    return stats;
+  }
+
+  /**
+   * Get all active technicians with their specializations
+   * Optional filter: categoryId — returns only technicians who have that specialization
+   */
+  async getTechnicians(categoryId?: string) {
+    const where: Prisma.UserWhereInput = {
+      role: UserRole.TECHNICIAN,
+      isActive: true,
+      deletedAt: null,
+      ...(categoryId
+        ? {
+            technicianSpecializations: {
+              some: { categoryId },
+            },
+          }
+        : {}),
+    };
+
+    const technicians = await this.userRepository.findMany({
+      where,
+      select: {
+        id: true,
+        fullName: true,
+        avatar: true,
+        phone: true,
+        technicianSpecializations: {
+          select: {
+            id: true,
+            categoryId: true,
+            category: {
+              select: { id: true, name: true, code: true },
+            },
+          },
+        },
+      } as unknown as Prisma.UserSelect,
+      orderBy: { fullName: 'asc' },
+    });
+
+    return technicians;
+  }
+
+  /**
+   * Add a specialization category to a technician (admin only)
+   */
+  async addTechnicianSpecialization(technicianId: string, categoryId: string) {
+    // Verify user exists and is a TECHNICIAN
+    const user = await this.userRepository.findById(technicianId);
+    if (!user || user.role !== UserRole.TECHNICIAN) {
+      throw new ApiException(
+        MessageCodes.USER_NOT_FOUND,
+        'Technician not found',
+        404,
+        'TechnicianSpecialization.add',
+      );
+    }
+
+    // Upsert — ignore duplicate (unique constraint)
+    const spec = await this.prisma.technicianSpecialization.upsert({
+      where: { userId_categoryId: { userId: technicianId, categoryId } },
+      create: { userId: technicianId, categoryId },
+      update: {},
+      include: { category: { select: { id: true, name: true, code: true } } },
+    });
+
+    this.logger.log(
+      `Added specialization categoryId=${categoryId} to technician ${technicianId}`,
     );
+
+    return spec;
+  }
+
+  /**
+   * Remove a specialization from a technician (admin only)
+   */
+  async removeTechnicianSpecialization(
+    technicianId: string,
+    categoryId: string,
+  ) {
+    await this.prisma.technicianSpecialization.deleteMany({
+      where: { userId: technicianId, categoryId },
+    });
+
+    this.logger.log(
+      `Removed specialization categoryId=${categoryId} from technician ${technicianId}`,
+    );
+
+    return null;
   }
 }

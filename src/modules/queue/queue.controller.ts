@@ -24,6 +24,8 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '@prisma/client';
+import { ResponseMessage } from '../../common/decorators/response-message.decorator';
+import { MessageCodes } from '../../common/constants/message-codes.const';
 
 @ApiTags('queue')
 @Controller('queue')
@@ -34,6 +36,10 @@ export class QueueController {
 
   @Get()
   @Roles(UserRole.DOCTOR, UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.QUEUE_LIST_RETRIEVED,
+    'Queue records retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get all queued bookings' })
   @ApiQuery({ name: 'doctorId', required: false })
   @ApiQuery({ name: 'date', required: false })
@@ -50,6 +56,10 @@ export class QueueController {
 
   @Get('statistics')
   @Roles(UserRole.DOCTOR, UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.QUEUE_STATISTICS_RETRIEVED,
+    'Queue statistics retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get queue statistics' })
   @ApiQuery({ name: 'doctorId', required: false })
   @ApiQuery({ name: 'date', required: false })
@@ -73,6 +83,10 @@ export class QueueController {
 
   @Get('booking/:bookingId')
   @Roles(UserRole.DOCTOR, UserRole.RECEPTIONIST, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.QUEUE_RETRIEVED,
+    'Queue record retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get queue info by booking ID' })
   @ApiResponse({
     status: 200,
@@ -89,6 +103,10 @@ export class QueueController {
   @Post('promote')
   @Roles(UserRole.RECEPTIONIST, UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(
+    MessageCodes.QUEUE_PROMOTED,
+    'Booking promoted from queue successfully',
+  )
   @ApiOperation({
     summary: 'Manually promote a booking from queue (RECEPTIONIST/ADMIN only)',
   })

@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -22,6 +23,8 @@ import { LabOrderStatus, UserRole, User } from '@prisma/client';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { ResponseMessage } from '../../common/decorators/response-message.decorator';
+import { MessageCodes } from '../../common/constants/message-codes.const';
 
 @ApiTags('lab-orders')
 @Controller('lab-orders')
@@ -32,6 +35,10 @@ export class LabOrdersController {
 
   @Post()
   @Roles(UserRole.DOCTOR, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.LAB_ORDER_CREATED,
+    'Lab order created successfully',
+  )
   @ApiOperation({ summary: 'Create a new lab order' })
   @ApiResponse({ status: 201, description: 'Lab order created successfully' })
   createLabOrder(
@@ -48,6 +55,10 @@ export class LabOrdersController {
     UserRole.RECEPTIONIST,
     UserRole.PATIENT,
   )
+  @ResponseMessage(
+    MessageCodes.LAB_ORDERS_RETRIEVED,
+    'Lab orders list retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get lab orders for a specific booking' })
   getLabOrdersByBooking(
     @Param('id') bookingId: string,
@@ -58,6 +69,10 @@ export class LabOrdersController {
 
   @Get('pending')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.LAB_ORDERS_RETRIEVED,
+    'Pending lab orders retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get all PENDING lab orders (chưa thu tiền)' })
   getPendingOrders() {
     return this.labOrdersService.getPendingOrders();
@@ -70,15 +85,25 @@ export class LabOrdersController {
     UserRole.DOCTOR,
     UserRole.TECHNICIAN,
   )
+  @ResponseMessage(
+    MessageCodes.LAB_ORDERS_RETRIEVED,
+    'Ready to perform lab orders retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get PAID lab orders (READY TO PERFORM) — for lab technicians',
   })
-  getReadyToPerformOrders() {
-    return this.labOrdersService.getReadyToPerformOrders();
+  getReadyToPerformOrders(@CurrentUser() user: User) {
+    return this.labOrdersService.getReadyToPerformOrders(
+      user as unknown as Express.User,
+    );
   }
 
   @Get('technician/stats')
   @Roles(UserRole.ADMIN, UserRole.TECHNICIAN)
+  @ResponseMessage(
+    MessageCodes.LAB_ORDERS_RETRIEVED,
+    'Technician stats retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get daily stats for technician dashboard' })
   getTechnicianStats() {
     return this.labOrdersService.getTechnicianStats();
@@ -86,11 +111,32 @@ export class LabOrdersController {
 
   @Get('technician/history')
   @Roles(UserRole.ADMIN, UserRole.TECHNICIAN)
+  @ResponseMessage(
+    MessageCodes.LAB_ORDERS_RETRIEVED,
+    'Technician history retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Get history of completed lab orders for technician',
   })
-  getTechnicianHistory() {
-    return this.labOrdersService.getTechnicianHistory();
+  getTechnicianHistory(
+    @CurrentUser() user: User,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('categoryId') categoryId?: string,
+    @Query('labFormType') labFormType?: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.labOrdersService.getTechnicianHistory(user, {
+      startDate,
+      endDate,
+      categoryId,
+      labFormType,
+      search,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+    });
   }
 
   @Get(':id')
@@ -101,6 +147,10 @@ export class LabOrdersController {
     UserRole.TECHNICIAN,
     UserRole.PATIENT,
   )
+  @ResponseMessage(
+    MessageCodes.LAB_ORDER_RETRIEVED,
+    'Lab order details retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get a single lab order by ID' })
   getLabOrderById(@CurrentUser() user: User, @Param('id') labOrderId: string) {
     return this.labOrdersService.getOrderById(labOrderId, user);
@@ -108,6 +158,10 @@ export class LabOrdersController {
 
   @Get('booking/:id/pending-unbilled')
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.DOCTOR)
+  @ResponseMessage(
+    MessageCodes.LAB_ORDERS_RETRIEVED,
+    'Pending unbilled lab orders retrieved successfully',
+  )
   @ApiOperation({
     summary:
       'Get PENDING lab orders for a booking not yet added to any invoice',
@@ -126,6 +180,10 @@ export class LabOrdersController {
     UserRole.DOCTOR,
     UserRole.TECHNICIAN,
   )
+  @ResponseMessage(
+    MessageCodes.LAB_ORDER_RESULT_SAVED,
+    'Lab order result saved successfully',
+  )
   @ApiOperation({ summary: 'Add or update the lab result for an order' })
   @ApiResponse({ status: 200, description: 'Lab result saved successfully' })
   addResult(
@@ -138,6 +196,10 @@ export class LabOrdersController {
 
   @Delete(':id')
   @Roles(UserRole.DOCTOR, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.LAB_ORDER_DELETED,
+    'Lab order deleted successfully',
+  )
   @ApiOperation({ summary: 'Delete a pending lab order' })
   deleteOrder(@CurrentUser() user: User, @Param('id') labOrderId: string) {
     return this.labOrdersService.deleteOrder(user.id, labOrderId, user);
@@ -149,6 +211,10 @@ export class LabOrdersController {
     UserRole.RECEPTIONIST,
     UserRole.DOCTOR,
     UserRole.TECHNICIAN,
+  )
+  @ResponseMessage(
+    MessageCodes.LAB_ORDER_STATUS_UPDATED,
+    'Lab order status updated successfully',
   )
   @ApiOperation({ summary: 'Update the lab order status (e.g. IN_PROGRESS)' })
   @ApiResponse({ status: 200, description: 'Lab order status updated' })

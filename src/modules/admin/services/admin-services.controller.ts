@@ -29,6 +29,8 @@ import { ServiceStatsResponseDto } from './dto/service-stats.response.dto';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
+import { ResponseMessage } from 'src/common/decorators/response-message.decorator';
+import { MessageCodes } from 'src/common/constants/message-codes.const';
 
 @ApiTags('admin - services')
 @ApiBearerAuth('JWT-auth')
@@ -43,6 +45,10 @@ export class AdminServicesController {
    * Stat cards for the Service Management page.
    */
   @Get('services/statistics')
+  @ResponseMessage(
+    MessageCodes.SERVICE_STATISTICS_RETRIEVED,
+    'Service statistics retrieved successfully',
+  )
   @ApiOperation({
     summary: 'Service statistics (ADMIN only)',
     description:
@@ -64,6 +70,10 @@ export class AdminServicesController {
    * List all services with optional search / isActive filter.
    */
   @Get('services')
+  @ResponseMessage(
+    MessageCodes.SERVICE_LIST_RETRIEVED,
+    'Services retrieved successfully',
+  )
   @ApiOperation({
     summary: 'List all services (ADMIN only)',
     description:
@@ -92,6 +102,10 @@ export class AdminServicesController {
    * Detail of a single service including booking statistics.
    */
   @Get('services/:id')
+  @ResponseMessage(
+    MessageCodes.SERVICE_RETRIEVED,
+    'Service retrieved successfully',
+  )
   @ApiOperation({ summary: 'Get service by ID (ADMIN only)' })
   @ApiParam({ name: 'id', description: 'Service UUID' })
   @ApiResponse({ status: 200, description: 'Service retrieved successfully' })
@@ -107,6 +121,7 @@ export class AdminServicesController {
    */
   @Post('services')
   @HttpCode(HttpStatus.CREATED)
+  @ResponseMessage(MessageCodes.SERVICE_CREATED, 'Service created successfully')
   @ApiOperation({ summary: 'Create a new service (ADMIN only)' })
   @ApiResponse({ status: 201, description: 'Service created successfully' })
   @ApiResponse({ status: 409, description: 'Service name already exists' })
@@ -120,6 +135,7 @@ export class AdminServicesController {
    * Update service fields.
    */
   @Patch('services/:id')
+  @ResponseMessage(MessageCodes.SERVICE_UPDATED, 'Service updated successfully')
   @ApiOperation({ summary: 'Update service (ADMIN only)' })
   @ApiParam({ name: 'id', description: 'Service UUID' })
   @ApiResponse({ status: 200, description: 'Service updated successfully' })
@@ -136,6 +152,7 @@ export class AdminServicesController {
    */
   @Delete('services/:id')
   @HttpCode(HttpStatus.OK)
+  @ResponseMessage(MessageCodes.SERVICE_DELETED, 'Service deleted successfully')
   @ApiOperation({
     summary: 'Soft-delete a service (ADMIN only)',
     description: 'Sets isActive=false. Blocked if service has active bookings.',
@@ -157,6 +174,10 @@ export class AdminServicesController {
    * Restore a soft-deleted service.
    */
   @Patch('services/:id/restore')
+  @ResponseMessage(
+    MessageCodes.SERVICE_RESTORED,
+    'Service restored successfully',
+  )
   @ApiOperation({ summary: 'Restore a deleted service (ADMIN only)' })
   @ApiParam({ name: 'id', description: 'Service UUID' })
   @ApiResponse({ status: 200, description: 'Service restored successfully' })

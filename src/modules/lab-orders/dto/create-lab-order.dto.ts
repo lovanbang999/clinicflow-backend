@@ -33,4 +33,13 @@ export class CreateLabOrderDto {
   @IsString()
   @IsOptional()
   serviceId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Assign to a specific technician. If omitted, system auto-routes by technician specialization.',
+    example: 'uuid-technician-id',
+  })
+  @IsString()
+  @IsOptional()
+  assignedTechnicianId?: string;
 }

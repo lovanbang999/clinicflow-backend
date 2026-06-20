@@ -8,7 +8,6 @@ import {
   IBookingRepository,
 } from '../../database/interfaces/booking.repository.interface';
 import { BookingStatus, Prisma } from '@prisma/client';
-import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { ApiException } from '../../../common/exceptions/api.exception';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
 import { AdminCreateServiceDto } from './dto/admin-create-service.dto';
@@ -64,18 +63,13 @@ export class AdminServicesService {
       }
     }
 
-    return ResponseHelper.success(
-      {
-        totalServices,
-        activeServices,
-        inactiveServices: totalServices - activeServices,
-        newThisMonth,
-        mostBooked,
-      },
-      'ADMIN.SERVICES.STATISTICS',
-      'Service statistics retrieved successfully',
-      200,
-    );
+    return {
+      totalServices,
+      activeServices,
+      inactiveServices: totalServices - activeServices,
+      newThisMonth,
+      mostBooked,
+    };
   }
 
   /**
@@ -113,20 +107,15 @@ export class AdminServicesService {
       this.catalogRepository.countServices({ where }),
     ]);
 
-    return ResponseHelper.success(
-      {
-        services,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit),
-        },
+    return {
+      services,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      'ADMIN.SERVICES.LIST',
-      'Services retrieved successfully',
-      200,
-    );
+    };
   }
 
   /**
@@ -158,23 +147,18 @@ export class AdminServicesService {
         }),
       ]);
 
-    return ResponseHelper.success(
-      {
-        ...service,
-        stats: {
-          totalBookings,
-          completedBookings,
-          cancelledBookings,
-          completionRate:
-            totalBookings > 0
-              ? Math.round((completedBookings / totalBookings) * 100)
-              : 0,
-        },
+    return {
+      ...service,
+      stats: {
+        totalBookings,
+        completedBookings,
+        cancelledBookings,
+        completionRate:
+          totalBookings > 0
+            ? Math.round((completedBookings / totalBookings) * 100)
+            : 0,
       },
-      'ADMIN.SERVICES.DETAIL',
-      'Service retrieved successfully',
-      200,
-    );
+    };
   }
 
   /**
@@ -209,12 +193,7 @@ export class AdminServicesService {
       tags: dto.tags ?? [],
     });
 
-    return ResponseHelper.success(
-      service,
-      'ADMIN.SERVICES.CREATED',
-      'Service created successfully',
-      201,
-    );
+    return service;
   }
 
   /**
@@ -270,12 +249,7 @@ export class AdminServicesService {
       ...(dto.tags !== undefined && { tags: dto.tags }),
     });
 
-    return ResponseHelper.success(
-      updated,
-      'ADMIN.SERVICES.UPDATED',
-      'Service updated successfully',
-      200,
-    );
+    return updated;
   }
 
   /**
@@ -310,12 +284,7 @@ export class AdminServicesService {
       isActive: false,
     });
 
-    return ResponseHelper.success(
-      deleted,
-      'ADMIN.SERVICES.DELETED',
-      'Service deleted successfully',
-      200,
-    );
+    return deleted;
   }
 
   /**
@@ -341,11 +310,6 @@ export class AdminServicesService {
       isActive: true,
     });
 
-    return ResponseHelper.success(
-      restored,
-      'ADMIN.SERVICES.RESTORED',
-      'Service restored successfully',
-      200,
-    );
+    return restored;
   }
 }

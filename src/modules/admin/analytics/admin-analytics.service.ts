@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
-import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 import { UserRole, BookingStatus } from '@prisma/client';
 import { DateRangeQueryDto } from './dto/date-range.query.dto';
 import { GetRevenueChartQueryDto } from './dto/get-revenue-chart.query.dto';
@@ -65,12 +64,18 @@ export class AdminAnalyticsService {
       lte: filterLte,
     });
 
+    type InvoiceGroupByTypeRow = {
+      invoiceType: string;
+      _sum: { totalAmount?: number | null };
+    };
+
     const [
       totalPatients,
       totalDoctors,
       totalBookings,
       periodPatients,
       comparisonPatients,
+      revenueByTypeRaw,
     ] = await Promise.all([
       this.profileRepository.countPatientProfile({}),
       this.userRepository.count({
@@ -92,7 +97,28 @@ export class AdminAnalyticsService {
             },
           })
         : Promise.resolve(0),
+      this.financeRepository.groupByInvoice({
+        by: ['invoiceType'],
+        where: {
+          status: 'PAID',
+          paidAt: { gte: filterGte || startOfMonth, lte: filterLte },
+        },
+        _sum: { totalAmount: true },
+      }) as Promise<InvoiceGroupByTypeRow[]>,
     ]);
+
+    const revenueByType = {
+      CONSULTATION: 0,
+      SERVICE: 0,
+      PHARMACY: 0,
+    };
+    for (const r of revenueByTypeRaw) {
+      if (r.invoiceType in revenueByType) {
+        revenueByType[
+          r.invoiceType as 'CONSULTATION' | 'SERVICE' | 'PHARMACY'
+        ] = Number(r._sum?.totalAmount ?? 0);
+      }
+    }
 
     const allPaid = await this.fetchPaidInvoices({});
     const totalRevenue = allPaid.reduce(
@@ -146,26 +172,22 @@ export class AdminAnalyticsService {
           : 0;
     }
 
-    return ResponseHelper.success(
-      {
-        totalUsers: totalPatients,
-        totalDoctors,
-        totalBookings,
-        totalRevenue,
-        trends: {
-          newPatientsThisMonth: periodPatients,
-          newPatientsLastMonth: comparisonPatients,
-          newBookingsThisMonth: periodBookings,
-          newBookingsLastMonth: from ? 0 : lastMonthBookings,
-          currentMonthRevenue: periodRevenue,
-          lastMonthRevenue,
-          revenueGrowthPct,
-        },
+    return {
+      totalUsers: totalPatients,
+      totalDoctors,
+      totalBookings,
+      totalRevenue,
+      revenueByType,
+      trends: {
+        newPatientsThisMonth: periodPatients,
+        newPatientsLastMonth: comparisonPatients,
+        newBookingsThisMonth: periodBookings,
+        newBookingsLastMonth: from ? 0 : lastMonthBookings,
+        currentMonthRevenue: periodRevenue,
+        lastMonthRevenue,
+        revenueGrowthPct,
       },
-      'ADMIN.ANALYTICS.OVERVIEW',
-      'Analytics overview retrieved successfully',
-      200,
-    );
+    };
   }
 
   async getTopDoctors(limit: number = 5, dateRange?: DateRangeQueryDto) {
@@ -252,12 +274,7 @@ export class AdminAnalyticsService {
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, limit);
 
-    return ResponseHelper.success(
-      { topDoctors },
-      'ADMIN.ANALYTICS.TOP_DOCTORS',
-      'Top doctors retrieved successfully',
-      200,
-    );
+    return { topDoctors };
   }
 
   async getRevenueChart(query: GetRevenueChartQueryDto) {
@@ -351,12 +368,7 @@ export class AdminAnalyticsService {
       }),
     );
 
-    return ResponseHelper.success(
-      { period, months: isDaily ? undefined : months, chart },
-      'ADMIN.ANALYTICS.REVENUE_CHART',
-      'Revenue chart data retrieved successfully',
-      200,
-    );
+    return { period, months: isDaily ? undefined : months, chart };
   }
 
   async getBookingOverview(query?: DateRangeQueryDto) {
@@ -395,21 +407,16 @@ export class AdminAnalyticsService {
         }),
       ]);
 
-    return ResponseHelper.success(
-      {
-        total,
-        completed,
-        upcoming,
-        cancelled,
-        inProgress,
-        completedPct: total > 0 ? Math.round((completed / total) * 100) : 0,
-        upcomingPct: total > 0 ? Math.round((upcoming / total) * 100) : 0,
-        cancelledPct: total > 0 ? Math.round((cancelled / total) * 100) : 0,
-      },
-      'ADMIN.ANALYTICS.BOOKING_OVERVIEW',
-      'Booking overview retrieved successfully',
-      200,
-    );
+    return {
+      total,
+      completed,
+      upcoming,
+      cancelled,
+      inProgress,
+      completedPct: total > 0 ? Math.round((completed / total) * 100) : 0,
+      upcomingPct: total > 0 ? Math.round((upcoming / total) * 100) : 0,
+      cancelledPct: total > 0 ? Math.round((cancelled / total) * 100) : 0,
+    };
   }
 
   async getTopServices(limit: number = 5, query?: DateRangeQueryDto) {
@@ -468,11 +475,101 @@ export class AdminAnalyticsService {
       .sort((a, b) => b.estimatedRevenue - a.estimatedRevenue)
       .slice(0, limit);
 
-    return ResponseHelper.success(
-      { topServices },
-      'ADMIN.ANALYTICS.TOP_SERVICES',
-      'Top services retrieved successfully',
-      200,
+    return { topServices };
+  }
+
+  async getRevenueReport(query: DateRangeQueryDto) {
+    const { from, to } = query;
+    const filterGte = from ? new Date(from) : undefined;
+    const filterLte = to ? new Date(to) : undefined;
+
+    const invoices = await this.financeRepository.findManyInvoice({
+      where: {
+        status: 'PAID',
+        ...(filterGte || filterLte
+          ? { paidAt: { gte: filterGte, lte: filterLte } }
+          : {}),
+      },
+      include: {
+        booking: {
+          select: {
+            patientProfile: {
+              select: {
+                fullName: true,
+                patientCode: true,
+              },
+            },
+            doctor: {
+              select: {
+                fullName: true,
+              },
+            },
+          },
+        },
+        payments: {
+          select: {
+            paymentMethod: true,
+          },
+        },
+      },
+      orderBy: { paidAt: 'desc' },
+    });
+
+    const totalRevenue = invoices.reduce(
+      (sum, inv) => sum + Number(inv.totalAmount),
+      0,
     );
+    const invoiceCount = invoices.length;
+    const averageOrderValue =
+      invoiceCount > 0 ? Math.round(totalRevenue / invoiceCount) : 0;
+
+    const revenueByType = {
+      CONSULTATION: 0,
+      SERVICE: 0,
+      PHARMACY: 0,
+    };
+
+    const paymentMethodCount = {
+      CASH: 0,
+      CARD: 0,
+      BANK_TRANSFER: 0,
+      INSURANCE: 0,
+    };
+
+    for (const inv of invoices) {
+      if (inv.invoiceType in revenueByType) {
+        revenueByType[
+          inv.invoiceType as 'CONSULTATION' | 'SERVICE' | 'PHARMACY'
+        ] += Number(inv.totalAmount);
+      }
+      for (const p of inv.payments) {
+        if (p.paymentMethod in paymentMethodCount) {
+          paymentMethodCount[
+            p.paymentMethod as 'CASH' | 'CARD' | 'BANK_TRANSFER' | 'INSURANCE'
+          ] += Number(inv.totalAmount);
+        }
+      }
+    }
+
+    return {
+      summary: {
+        totalRevenue,
+        invoiceCount,
+        averageOrderValue,
+        revenueByType,
+        paymentMethodRevenue: paymentMethodCount,
+      },
+      invoices: invoices.map((inv) => ({
+        id: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        invoiceType: inv.invoiceType,
+        totalAmount: Number(inv.totalAmount),
+        paidAt: inv.paidAt,
+        patientName: inv.booking?.patientProfile?.fullName ?? 'Khách vãng lai',
+        patientCode: inv.booking?.patientProfile?.patientCode ?? '—',
+        doctorName: inv.booking?.doctor?.fullName ?? '—',
+        paymentMethod: inv.payments[0]?.paymentMethod ?? 'CASH',
+      })),
+    };
   }
 }

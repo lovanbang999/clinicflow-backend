@@ -9,6 +9,15 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { User, UserRole, Prisma, DoctorProfile } from '@prisma/client';
 
+const USER_SORT_FIELDS = new Set([
+  'createdAt',
+  'updatedAt',
+  'fullName',
+  'email',
+  'role',
+  'isActive',
+]);
+
 @Injectable()
 export class PrismaUserRepository implements IUserRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -58,7 +67,13 @@ export class PrismaUserRepository implements IUserRepository {
   }
 
   async findById(id: string): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { id } });
+    return this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        patientProfile: true,
+        doctorProfile: true,
+      },
+    });
   }
 
   async findByIdWithProfile(id: string): Promise<Prisma.UserGetPayload<{
@@ -101,6 +116,8 @@ export class PrismaUserRepository implements IUserRepository {
     sortBy = 'createdAt',
     sortOrder: 'asc' | 'desc' = 'desc',
   ): Promise<[UserPaginationResult[], number]> {
+    const safeSortBy = USER_SORT_FIELDS.has(sortBy) ? sortBy : 'createdAt';
+
     const [users, total] = await Promise.all([
       this.prisma.user.findMany({
         where: filters,
@@ -133,7 +150,7 @@ export class PrismaUserRepository implements IUserRepository {
         },
         skip,
         take,
-        orderBy: { [sortBy]: sortOrder },
+        orderBy: { [safeSortBy]: sortOrder },
       }),
       this.prisma.user.count({ where: filters }),
     ]);
@@ -366,6 +383,10 @@ export class PrismaUserRepository implements IUserRepository {
     return this.prisma.user.update({
       where: { id },
       data,
+      include: {
+        patientProfile: true,
+        doctorProfile: true,
+      },
     });
   }
 

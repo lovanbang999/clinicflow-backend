@@ -4,7 +4,6 @@ import {
   I_SYSTEM_REPOSITORY,
 } from '../../database/interfaces/system.repository.interface';
 import { Inject } from '@nestjs/common';
-import { ResponseHelper } from '../../../common/interfaces/api-response.interface';
 
 @Injectable()
 export class AdminSettingsService {
@@ -87,12 +86,7 @@ export class AdminSettingsService {
       await Promise.all(operations);
     }
 
-    return ResponseHelper.success(
-      data,
-      `ADMIN.SETTINGS.${category.toUpperCase()}_UPDATED`,
-      `Settings for ${category} updated successfully`,
-      200,
-    );
+    return data;
   }
 
   /**
@@ -106,11 +100,6 @@ export class AdminSettingsService {
       results[cat.toLowerCase()] = await this.getSettingsByCategory(cat);
     }
 
-    return ResponseHelper.success(
-      results,
-      'ADMIN.SETTINGS.ALL_RETRIEVED',
-      'All system settings retrieved successfully',
-      200,
-    );
+    return results;
   }
 }

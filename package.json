@@ -38,6 +38,7 @@
     "@nestjs/schedule": "^6.1.1",
     "@nestjs/serve-static": "^5.0.4",
     "@nestjs/swagger": "^11.2.3",
+    "@nestjs/throttler": "^6.5.0",
     "@nestjs/websockets": "^11.1.17",
     "@prisma/adapter-mariadb": "^7.7.0",
     "@prisma/client": "^7.2.0",
@@ -48,6 +49,8 @@
     "date-fns": "^4.1.0",
     "exceljs": "^4.4.0",
     "handlebars": "^4.7.8",
+    "helmet": "^8.1.0",
+    "ioredis": "^5.4.1",
     "mariadb": "^3.5.2",
     "multer": "^2.0.2",
     "nodemailer": "^7.0.12",
@@ -55,6 +58,7 @@
     "passport-jwt": "^4.0.1",
     "pg": "^8.16.3",
     "reflect-metadata": "^0.2.2",
+    "resend": "^6.14.0",
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.3",
     "streamifier": "^0.1.1",
@@ -107,6 +111,9 @@
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "moduleNameMapper": {
+      "^src/(.*)$": "<rootDir>/$1"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"

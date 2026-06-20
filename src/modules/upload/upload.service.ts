@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Inject,
+  Logger,
+} from '@nestjs/common';
 import { extname } from 'path';
 import { promises as fs } from 'fs';
 import * as streamifier from 'streamifier';
@@ -21,12 +26,15 @@ export class UploadService {
     '.svg',
     '.webp',
     '.pdf',
+    '.docx',
   ];
-  private readonly maxFileSize = 10 * 1024 * 1024; // 10MB cho PDF, hình ảnh xét nghiệm
+  private readonly maxFileSize = 5 * 1024 * 1024; // 5MB limit as per checklist
 
   constructor(
     @Inject(CLOUDINARY) private readonly cloudinary: typeof CloudinaryType,
   ) {}
+
+  private readonly logger = new Logger(UploadService.name);
 
   async uploadIcon(
     file: Express.Multer.File | undefined,
@@ -53,7 +61,10 @@ export class UploadService {
       });
     } catch (e) {
       // ignore if already deleted / not found
-      console.log('Cloudinary delete failed:', publicId, e);
+      this.logger.warn(
+        `Cloudinary delete failed for publicId: ${publicId}`,
+        e instanceof Error ? e.message : String(e),
+      );
     }
   }
 
@@ -77,12 +88,13 @@ export class UploadService {
     this.validateFile(file);
     if (!file) throw new BadRequestException('No file provided');
 
-    // Chú ý với pdf trên Cloudinary, ta có thể phải dùng resource_type: 'auto' hoặc 'raw' tuỳ cấu hình tài khoản,
-    // uploadBufferToCloudinary hiện đang hardcode `resource_type: 'image'`.
+    // For pdf or docx, use resource_type 'auto' or 'raw'
     return this.uploadBufferToCloudinary(
       file,
       'smart-clinic/lab-results',
-      file.mimetype === 'application/pdf' ? 'auto' : 'image',
+      file.mimetype.includes('pdf') || file.mimetype.includes('word')
+        ? 'auto'
+        : 'image',
     );
   }
 
@@ -96,7 +108,10 @@ export class UploadService {
       });
     } catch (e) {
       // ignore if already deleted / not found
-      console.log('Cloudinary delete failed:', publicId, e);
+      this.logger.warn(
+        `Cloudinary delete failed for publicId: ${publicId}`,
+        e instanceof Error ? e.message : String(e),
+      );
     }
   }
 
@@ -144,6 +159,14 @@ export class UploadService {
       throw new BadRequestException('No file provided');
     }
 
+    // Sanitize filename
+    if (file.originalname) {
+      // Keep only alphanumeric, dots, hyphens and underscores
+      file.originalname = file.originalname
+        .trim()
+        .replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    }
+
     // Check file size
     if (file.size > this.maxFileSize) {
       throw new BadRequestException('File size exceeds 5MB limit');
@@ -165,6 +188,7 @@ export class UploadService {
       'image/svg+xml',
       'image/webp',
       'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     ];
     if (!validMimeTypes.includes(file.mimetype)) {
       throw new BadRequestException('Invalid file MIME type');

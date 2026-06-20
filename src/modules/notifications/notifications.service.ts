@@ -251,8 +251,8 @@ export class NotificationsService {
       const isQueued = data.status === 'QUEUED' || !data.startTime;
 
       const subject = isPending
-        ? '📅 Lịch hẹn mới đang được xử lý - Smart Clinic'
-        : '✅ Xác nhận lịch hẹn thành công - Smart Clinic';
+        ? 'Lịch hẹn mới đang được xử lý - Smart Clinic'
+        : 'Xác nhận lịch hẹn thành công - Smart Clinic';
 
       const html = this.compile('booking-confirmation', {
         ...data,
@@ -289,7 +289,7 @@ export class NotificationsService {
    */
   async sendQueuePromotion(data: BookingEmailData): Promise<void> {
     try {
-      const subject = '🎉 Lịch hẹn của bạn đã được xác nhận! - Smart Clinic';
+      const subject = 'Lịch hẹn của bạn đã được xác nhận - Smart Clinic';
       const frontendUrl = this.configService.get<string>('FRONTEND_URL');
       const myBookingsUrl = `${frontendUrl}/patient/bookings`;
 
@@ -323,7 +323,7 @@ export class NotificationsService {
    */
   async sendBookingCancellation(data: BookingEmailData): Promise<void> {
     try {
-      const subject = '❌ Thông báo hủy lịch hẹn - Smart Clinic';
+      const subject = 'Thông báo hủy lịch hẹn - Smart Clinic';
       const frontendUrl = this.configService.get<string>('FRONTEND_URL');
       const rebookUrl = `${frontendUrl}/booking`;
 
@@ -359,8 +359,7 @@ export class NotificationsService {
    */
   async sendBookingReminder(data: BookingEmailData): Promise<void> {
     try {
-      const subject =
-        '⏰ Nhắc hẹn: Lịch khám của bạn vào ngày mai - Smart Clinic';
+      const subject = 'Nhắc hẹn: Lịch khám của bạn vào ngày mai - Smart Clinic';
 
       const html = this.compile('booking-reminder', {
         ...data,
@@ -392,8 +391,8 @@ export class NotificationsService {
   async sendPostVisitEmail(data: BookingEmailData): Promise<void> {
     try {
       const subject = data.hasPrescription
-        ? '💊 Đơn thuốc của bạn đã sẵn sàng - Smart Clinic'
-        : '✅ Hoàn tất buổi thăm khám - Smart Clinic';
+        ? 'Đơn thuốc của bạn đã sẵn sàng - Smart Clinic'
+        : 'Hoàn tất buổi thăm khám - Smart Clinic';
 
       const html = this.compile('post-visit', {
         ...data,
@@ -439,7 +438,7 @@ export class NotificationsService {
     invoiceUrl: string;
   }): Promise<void> {
     try {
-      const subject = `🧾 Hóa đơn thanh toán ${data.invoiceNumber} - Smart Clinic`;
+      const subject = `Hóa đơn thanh toán ${data.invoiceNumber} - Smart Clinic`;
 
       const html = this.compile('invoice', {
         ...data,

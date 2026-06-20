@@ -11,9 +11,10 @@ import {
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { Prisma } from '@prisma/client';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
+
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
+import { RedisService } from '../database/services/redis.service';
 
 @Injectable()
 export class ServicesService {
@@ -23,7 +24,14 @@ export class ServicesService {
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
     private readonly uploadService: UploadService,
+    private readonly redisService: RedisService,
   ) {}
+
+  private async clearServicesCache() {
+    if (this.redisService.isReady()) {
+      await this.redisService.delPattern('cache:services:list:*');
+    }
+  }
 
   /**
    * Create a new service
@@ -87,12 +95,10 @@ export class ServicesService {
       tags: [],
     });
 
-    return ResponseHelper.success(
-      service,
-      MessageCodes.SERVICE_CREATED,
-      'Service created successfully',
-      201,
-    );
+    // Evict cache
+    await this.clearServicesCache();
+
+    return service;
   }
 
   /**
@@ -105,6 +111,29 @@ export class ServicesService {
     categoryType?: 'EXAMINATION' | 'LAB';
     performedBy?: 'TECHNICIAN' | 'DOCTOR';
   }) {
+    const cacheKey = `cache:services:list:${JSON.stringify(filters || {})}`;
+
+    // Try to get from Redis cache first
+    if (this.redisService.isReady()) {
+      const cached = await this.redisService.getJson<
+        Prisma.ServiceGetPayload<{
+          include: {
+            category: true;
+            doctorServices: {
+              include: {
+                doctorProfile: {
+                  include: { user: { select: { id: true; fullName: true } } };
+                };
+              };
+            };
+          };
+        }>[]
+      >(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    }
+
     const where: Prisma.ServiceWhereInput = {};
 
     if (filters?.category && filters.category !== 'all') {
@@ -158,12 +187,12 @@ export class ServicesService {
       orderBy: { name: 'asc' },
     });
 
-    return ResponseHelper.success(
-      services,
-      MessageCodes.SERVICE_LIST_RETRIEVED,
-      'Services retrieved successfully',
-      200,
-    );
+    // Save to Redis cache (TTL: 12 hours = 43200 seconds)
+    if (this.redisService.isReady()) {
+      await this.redisService.setJson(cacheKey, services, 43200);
+    }
+
+    return services;
   }
 
   /**
@@ -181,12 +210,7 @@ export class ServicesService {
       );
     }
 
-    return ResponseHelper.success(
-      service,
-      MessageCodes.SERVICE_RETRIEVED,
-      'Service retrieved successfully',
-      200,
-    );
+    return service;
   }
 
   /**
@@ -272,12 +296,10 @@ export class ServicesService {
       updateServiceDto,
     );
 
-    return ResponseHelper.success(
-      updatedService,
-      MessageCodes.SERVICE_UPDATED,
-      'Service updated successfully',
-      200,
-    );
+    // Evict cache
+    await this.clearServicesCache();
+
+    return updatedService;
   }
 
   /**
@@ -321,12 +343,10 @@ export class ServicesService {
       isActive: false,
     });
 
-    return ResponseHelper.success(
-      deletedService,
-      MessageCodes.SERVICE_DELETED,
-      'Service deleted successfully',
-      200,
-    );
+    // Evict cache
+    await this.clearServicesCache();
+
+    return deletedService;
   }
 
   /**
@@ -352,12 +372,10 @@ export class ServicesService {
       isActive: true,
     });
 
-    return ResponseHelper.success(
-      restoredService,
-      MessageCodes.SERVICE_RESTORED,
-      'Service restored successfully',
-      200,
-    );
+    // Evict cache
+    await this.clearServicesCache();
+
+    return restoredService;
   }
 
   /**
@@ -382,25 +400,20 @@ export class ServicesService {
         this.bookingRepository.countBookingsByService(serviceId, ['CANCELLED']),
       ]);
 
-    return ResponseHelper.success(
-      {
-        service: {
-          id: service.id,
-          name: service.name,
-        },
-        statistics: {
-          totalBookings,
-          completedBookings,
-          cancelledBookings,
-          completionRate:
-            totalBookings > 0
-              ? Math.round((completedBookings / totalBookings) * 100)
-              : 0,
-        },
+    return {
+      service: {
+        id: service.id,
+        name: service.name,
       },
-      MessageCodes.SERVICE_STATISTICS_RETRIEVED,
-      'Service statistics retrieved successfully',
-      200,
-    );
+      statistics: {
+        totalBookings,
+        completedBookings,
+        cancelledBookings,
+        completionRate:
+          totalBookings > 0
+            ? Math.round((completedBookings / totalBookings) * 100)
+            : 0,
+      },
+    };
   }
 }

@@ -9,6 +9,7 @@ import {
   MaxLength,
   MinLength,
   Matches,
+  IsNumber,
 } from 'class-validator';
 import { UserRole, Gender } from '@prisma/client';
 
@@ -92,6 +93,15 @@ export class UpdateUserDto {
   isActive?: boolean;
 
   @ApiProperty({
+    description: 'Reason for locking/suspending the user',
+    example: 'Violated policies',
+    required: false,
+  })
+  @ValidateIf((o, v) => v !== undefined && v !== null)
+  @IsString()
+  lockReason?: string | null;
+
+  @ApiProperty({
     description: 'New password',
     example: 'NewPassword123!',
     required: false,
@@ -101,4 +111,49 @@ export class UpdateUserDto {
   @IsString()
   @MinLength(6, { message: 'Password must be at least 6 characters' })
   password?: string;
+
+  @ApiProperty({
+    description: 'Blood Type',
+    example: 'A',
+    required: false,
+  })
+  @ValidateIf((o, v) => v !== undefined && v !== null && v !== '')
+  @IsString()
+  bloodType?: string;
+
+  @ApiProperty({
+    description: 'Height in cm',
+    example: 175.5,
+    required: false,
+  })
+  @ValidateIf((o, v) => v !== undefined && v !== null)
+  @IsNumber()
+  heightCm?: number;
+
+  @ApiProperty({
+    description: 'Weight in kg',
+    example: 68.2,
+    required: false,
+  })
+  @ValidateIf((o, v) => v !== undefined && v !== null)
+  @IsNumber()
+  weightKg?: number;
+
+  @ApiProperty({
+    description: 'Allergies',
+    example: 'Seafood, Peanut',
+    required: false,
+  })
+  @ValidateIf((o, v) => v !== undefined && v !== null && v !== '')
+  @IsString()
+  allergies?: string;
+
+  @ApiProperty({
+    description: 'Chronic conditions',
+    example: 'Hypertension',
+    required: false,
+  })
+  @ValidateIf((o, v) => v !== undefined && v !== null && v !== '')
+  @IsString()
+  chronicConditions?: string;
 }

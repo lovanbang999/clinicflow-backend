@@ -8,6 +8,7 @@ import {
   IsString,
   Matches,
   IsBoolean,
+  IsOptional,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { DayOfWeek } from '@prisma/client';
@@ -26,6 +27,20 @@ export class BulkWorkingHoursItemDto {
   @IsString()
   @Matches(/^\d{2}:\d{2}$/, { message: 'endTime must be in HH:mm format' })
   endTime: string;
+
+  @ApiProperty({ example: '12:00', required: false })
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{2}:\d{2}$/, {
+    message: 'breakStartTime must be in HH:mm format',
+  })
+  breakStartTime?: string;
+
+  @ApiProperty({ example: '13:30', required: false })
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{2}:\d{2}$/, { message: 'breakEndTime must be in HH:mm format' })
+  breakEndTime?: string;
 
   @ApiProperty({
     description: 'If false, this day will be deleted',

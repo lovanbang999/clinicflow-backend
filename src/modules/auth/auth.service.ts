@@ -1,7 +1,13 @@
-import { Injectable, Inject, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  UnauthorizedException,
+  Logger,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
+import { randomInt, randomUUID } from 'crypto';
 import { MailService } from '../notifications/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RegisterDto } from './dto/register.dto';
@@ -13,7 +19,6 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerificationType } from '@prisma/client';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import type { StringValue } from 'ms';
@@ -29,6 +34,7 @@ import {
   IVerificationRepository,
   I_VERIFICATION_REPOSITORY,
 } from '../database/interfaces/verification.repository.interface';
+import { RedisService } from '../database/services/redis.service';
 
 export interface TokenPair {
   accessToken: string;
@@ -39,6 +45,10 @@ interface JwtPayload {
   sub: string;
   email: string;
 }
+
+type DecodedJwtWithExp = {
+  exp?: number;
+};
 
 @Injectable()
 export class AuthService {
@@ -52,13 +62,16 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
     private readonly notificationsService: NotificationsService,
+    private readonly redisService: RedisService,
   ) {}
 
+  private readonly logger = new Logger(AuthService.name);
+
   /**
-   * Generate 6-digit OTP code
+   * Generate 6-digit OTP code using cryptographically secure random number generator
    */
   private generateOtpCode(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    return randomInt(100000, 1000000).toString();
   }
 
   /**
@@ -68,23 +81,255 @@ export class AuthService {
     userId: string,
     type: VerificationType,
   ): Promise<string> {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const cooldownKey = `auth:otp:cooldown:${userId}:${type}`;
+    const dailyKey = `auth:otp:daily:${userId}:${type}:${todayStr}`;
+    const otpKey = `auth:otp:${userId}:${type}`;
+
+    // 1. Check Cooldown & Daily Limit via Redis if ready
+    if (this.redisService.isReady()) {
+      const hasCooldown = await this.redisService.get(cooldownKey);
+      if (hasCooldown) {
+        throw new ApiException(
+          'AUTH.OTP.COOLDOWN',
+          'Vui lòng đợi 60 giây trước khi yêu cầu mã OTP mới.',
+          429,
+          'Rate limit exceeded',
+        );
+      }
+
+      const dailyCountStr = await this.redisService.get(dailyKey);
+      const dailyCount = dailyCountStr ? parseInt(dailyCountStr, 10) : 0;
+      if (dailyCount >= 5) {
+        throw new ApiException(
+          'AUTH.OTP.DAILY_LIMIT',
+          'Bạn đã vượt quá số lần yêu cầu OTP trong ngày (tối đa 5 lần).',
+          429,
+          'Daily limit exceeded',
+        );
+      }
+    } else {
+      // Postgres Fallback if Redis is down
+      const latestCode = await this.verificationRepository.findLatestCode(
+        userId,
+        type,
+      );
+      if (latestCode) {
+        const timeSinceLastCode = Date.now() - latestCode.createdAt.getTime();
+        if (timeSinceLastCode < 60000) {
+          throw new ApiException(
+            'AUTH.OTP.COOLDOWN',
+            'Vui lòng đợi 60 giây trước khi yêu cầu mã OTP mới.',
+            429,
+            'Rate limit exceeded',
+          );
+        }
+      }
+
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const countToday = await this.verificationRepository.countCodesSince(
+        userId,
+        type,
+        startOfDay,
+      );
+      if (countToday >= 5) {
+        throw new ApiException(
+          'AUTH.OTP.DAILY_LIMIT',
+          'Bạn đã vượt quá số lần yêu cầu OTP trong ngày (tối đa 5 lần).',
+          429,
+          'Daily limit exceeded',
+        );
+      }
+    }
+
+    // 2. Generate and store OTP in DB
     const code = this.generateOtpCode();
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + 15); // Expires in 15 minutes
 
-    await this.verificationRepository.create({
+    const dbRecord = await this.verificationRepository.create({
       userId,
       code,
       type,
       expiresAt,
     });
 
+    // 3. Cache OTP and update rate limits in Redis if ready
+    if (this.redisService.isReady()) {
+      // Cache the OTP structure
+      await this.redisService.setJson(
+        otpKey,
+        {
+          id: dbRecord.id,
+          code,
+          attempts: 0,
+          expiresAt: expiresAt.getTime(),
+          isUsed: false,
+        },
+        900,
+      ); // 15 mins TTL
+
+      // Set cooldown (60s)
+      await this.redisService.set(cooldownKey, '1', 60);
+
+      // Increment daily counter (24h TTL)
+      const currentDaily = await this.redisService.incr(dailyKey);
+      if (currentDaily === 1) {
+        await this.redisService.expire(dailyKey, 86400); // Set 24h TTL on new counter
+      }
+    }
+
     return code;
+  }
+
+  /**
+   * Get or Fetch OTP Code from Redis or Postgres
+   */
+  private async getOrFetchOtpCode(
+    userId: string,
+    type: VerificationType,
+  ): Promise<{
+    id: string;
+    code: string;
+    attempts: number;
+    expiresAt: Date;
+    isUsed: boolean;
+    isFromCache: boolean;
+  } | null> {
+    const otpKey = `auth:otp:${userId}:${type}`;
+
+    if (this.redisService.isReady()) {
+      interface OtpCacheEntry {
+        id: string;
+        code: string;
+        attempts: number;
+        expiresAt: number;
+        isUsed: boolean;
+      }
+      const cached = await this.redisService.getJson<OtpCacheEntry>(otpKey);
+      if (cached) {
+        return {
+          id: cached.id,
+          code: cached.code,
+          attempts: cached.attempts,
+          expiresAt: new Date(cached.expiresAt),
+          isUsed: cached.isUsed,
+          isFromCache: true,
+        };
+      }
+    }
+
+    const latestCode = await this.verificationRepository.findLatestCode(
+      userId,
+      type,
+    );
+    if (!latestCode) {
+      return null;
+    }
+
+    return {
+      id: latestCode.id,
+      code: latestCode.code,
+      attempts: latestCode.attempts,
+      expiresAt: latestCode.expiresAt,
+      isUsed: latestCode.isUsed,
+      isFromCache: false,
+    };
+  }
+
+  /**
+   * Handle invalid OTP attempts with auto-blocking in both Redis and DB
+   */
+  private async handleInvalidAttempt(
+    userId: string,
+    type: VerificationType,
+    otp: { id: string; attempts: number; isFromCache: boolean },
+  ): Promise<number> {
+    const newAttempts = otp.attempts + 1;
+    const otpKey = `auth:otp:${userId}:${type}`;
+
+    // Always update attempts in DB first
+    await this.verificationRepository.updateAttempts(otp.id, newAttempts);
+
+    if (newAttempts >= 5) {
+      // Invalidate in DB
+      await this.verificationRepository.invalidateCode(otp.id);
+      // Invalidate in Redis
+      if (this.redisService.isReady()) {
+        await this.redisService.del(otpKey);
+      }
+      throw new ApiException(
+        'AUTH.OTP.BLOCKED',
+        'Mã OTP đã bị khóa do nhập sai quá 5 lần. Vui lòng yêu cầu gửi lại mã mới.',
+        400,
+        'Verification failed',
+      );
+    }
+
+    // Update attempts in Redis if it was from cache
+    if (otp.isFromCache && this.redisService.isReady()) {
+      interface OtpCacheEntry {
+        id: string;
+        code: string;
+        attempts: number;
+        expiresAt: number;
+        isUsed: boolean;
+      }
+      const cached = await this.redisService.getJson<OtpCacheEntry>(otpKey);
+      if (cached) {
+        const updated: OtpCacheEntry = { ...cached, attempts: newAttempts };
+        await this.redisService.setJson(otpKey, updated, 900);
+      }
+    }
+
+    return newAttempts;
+  }
+
+  /**
+   * Clean Redis cache when an OTP is consumed
+   */
+  private async markOtpAsUsed(
+    userId: string,
+    type: VerificationType,
+  ): Promise<void> {
+    const otpKey = `auth:otp:${userId}:${type}`;
+    if (this.redisService.isReady()) {
+      await this.redisService.del(otpKey);
+    }
   }
 
   /**
    * Generate access and refresh tokens
    */
+  private getTokenExpiresAt(token: string): Date {
+    const decoded = this.jwtService.decode<DecodedJwtWithExp | null>(token);
+
+    if (!decoded?.exp) {
+      throw new Error('JWT payload does not contain an expiration claim');
+    }
+
+    return new Date(decoded.exp * 1000);
+  }
+
+  private createRefreshTokenExpiredException(): ApiException {
+    return new ApiException(
+      MessageCodes.REFRESH_TOKEN_EXPIRED,
+      'Refresh token has expired',
+      401,
+      'Token refresh failed',
+    );
+  }
+
+  private createInvalidRefreshTokenException(): ApiException {
+    return new ApiException(
+      MessageCodes.INVALID_REFRESH_TOKEN,
+      'Invalid or expired refresh token',
+      401,
+      'Token refresh failed',
+    );
+  }
+
   private async generateTokenPair(
     userId: string,
     email: string,
@@ -100,8 +345,9 @@ export class AuthService {
       ) as StringValue,
     });
 
-    // Generate refresh token
-    const refreshToken = this.jwtService.sign(payload, {
+    // Generate refresh token with a unique JTI to prevent duplicate tokens on parallel logins
+    const refreshPayload = { ...payload, jti: randomUUID() };
+    const refreshToken = this.jwtService.sign(refreshPayload, {
       secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
       expiresIn: this.configService.get<string>(
         'JWT_REFRESH_EXPIRES_IN',
@@ -109,9 +355,7 @@ export class AuthService {
       ) as StringValue,
     });
 
-    // Calculate expiration date for refresh token (30 days)
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30);
+    const expiresAt = this.getTokenExpiresAt(refreshToken);
 
     // Store refresh token in database
     await this.tokenRepository.create({
@@ -145,7 +389,7 @@ export class AuthService {
     const hashedPassword = await this.hashPassword(password);
 
     // Create user with isActive = false
-    const patientCode = `PT-${Date.now().toString().slice(-6)}-${phone ? phone.slice(-4) : Math.floor(1000 + Math.random() * 9000)}`;
+    const patientCode = `PT-${Date.now().toString().slice(-6)}-${phone ? phone.slice(-4) : randomInt(1000, 9999)}`;
     const user = await this.userRepository.createRegisteredPatient(
       {
         email,
@@ -174,12 +418,7 @@ export class AuthService {
       metadata: { userId: user.id },
     });
 
-    return ResponseHelper.success(
-      { email },
-      MessageCodes.REGISTER_SUCCESS,
-      'Registration successful! Please check your email for verification code.',
-      201,
-    );
+    return { email };
   }
 
   /**
@@ -200,38 +439,60 @@ export class AuthService {
       );
     }
 
-    // Find verification code
-    const verificationCode =
-      await this.verificationRepository.findLatestValidCode(
-        user.id,
-        code,
-        VerificationType.EMAIL_VERIFICATION,
-      );
+    // Find latest verification code from Redis or Postgres fallback
+    const latestCode = await this.getOrFetchOtpCode(
+      user.id,
+      VerificationType.EMAIL_VERIFICATION,
+    );
 
-    if (!verificationCode) {
+    if (!latestCode) {
       throw new ApiException(
         MessageCodes.INVALID_OTP,
-        'Invalid verification code',
+        'Không tìm thấy mã OTP nào',
+        400,
+        'Verification failed',
+      );
+    }
+
+    if (latestCode.isUsed) {
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        'Mã OTP đã được sử dụng hoặc đã bị vô hiệu hóa',
         400,
         'Verification failed',
       );
     }
 
     // Check if code is expired
-    if (new Date() > verificationCode.expiresAt) {
+    if (new Date() > latestCode.expiresAt) {
       throw new ApiException(
         MessageCodes.OTP_EXPIRED,
-        'Verification code has expired',
+        'Mã OTP đã hết hạn',
         400,
         'Verification failed',
       );
     }
 
+    if (latestCode.code !== code) {
+      const newAttempts = await this.handleInvalidAttempt(
+        user.id,
+        VerificationType.EMAIL_VERIFICATION,
+        latestCode,
+      );
+
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        `Mã OTP không đúng. Bạn còn ${5 - newAttempts} lần thử.`,
+        400,
+        'Verification failed',
+      );
+    }
+
+    // Clear from Redis Cache
+    await this.markOtpAsUsed(user.id, VerificationType.EMAIL_VERIFICATION);
+
     // Mark code as used and activate user inside a transaction hidden in the repository
-    await this.userRepository.verifyEmailTransaction(
-      user.id,
-      verificationCode.id,
-    );
+    await this.userRepository.verifyEmailTransaction(user.id, latestCode.id);
 
     // Send welcome email
     await this.mailService.sendWelcomeEmail(email, user.fullName);
@@ -243,15 +504,10 @@ export class AuthService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password: _password, ...userWithoutPassword } = user;
 
-    return ResponseHelper.success(
-      {
-        user: { ...userWithoutPassword, isActive: true },
-        ...tokens,
-      },
-      MessageCodes.VERIFY_SUCCESS,
-      'Email verified successfully!',
-      200,
-    );
+    return {
+      user: { ...userWithoutPassword, isActive: true },
+      ...tokens,
+    };
   }
 
   /**
@@ -289,12 +545,7 @@ export class AuthService {
     // Send verification email
     await this.mailService.sendVerificationEmail(email, user.fullName, otpCode);
 
-    return ResponseHelper.success(
-      { email },
-      'AUTH.RESEND_OTP.SUCCESS',
-      'Verification code sent successfully!',
-      200,
-    );
+    return { email };
   }
 
   /**
@@ -307,12 +558,7 @@ export class AuthService {
 
     if (!user) {
       // Don't throw error to prevent email enumeration, just return success
-      return ResponseHelper.success(
-        { email },
-        'AUTH.FORGOT_PASSWORD.SUCCESS',
-        'If an account exists, a password reset OTP has been sent.',
-        200,
-      );
+      return { email };
     }
 
     // Generate password reset OTP code using the correct VerificationType
@@ -327,12 +573,7 @@ export class AuthService {
       otpCode,
     );
 
-    return ResponseHelper.success(
-      { email },
-      'AUTH.FORGOT_PASSWORD.SUCCESS',
-      'Password reset instructions sent successfully',
-      200,
-    );
+    return { email };
   }
 
   /**
@@ -353,37 +594,55 @@ export class AuthService {
       );
     }
 
-    const verificationCode =
-      await this.verificationRepository.findLatestValidCode(
-        user.id,
-        code,
-        VerificationType.PASSWORD_RESET,
-      );
+    const latestCode = await this.getOrFetchOtpCode(
+      user.id,
+      VerificationType.PASSWORD_RESET,
+    );
 
-    if (!verificationCode) {
+    if (!latestCode) {
       throw new ApiException(
         MessageCodes.INVALID_OTP,
-        'Invalid OTP code',
+        'Không tìm thấy mã OTP nào',
         400,
         'OTP verification failed',
       );
     }
 
-    if (new Date() > verificationCode.expiresAt) {
+    if (latestCode.isUsed) {
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        'Mã OTP đã được sử dụng hoặc đã bị vô hiệu hóa',
+        400,
+        'OTP verification failed',
+      );
+    }
+
+    // Check if code is expired
+    if (new Date() > latestCode.expiresAt) {
       throw new ApiException(
         MessageCodes.OTP_EXPIRED,
-        'OTP code has expired',
+        'Mã OTP đã hết hạn',
         400,
         'OTP verification failed',
       );
     }
 
-    return ResponseHelper.success(
-      { email },
-      MessageCodes.VERIFY_RESET_OTP_SUCCESS,
-      'OTP verified successfully. You can now reset your password.',
-      200,
-    );
+    if (latestCode.code !== code) {
+      const newAttempts = await this.handleInvalidAttempt(
+        user.id,
+        VerificationType.PASSWORD_RESET,
+        latestCode,
+      );
+
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        `Mã OTP không đúng. Bạn còn ${5 - newAttempts} lần thử.`,
+        400,
+        'OTP verification failed',
+      );
+    }
+
+    return { email };
   }
 
   /**
@@ -404,26 +663,48 @@ export class AuthService {
       );
     }
 
-    const verificationCode =
-      await this.verificationRepository.findLatestValidCode(
-        user.id,
-        code,
-        VerificationType.PASSWORD_RESET,
-      );
+    const latestCode = await this.getOrFetchOtpCode(
+      user.id,
+      VerificationType.PASSWORD_RESET,
+    );
 
-    if (!verificationCode) {
+    if (!latestCode) {
       throw new ApiException(
         MessageCodes.INVALID_OTP,
-        'Invalid OTP code',
+        'Không tìm thấy mã OTP nào',
         400,
         'Password reset failed',
       );
     }
 
-    if (new Date() > verificationCode.expiresAt) {
+    if (latestCode.isUsed) {
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        'Mã OTP đã được sử dụng hoặc đã bị vô hiệu hóa',
+        400,
+        'Password reset failed',
+      );
+    }
+
+    if (new Date() > latestCode.expiresAt) {
       throw new ApiException(
         MessageCodes.OTP_EXPIRED,
-        'OTP code has expired',
+        'Mã OTP đã hết hạn',
+        400,
+        'Password reset failed',
+      );
+    }
+
+    if (latestCode.code !== code) {
+      const newAttempts = await this.handleInvalidAttempt(
+        user.id,
+        VerificationType.PASSWORD_RESET,
+        latestCode,
+      );
+
+      throw new ApiException(
+        MessageCodes.INVALID_OTP,
+        `Mã OTP không đúng. Bạn còn ${5 - newAttempts} lần thử.`,
         400,
         'Password reset failed',
       );
@@ -431,19 +712,17 @@ export class AuthService {
 
     const hashedPassword = await this.hashPassword(newPassword);
 
+    // Clear from Redis Cache
+    await this.markOtpAsUsed(user.id, VerificationType.PASSWORD_RESET);
+
     // Mark code as used and update the password in one atomic transaction
     await this.userRepository.resetPasswordTransaction(
       user.id,
-      verificationCode.id,
+      latestCode.id,
       hashedPassword,
     );
 
-    return ResponseHelper.success(
-      { email },
-      MessageCodes.RESET_PASSWORD_SUCCESS,
-      'Password reset successfully. You can now log in with your new password.',
-      200,
-    );
+    return { email };
   }
 
   /**
@@ -505,15 +784,10 @@ export class AuthService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password: _password, ...userWithoutPassword } = user;
 
-    return ResponseHelper.success(
-      {
-        user: userWithoutPassword,
-        ...tokens,
-      },
-      MessageCodes.LOGIN_SUCCESS,
-      'Login successful!',
-      200,
-    );
+    return {
+      user: userWithoutPassword,
+      ...tokens,
+    };
   }
 
   /**
@@ -521,56 +795,40 @@ export class AuthService {
    */
   async refreshToken(refreshTokenDto: RefreshTokenDto) {
     const { refreshToken } = refreshTokenDto;
+    let payload: JwtPayload;
 
     try {
       // Verify refresh token
-      const payload = this.jwtService.verify<JwtPayload>(refreshToken, {
+      payload = this.jwtService.verify<JwtPayload>(refreshToken, {
         secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
       });
-
-      // Check if refresh token exists in database and not revoked
-      const storedToken =
-        await this.tokenRepository.findByTokenWithUser(refreshToken);
-
-      if (!storedToken || storedToken.isRevoked) {
-        throw new ApiException(
-          MessageCodes.INVALID_REFRESH_TOKEN,
-          'Invalid refresh token',
-          401,
-          'Token refresh failed',
-        );
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'TokenExpiredError') {
+        throw this.createRefreshTokenExpiredException();
       }
-
-      // Check if token is expired
-      if (new Date() > storedToken.expiresAt) {
-        throw new ApiException(
-          MessageCodes.REFRESH_TOKEN_EXPIRED,
-          'Refresh token has expired',
-          401,
-          'Token refresh failed',
-        );
-      }
-
-      // Generate new token pair
-      const tokens = await this.generateTokenPair(payload.sub, payload.email);
-
-      // Revoke old refresh token
-      await this.tokenRepository.revokeToken(refreshToken);
-
-      return ResponseHelper.success(
-        tokens,
-        MessageCodes.REFRESH_SUCCESS,
-        'Token refreshed successfully',
-        200,
-      );
-    } catch {
-      throw new ApiException(
-        MessageCodes.INVALID_REFRESH_TOKEN,
-        'Invalid or expired refresh token',
-        401,
-        'Token refresh failed',
-      );
+      throw this.createInvalidRefreshTokenException();
     }
+
+    // Check if refresh token exists in database and not revoked
+    const storedToken =
+      await this.tokenRepository.findByTokenWithUser(refreshToken);
+
+    if (!storedToken || storedToken.isRevoked) {
+      throw this.createInvalidRefreshTokenException();
+    }
+
+    // Check if token is expired
+    if (new Date() > storedToken.expiresAt) {
+      throw this.createRefreshTokenExpiredException();
+    }
+
+    // Generate new token pair
+    const tokens = await this.generateTokenPair(payload.sub, payload.email);
+
+    // Revoke old refresh token
+    await this.tokenRepository.revokeToken(refreshToken);
+
+    return tokens;
   }
 
   /**
@@ -579,12 +837,7 @@ export class AuthService {
   async logout(refreshToken: string) {
     await this.tokenRepository.revokeToken(refreshToken);
 
-    return ResponseHelper.success(
-      null,
-      MessageCodes.LOGOUT_SUCCESS,
-      'Logged out successfully',
-      200,
-    );
+    return null;
   }
 
   /**
@@ -605,17 +858,26 @@ export class AuthService {
   }
 
   /**
+   * Verify access token (used by websockets)
+   */
+  async verifyAccessToken(token: string): Promise<JwtPayload> {
+    try {
+      const payload = await this.jwtService.verifyAsync<JwtPayload>(token, {
+        secret: this.configService.getOrThrow<string>('JWT_SECRET'),
+      });
+      return payload;
+    } catch {
+      throw new UnauthorizedException('Invalid token');
+    }
+  }
+
+  /**
    * Get current user profile
    */
   async getProfile(userId: string) {
     const user = await this.validateUser(userId);
 
-    return ResponseHelper.success(
-      user,
-      MessageCodes.PROFILE_RETRIEVED,
-      'Profile retrieved successfully',
-      200,
-    );
+    return user;
   }
 
   /**

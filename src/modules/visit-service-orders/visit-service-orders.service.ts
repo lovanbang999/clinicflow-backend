@@ -8,6 +8,7 @@ import {
   Injectable,
   NotFoundException,
   Inject,
+  Logger,
 } from '@nestjs/common';
 import {
   Prisma,
@@ -16,12 +17,14 @@ import {
   ServiceOrderStatus,
   PerformerType,
 } from '@prisma/client';
-import { ResponseHelper } from '../../common/interfaces/api-response.interface';
+
 import { CompleteServiceOrderDto } from './dto/complete-service-order.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class VisitServiceOrdersService {
+  private readonly logger = new Logger(VisitServiceOrdersService.name);
+
   constructor(
     @Inject(I_CLINICAL_REPOSITORY)
     private readonly clinicalRepository: IClinicalRepository,
@@ -68,12 +71,7 @@ export class VisitServiceOrdersService {
       },
     });
 
-    return ResponseHelper.success(
-      orders,
-      'VSO.WORKLIST_FETCHED',
-      'Worklist fetched',
-      200,
-    );
+    return orders;
   }
 
   // KTV starts a service order
@@ -94,12 +92,11 @@ export class VisitServiceOrdersService {
       },
     });
 
-    return ResponseHelper.success(
-      updated,
-      'VSO.STARTED',
-      'Service order started',
-      200,
+    this.logger.log(
+      `Technician ${technicianId} started service order ${orderId} successfully`,
     );
+
+    return updated;
   }
 
   // KTV completes a service order + auto-advance MedicalRecord step
@@ -190,9 +187,9 @@ export class VisitServiceOrdersService {
                   },
                 })
                 .catch((err) =>
-                  console.error(
-                    'Failed to send notification for RESULTS_READY',
-                    err,
+                  this.logger.error(
+                    'Failed to send notification for RESULTS_READY:',
+                    err instanceof Error ? err.stack : String(err),
                   ),
                 );
             }
@@ -203,12 +200,11 @@ export class VisitServiceOrdersService {
       },
     );
 
-    return ResponseHelper.success(
-      updatedOrder,
-      'VSO.COMPLETED',
-      'Service order completed',
-      200,
+    this.logger.log(
+      `Technician ${technicianId} completed service order ${orderId} successfully`,
     );
+
+    return updatedOrder;
   }
 
   // Get detail of a single service order
@@ -230,6 +226,6 @@ export class VisitServiceOrdersService {
       },
     });
     if (!order) throw new NotFoundException('Service order not found');
-    return ResponseHelper.success(order, 'VSO.DETAIL_FETCHED', '', 200);
+    return order;
   }
 }
