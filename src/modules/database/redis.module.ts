@@ -43,10 +43,7 @@ export interface IRedisClient {
         const logger = new Logger('RedisModule');
         const host = configService.get<string>('REDIS_HOST', 'localhost');
         const port = configService.get<number>('REDIS_PORT', 6379);
-        const password = configService.get<string>(
-          'REDIS_PASSWORD',
-          'smartclinic_secure_pass',
-        );
+        const password = configService.get<string>('REDIS_PASSWORD');
         const db = configService.get<number>('REDIS_DB', 0);
 
         logger.log(
@@ -56,7 +53,6 @@ export interface IRedisClient {
         const options: RedisOptions = {
           host,
           port,
-          password,
           db,
           maxRetriesPerRequest: null,
           // Prevent standard start error crashes - retry indefinitely in background
@@ -64,6 +60,11 @@ export interface IRedisClient {
             return Math.min(times * 100, 3000);
           },
         };
+
+        if (password) {
+          options.password = password;
+        }
+
         const redis = new Redis(options);
 
         // CRITICAL: Prevent unhandled error event crashes in Node.js when Redis is offline!

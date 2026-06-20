@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { UsersService } from './users.service';
 import { SequenceService } from '../database/services/sequence.service';
 import { RedisService } from '../database/services/redis.service';
+import { MailService } from '../notifications/mail.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -36,6 +38,14 @@ describe('UsersService', () => {
             setJson: jest.fn(),
             delPattern: jest.fn(),
           },
+        },
+        {
+          provide: MailService,
+          useValue: {},
+        },
+        {
+          provide: PrismaService,
+          useValue: {},
         },
       ],
     }).compile();

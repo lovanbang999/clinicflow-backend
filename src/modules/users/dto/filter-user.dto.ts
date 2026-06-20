@@ -1,7 +1,27 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsEnum, IsString, IsBoolean } from 'class-validator';
-import { Transform } from 'class-transformer';
+import {
+  IsOptional,
+  IsEnum,
+  IsString,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  Min,
+  Max,
+} from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import { UserRole } from '@prisma/client';
+
+export const USER_SORT_FIELDS = [
+  'createdAt',
+  'updatedAt',
+  'fullName',
+  'email',
+  'role',
+  'isActive',
+] as const;
+
+export type UserSortField = (typeof USER_SORT_FIELDS)[number];
 
 export class FilterUserDto {
   @ApiProperty({
@@ -56,7 +76,12 @@ export class FilterUserDto {
     example: 1,
   })
   @IsOptional()
-  @Transform(({ value }) => parseInt(String(value), 10))
+  @Type(() => Number)
+  @Transform(({ value }) =>
+    value === undefined ? undefined : parseInt(String(value), 10),
+  )
+  @IsInt()
+  @Min(1)
   page?: number = 1;
 
   @ApiProperty({
@@ -66,17 +91,25 @@ export class FilterUserDto {
     example: 10,
   })
   @IsOptional()
-  @Transform(({ value }) => parseInt(String(value), 10))
+  @Type(() => Number)
+  @Transform(({ value }) =>
+    value === undefined ? undefined : parseInt(String(value), 10),
+  )
+  @IsInt()
+  @Min(1)
+  @Max(100)
   limit?: number = 10;
 
   @ApiProperty({
     description: 'Field to sort by',
     required: false,
+    enum: USER_SORT_FIELDS,
     example: 'fullName',
   })
   @IsOptional()
   @IsString()
-  sortBy?: string = 'createdAt';
+  @IsIn(USER_SORT_FIELDS)
+  sortBy?: UserSortField = 'createdAt';
 
   @ApiProperty({
     description: 'Sort order',
@@ -85,6 +118,6 @@ export class FilterUserDto {
     example: 'desc',
   })
   @IsOptional()
-  @IsEnum(['asc', 'desc'])
+  @IsIn(['asc', 'desc'])
   sortOrder?: 'asc' | 'desc' = 'desc';
 }

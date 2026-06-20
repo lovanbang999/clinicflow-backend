@@ -3,6 +3,7 @@ import { LabOrdersService } from './lab-orders.service';
 import { LabOrdersGateway } from './lab-orders.gateway';
 import { BillingService } from '../billing/billing.service';
 import { MedicalRecordsService } from '../medical-records/medical-records.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 describe('LabOrdersService', () => {
   let service: LabOrdersService;
@@ -33,6 +34,10 @@ describe('LabOrdersService', () => {
         },
         {
           provide: MedicalRecordsService,
+          useValue: {},
+        },
+        {
+          provide: PrismaService,
           useValue: {},
         },
       ],
