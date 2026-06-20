@@ -113,7 +113,7 @@
 | **Prisma** | 7.2.0 | ORM & database toolkit |
 | **Passport JWT** | 10.0.0 | Authentication strategy |
 | **class-validator** | 0.14.1 | DTO validation |
-| **Nodemailer** | 7.0.12 | Email service |
+| **Nodemailer / Resend** | 7.0.12 / 6.14.0 | Email service for development / production |
 | **Cloudinary** | 2.8.0 | Image upload & storage |
 | **Swagger/OpenAPI** | 8.0.7 | API documentation |
 | **Jest** | 29.7.0 | Testing framework |
@@ -183,12 +183,16 @@ JWT_EXPIRES_IN=7d
 JWT_REFRESH_SECRET=your_super_secret_refresh_key_change_this_too
 JWT_REFRESH_EXPIRES_IN=30d
 
-# Email Configuration (Gmail example)
+# Email Configuration (development: Nodemailer SMTP)
 MAIL_HOST=smtp.gmail.com
 MAIL_PORT=587
 MAIL_USER=youremail@gmail.com
 MAIL_PASSWORD=your_app_specific_password
 MAIL_FROM="Smart Clinic <youremail@gmail.com>"
+
+# Email Configuration (production: Resend)
+RESEND_API_KEY=re_your_resend_api_key
+RESEND_FROM="Smart Clinic <noreply@your-domain.com>"
 
 # Cloudinary (for image uploads)
 CLOUDINARY_CLOUD_NAME=your_cloud_name
@@ -209,11 +213,13 @@ CLOUDIARY_FOLDER=smart_clinic
 | `JWT_EXPIRES_IN` | Access token expiry | `7d` (7 days) |
 | `JWT_REFRESH_SECRET` | Secret for refresh tokens | Different strong random string |
 | `JWT_REFRESH_EXPIRES_IN` | Refresh token expiry | `30d` (30 days) |
-| `MAIL_HOST` | SMTP server hostname | `smtp.gmail.com` |
-| `MAIL_PORT` | SMTP server port | `587` (TLS) or `465` (SSL) |
-| `MAIL_USER` | Email account username | Your email address |
-| `MAIL_PASSWORD` | Email account password | App-specific password |
-| `MAIL_FROM` | Sender email with name | `"Clinic <email@example.com>"` |
+| `MAIL_HOST` | SMTP server hostname for development Nodemailer | `smtp.gmail.com` |
+| `MAIL_PORT` | SMTP server port for development Nodemailer | `587` (TLS) or `465` (SSL) |
+| `MAIL_USER` | SMTP username for development Nodemailer | Your email address |
+| `MAIL_PASSWORD` | SMTP password for development Nodemailer | App-specific password |
+| `MAIL_FROM` | Sender email with name; also used as Resend fallback if `RESEND_FROM` is empty | `"Clinic <email@example.com>"` |
+| `RESEND_API_KEY` | Resend API key used when `NODE_ENV=production` | `re_xxxxx` |
+| `RESEND_FROM` | Production sender for Resend; must be on a verified Resend domain | `"Clinic <noreply@example.com>"` |
 | `CLOUDINARY_CLOUD_NAME` | Cloudinary account name | From Cloudinary dashboard |
 | `CLOUDINARY_API_KEY` | Cloudinary API key | From Cloudinary dashboard |
 | `CLOUDINARY_API_SECRET` | Cloudinary API secret | From Cloudinary dashboard |
