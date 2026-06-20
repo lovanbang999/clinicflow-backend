@@ -569,6 +569,7 @@ export class UsersService {
     const {
       role,
       isActive,
+      isVerified,
       search,
       page = 1,
       limit = 10,
@@ -589,6 +590,10 @@ export class UsersService {
 
     if (typeof isActive === 'boolean') {
       where.isActive = isActive;
+    }
+
+    if (typeof isVerified === 'boolean') {
+      where.isVerified = isVerified;
     }
 
     if (search) {
