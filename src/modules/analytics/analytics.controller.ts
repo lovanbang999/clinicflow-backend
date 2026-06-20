@@ -170,7 +170,9 @@ export class AnalyticsController {
     MessageCodes.ANALYTICS_DOCTOR_WEEKLY_BOOKINGS_RETRIEVED,
     'Doctor weekly bookings trend retrieved successfully',
   )
-  @ApiOperation({ summary: 'Daily booking count in the current week for this doctor' })
+  @ApiOperation({
+    summary: 'Daily booking count in the current week for this doctor',
+  })
   getDoctorWeeklyBookings(@Req() req: { user: { id: string } }) {
     return this.analyticsService.getDoctorWeeklyBookings(req.user.id);
   }

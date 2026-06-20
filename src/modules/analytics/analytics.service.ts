@@ -334,7 +334,9 @@ export class AnalyticsService {
           )
         : 0;
     const deltaRevenue =
-      prevRevenue > 0 ? Math.round(((revenue - prevRevenue) / prevRevenue) * 100) : 0;
+      prevRevenue > 0
+        ? Math.round(((revenue - prevRevenue) / prevRevenue) * 100)
+        : 0;
 
     return {
       total,
