@@ -1,26 +1,65 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createTransport, Transporter } from 'nodemailer';
+import { Resend } from 'resend';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as Handlebars from 'handlebars';
 
+type MailProvider = 'nodemailer' | 'resend' | 'console';
+
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private transporter: Transporter;
+  private provider: MailProvider = 'console';
+  private transporter?: Transporter;
+  private resend?: Resend;
   private layoutTemplate: HandlebarsTemplateDelegate;
   private templates: Record<string, HandlebarsTemplateDelegate> = {};
 
   constructor(private configService: ConfigService) {
-    this.initializeTransporter();
+    this.initializeMailer();
     this.loadTemplates();
   }
 
   /**
-   * Initialize email transporter
+   * Initialize email provider based on runtime environment.
    */
-  private initializeTransporter() {
+  private initializeMailer() {
+    const nodeEnv =
+      this.configService.get<string>('NODE_ENV') || process.env.NODE_ENV;
+
+    if (nodeEnv === 'production') {
+      this.initializeResend();
+      return;
+    }
+
+    this.initializeNodemailer();
+  }
+
+  /**
+   * Initialize Resend for production.
+   */
+  private initializeResend() {
+    const resendApiKey = this.configService.get<string>('RESEND_API_KEY');
+
+    if (!resendApiKey) {
+      this.logger.warn(
+        'RESEND_API_KEY not found. Production emails will be logged to console only.',
+      );
+      this.provider = 'console';
+      return;
+    }
+
+    this.resend = new Resend(resendApiKey);
+    this.provider = 'resend';
+    this.logger.log('Resend email provider is ready to send emails');
+  }
+
+  /**
+   * Initialize Nodemailer for non-production environments.
+   */
+  private initializeNodemailer() {
     const mailHost = this.configService.get<string>('MAIL_HOST');
     const mailPort = this.configService.get<number>('MAIL_PORT');
     const mailUser = this.configService.get<string>('MAIL_USER');
@@ -29,8 +68,9 @@ export class MailService {
     // If email config is not set, use console logging only
     if (!mailHost || !mailUser || !mailPassword) {
       this.logger.warn(
-        'Email configuration not found. Emails will be logged to console only.',
+        'Nodemailer configuration not found. Emails will be logged to console only.',
       );
+      this.provider = 'console';
       return;
     }
 
@@ -46,6 +86,7 @@ export class MailService {
         rejectUnauthorized: false, // Prevents certificate chain validation failures in local/dev environments
       },
     });
+    this.provider = 'nodemailer';
 
     // Verify transporter configuration
     this.transporter.verify((error) => {
@@ -195,44 +236,93 @@ export class MailService {
     code?: string,
   ): Promise<void> {
     try {
-      // If transporter is not initialized, just log
-      if (!this.transporter) {
-        this.logger.log(`
-          ═══════════════════════════════════════
-          📧 EMAIL (Console Mode)
-          ═══════════════════════════════════════
-          To: ${to}
-          Subject: ${subject}
-          ${fullName ? `Name: ${fullName}` : ''}
-          ${code ? `OTP Code: ${code}` : ''}
-          ═══════════════════════════════════════
-        `);
+      if (this.provider === 'resend' && this.resend) {
+        await this.sendWithResend(to, subject, html);
         return;
       }
 
-      const mailFrom = this.configService.get<string>('MAIL_FROM');
+      if (this.provider === 'nodemailer' && this.transporter) {
+        await this.sendWithNodemailer(to, subject, html);
+        return;
+      }
 
-      await this.transporter.sendMail({
-        from: mailFrom,
-        to,
-        subject,
-        html,
-      });
-
-      this.logger.log(`Email sent successfully to ${to}`);
+      this.logEmailToConsole(to, subject, fullName, code, 'Console Mode');
     } catch (error) {
       this.logger.error('Failed to send email:', error);
       // Fallback to console logging
-      this.logger.log(`
-        ═══════════════════════════════════════
-        📧 EMAIL (Fallback Mode)
-        ═══════════════════════════════════════
-        To: ${to}
-        Subject: ${subject}
-        ${fullName ? `Name: ${fullName}` : ''}
-        ${code ? `OTP Code: ${code}` : ''}
-        ═══════════════════════════════════════
-      `);
+      this.logEmailToConsole(to, subject, fullName, code, 'Fallback Mode');
     }
+  }
+
+  private async sendWithResend(
+    to: string,
+    subject: string,
+    html: string,
+  ): Promise<void> {
+    const mailFrom = this.getMailFrom();
+
+    if (!mailFrom) {
+      throw new Error('RESEND_FROM or MAIL_FROM must be configured');
+    }
+
+    const { error } = await this.resend!.emails.send({
+      from: mailFrom,
+      to,
+      subject,
+      html,
+    });
+
+    if (error) {
+      throw new Error(error.message || 'Failed to send email via Resend');
+    }
+
+    this.logger.log(`Email sent successfully to ${to} via Resend`);
+  }
+
+  private async sendWithNodemailer(
+    to: string,
+    subject: string,
+    html: string,
+  ): Promise<void> {
+    const mailFrom = this.getMailFrom();
+
+    if (!mailFrom) {
+      throw new Error('MAIL_FROM must be configured');
+    }
+
+    await this.transporter!.sendMail({
+      from: mailFrom,
+      to,
+      subject,
+      html,
+    });
+
+    this.logger.log(`Email sent successfully to ${to} via Nodemailer`);
+  }
+
+  private getMailFrom(): string | undefined {
+    return (
+      this.configService.get<string>('RESEND_FROM') ||
+      this.configService.get<string>('MAIL_FROM')
+    );
+  }
+
+  private logEmailToConsole(
+    to: string,
+    subject: string,
+    fullName?: string,
+    code?: string,
+    mode = 'Console Mode',
+  ): void {
+    this.logger.log(`
+      ═══════════════════════════════════════
+      📧 EMAIL (${mode})
+      ═══════════════════════════════════════
+      To: ${to}
+      Subject: ${subject}
+      ${fullName ? `Name: ${fullName}` : ''}
+      ${code ? `OTP Code: ${code}` : ''}
+      ═══════════════════════════════════════
+    `);
   }
 }
