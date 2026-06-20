@@ -46,6 +46,10 @@ interface JwtPayload {
   email: string;
 }
 
+type DecodedJwtWithExp = {
+  exp?: number;
+};
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -298,6 +302,34 @@ export class AuthService {
   /**
    * Generate access and refresh tokens
    */
+  private getTokenExpiresAt(token: string): Date {
+    const decoded = this.jwtService.decode<DecodedJwtWithExp | null>(token);
+
+    if (!decoded?.exp) {
+      throw new Error('JWT payload does not contain an expiration claim');
+    }
+
+    return new Date(decoded.exp * 1000);
+  }
+
+  private createRefreshTokenExpiredException(): ApiException {
+    return new ApiException(
+      MessageCodes.REFRESH_TOKEN_EXPIRED,
+      'Refresh token has expired',
+      401,
+      'Token refresh failed',
+    );
+  }
+
+  private createInvalidRefreshTokenException(): ApiException {
+    return new ApiException(
+      MessageCodes.INVALID_REFRESH_TOKEN,
+      'Invalid or expired refresh token',
+      401,
+      'Token refresh failed',
+    );
+  }
+
   private async generateTokenPair(
     userId: string,
     email: string,
@@ -323,9 +355,7 @@ export class AuthService {
       ) as StringValue,
     });
 
-    // Calculate expiration date for refresh token (30 days)
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30);
+    const expiresAt = this.getTokenExpiresAt(refreshToken);
 
     // Store refresh token in database
     await this.tokenRepository.create({
@@ -765,51 +795,40 @@ export class AuthService {
    */
   async refreshToken(refreshTokenDto: RefreshTokenDto) {
     const { refreshToken } = refreshTokenDto;
+    let payload: JwtPayload;
 
     try {
       // Verify refresh token
-      const payload = this.jwtService.verify<JwtPayload>(refreshToken, {
+      payload = this.jwtService.verify<JwtPayload>(refreshToken, {
         secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
       });
-
-      // Check if refresh token exists in database and not revoked
-      const storedToken =
-        await this.tokenRepository.findByTokenWithUser(refreshToken);
-
-      if (!storedToken || storedToken.isRevoked) {
-        throw new ApiException(
-          MessageCodes.INVALID_REFRESH_TOKEN,
-          'Invalid refresh token',
-          401,
-          'Token refresh failed',
-        );
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'TokenExpiredError') {
+        throw this.createRefreshTokenExpiredException();
       }
-
-      // Check if token is expired
-      if (new Date() > storedToken.expiresAt) {
-        throw new ApiException(
-          MessageCodes.REFRESH_TOKEN_EXPIRED,
-          'Refresh token has expired',
-          401,
-          'Token refresh failed',
-        );
-      }
-
-      // Generate new token pair
-      const tokens = await this.generateTokenPair(payload.sub, payload.email);
-
-      // Revoke old refresh token
-      await this.tokenRepository.revokeToken(refreshToken);
-
-      return tokens;
-    } catch {
-      throw new ApiException(
-        MessageCodes.INVALID_REFRESH_TOKEN,
-        'Invalid or expired refresh token',
-        401,
-        'Token refresh failed',
-      );
+      throw this.createInvalidRefreshTokenException();
     }
+
+    // Check if refresh token exists in database and not revoked
+    const storedToken =
+      await this.tokenRepository.findByTokenWithUser(refreshToken);
+
+    if (!storedToken || storedToken.isRevoked) {
+      throw this.createInvalidRefreshTokenException();
+    }
+
+    // Check if token is expired
+    if (new Date() > storedToken.expiresAt) {
+      throw this.createRefreshTokenExpiredException();
+    }
+
+    // Generate new token pair
+    const tokens = await this.generateTokenPair(payload.sub, payload.email);
+
+    // Revoke old refresh token
+    await this.tokenRepository.revokeToken(refreshToken);
+
+    return tokens;
   }
 
   /**
