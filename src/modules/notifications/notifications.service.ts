@@ -191,10 +191,7 @@ export class NotificationsService {
    */
   private loadTemplates() {
     try {
-      const templatesDir = path.join(
-        process.cwd(),
-        'src/modules/notifications/templates',
-      );
+      const templatesDir = path.join(__dirname, 'templates');
 
       // Load layout
       const layoutPath = path.join(templatesDir, 'layout.hbs');

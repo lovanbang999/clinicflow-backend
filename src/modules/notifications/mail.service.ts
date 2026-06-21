@@ -103,11 +103,7 @@ export class MailService {
    */
   private loadTemplates() {
     try {
-      // Use process.cwd() or similar to ensure we find templates in different environments
-      const templatesDir = path.join(
-        process.cwd(),
-        'src/modules/notifications/templates',
-      );
+      const templatesDir = path.join(__dirname, 'templates');
 
       const layoutPath = path.join(templatesDir, 'layout.hbs');
       if (fs.existsSync(layoutPath)) {
