@@ -5,6 +5,7 @@ import {
   VisitServiceOrder,
   Prescription,
   Icd10Code,
+  Medicine,
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -170,6 +171,39 @@ export class PrismaClinicalRepository implements IClinicalRepository {
   // ICD10 Code
   findManyIcd10Code(args: Prisma.Icd10CodeFindManyArgs): Promise<Icd10Code[]> {
     return this.prisma.icd10Code.findMany(args);
+  }
+
+  // Medicine
+  countMedicine(args: Prisma.MedicineCountArgs): Promise<number> {
+    return this.prisma.medicine.count(args);
+  }
+
+  findManyMedicine<T extends Prisma.MedicineFindManyArgs>(
+    args?: Prisma.SelectSubset<T, Prisma.MedicineFindManyArgs>,
+  ): Promise<Prisma.MedicineGetPayload<T>[]> {
+    return this.prisma.medicine.findMany(args) as Promise<
+      Prisma.MedicineGetPayload<T>[]
+    >;
+  }
+
+  findUniqueMedicine<T extends Prisma.MedicineFindUniqueArgs>(
+    args: Prisma.SelectSubset<T, Prisma.MedicineFindUniqueArgs>,
+  ): Promise<Prisma.MedicineGetPayload<T> | null> {
+    return this.prisma.medicine.findUnique(
+      args,
+    ) as Promise<Prisma.MedicineGetPayload<T> | null>;
+  }
+
+  createMedicine(args: Prisma.MedicineCreateArgs): Promise<Medicine> {
+    return this.prisma.medicine.create(args);
+  }
+
+  updateMedicine(args: Prisma.MedicineUpdateArgs): Promise<Medicine> {
+    return this.prisma.medicine.update(args);
+  }
+
+  deleteMedicine(args: Prisma.MedicineDeleteArgs): Promise<Medicine> {
+    return this.prisma.medicine.delete(args);
   }
 
   transaction<T>(fn: (tx: TransactionClient) => Promise<T>): Promise<T> {
