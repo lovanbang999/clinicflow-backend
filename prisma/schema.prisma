@@ -588,20 +588,32 @@ model LabResult {
 }
 
 model Medicine {
-  id                String             @id @default(uuid())
-  code              String             @unique
-  genericName       String
-  brandName         String?
-  concentration     String?
-  dosageForm        String?
-  defaultUnit       String             @default("viên")
-  defaultPrice      Decimal            @default(0.00) @db.Decimal(12, 2)
-  isActive          Boolean            @default(true)
-  stockQuantity     Int                @default(0)
-  notes             String?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  prescriptionItems PrescriptionItem[]
+  id                 String             @id @default(uuid())
+  code               String             @unique
+  genericName        String
+  brandName          String?
+  concentration      String?
+  dosageForm         String?
+  defaultUnit        String             @default("viên")
+  defaultPrice       Decimal            @default(0.00) @db.Decimal(12, 2)
+  isActive           Boolean            @default(true)
+  stockQuantity      Int                @default(0)
+  notes              String?            @db.Text
+  registrationNumber String?            @map("registration_number")
+  ingredients        String?            @db.Text
+  sideEffects        String?            @db.Text @map("side_effects")
+  warnings           String?            @db.Text
+  manufacturerBrand  String?            @map("manufacturer_brand")
+  country            String?
+  imagePath          String?            @map("image_path")
+  imageUrl           String?            @db.VarChar(512) @map("image_url")
+  sourceUrl          String?            @db.VarChar(512) @map("source_url")
+  sourceSite         String?            @map("source_site")
+  usage              String?            @db.Text
+  uses               String?            @db.Text
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  prescriptionItems  PrescriptionItem[]
 
   @@index([genericName])
   @@index([code])

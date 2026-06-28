@@ -207,6 +207,18 @@ export class MedicalRecordsController {
     return this.medicalRecordsService.searchICD10(q || '');
   }
 
+  // Medicine Search
+  @Get('medicines')
+  @Roles(UserRole.DOCTOR, UserRole.ADMIN)
+  @ResponseMessage(
+    MessageCodes.MEDICINE_SEARCH_SUCCESS,
+    'Medicine search completed successfully',
+  )
+  @ApiOperation({ summary: 'Search medicines for autocomplete' })
+  searchMedicines(@Query('q') q: string) {
+    return this.medicalRecordsService.searchMedicines(q || '');
+  }
+
   // Patient History
   @Get('patient/:patientProfileId/history')
   @Roles(UserRole.DOCTOR, UserRole.ADMIN)

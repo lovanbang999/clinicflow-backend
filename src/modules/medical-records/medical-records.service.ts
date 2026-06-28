@@ -865,6 +865,28 @@ export class MedicalRecordsService {
     });
   }
 
+  // Medicine Search
+  async searchMedicines(query: string) {
+    if (!query) {
+      return this.clinicalRepository.findManyMedicine({
+        where: { isActive: true },
+        take: 10,
+        orderBy: { brandName: 'asc' },
+      });
+    }
+    return this.clinicalRepository.findManyMedicine({
+      where: {
+        isActive: true,
+        OR: [
+          { brandName: { contains: query } },
+          { genericName: { contains: query } },
+        ],
+      },
+      take: 20,
+      orderBy: { brandName: 'asc' },
+    });
+  }
+
   // Patient History
   async getPatientHistory(
     patientProfileId: string,
