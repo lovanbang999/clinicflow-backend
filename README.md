@@ -1,613 +1,309 @@
-# ClinicFlow Backend API
+# Đồ án: Hệ thống Quản lý Đặt lịch khám và Xếp hàng thông minh (SmartClinic) - Backend API
 
-<p align="center">
-  <strong>Smart Clinic Appointment & Queue Management System</strong>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/NestJS-11.0.1-E0234E?style=flat&logo=nestjs&logoColor=white" alt="NestJS" />
-  <img src="https://img.shields.io/badge/TypeScript-5.7.3-3178C6?style=flat&logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat&logo=postgresql&logoColor=white" alt="PostgreSQL" />
-  <img src="https://img.shields.io/badge/Prisma-7.2.0-2D3748?style=flat&logo=prisma&logoColor=white" alt="Prisma" />
-</p>
+Dự án này là phân hệ **Backend API** của hệ thống **SmartClinic** (Hệ thống Quản lý Đặt lịch khám và Xếp hàng thông minh). Hệ thống được thiết kế nhằm tối ưu hóa quy trình tiếp đón, đặt lịch và quản lý hàng đợi tại các phòng khám đa khoa, giúp giảm thiểu thời gian chờ đợi của bệnh nhân và nâng cao hiệu suất làm việc của đội ngũ y bác sĩ.
 
 ---
 
-## Table of Contents
-
-- [About](#about)
-- [Key Features](#key-features)
-- [Tech Stack](#tech-stack)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Environment Configuration](#environment-configuration)
-- [Database Setup](#database-setup)
-- [Running the Application](#running-the-application)
-- [API Documentation](#api-documentation)
-- [Project Structure](#project-structure)
-- [Authentication & Authorization](#authentication--authorization)
-- [Available Scripts](#available-scripts)
-- [Testing](#testing)
-- [Troubleshooting](#troubleshooting)
+## 📝 Mục lục
+- [1. Giới thiệu đề tài](#1-giới-thiệu-đề-tài)
+- [2. Kiến trúc & Công nghệ sử dụng](#2-kiến-trúc--công-nghệ-sử-dụng)
+- [3. Phân hệ chức năng cốt lõi](#3-phân-hệ-chức-năng-cốt-lõi)
+- [4. Cấu trúc thư mục dự án](#4-cấu-trúc-thư-mục-dự-án)
+- [5. Hướng dẫn cài đặt & Cấu hình](#5-hướng-dẫn-cài-đặt--cấu-hình)
+- [6. Khởi tạo Cơ sở dữ liệu](#6-khởi-tạo-cơ-sở-dữ-liệu)
+- [7. Hướng dẫn chạy ứng dụng](#7-hướng-dẫn-chạy-ứng-dụng)
+- [8. Danh sách tài khoản thử nghiệm](#8-danh-sách-tài-khoản-thử-nghiệm)
+- [9. Tài liệu API (Swagger UI)](#9-tài-liệu-api-swagger-ui)
+- [10. Quy trình nghiệp vụ chính](#10-quy-trình-nghiệp-vụ-chính)
 
 ---
 
-## About
+## 1. Giới thiệu đề tài
 
-**ClinicFlow Backend** is a RESTful API built with NestJS that powers a smart clinic appointment management system. It provides comprehensive features for managing doctor schedules, patient bookings, intelligent queue management, and role-based access control for clinics with multiple healthcare professionals.
+### Đặt vấn đề
+Quy trình khám chữa bệnh truyền thống thường gặp bất cập lớn trong việc xếp hàng chờ đợi và phân phối lịch khám của bác sĩ. Bệnh nhân mất nhiều thời gian chờ đợi tại phòng khám, trong khi bác sĩ có thể rơi vào tình trạng quá tải cục bộ ở một số khung giờ.
 
-**Target Users:**
-- **Patients** - Book appointments online 24/7
-- **Doctors** - Manage schedules and patient appointments
-- **Receptionists** - Handle check-ins and queue management
-- **Administrators** - Manage users, services, and system configuration
-
----
-
-## Key Features
-
-### Authentication & User Management
-- JWT-based authentication with access & refresh tokens
-- Email verification with OTP (15-minute expiry)
-- Role-based access control (PATIENT, DOCTOR, RECEPTIONIST, ADMIN)
-- User profile management with avatar upload
-- Doctor profiles with specialties, qualifications, and experience
-
-### Smart Scheduling
-- Flexible doctor working hours (weekly schedules)
-- Break time management (lunch breaks, meetings)
-- Off-day tracking (vacations, holidays)
-- Intelligent available slot calculation
-- Conflict detection and validation
-
-### Appointment Booking
-- Real-time booking with slot availability checking
-- 8-state booking workflow (PENDING → CONFIRMED → CHECKED_IN → IN_PROGRESS → COMPLETED)
-- Automatic cancellation handling
-- Booking history with status change tracking
-- Multi-criteria filtering (date, doctor, service, status)
-
-### Queue Management
-- Automatic queuing when time slots are full
-- Queue position tracking with estimated wait times
-- Auto-promotion when slots become available
-- Manual queue promotion by receptionists
-- Real-time queue statistics
-
-### Smart Suggestions
-- AI-powered time slot recommendations
-- Scoring algorithm based on:
-  - Slot availability
-  - Time preferences (morning/afternoon)
-  - Doctor workload optimization
-  - Historical booking patterns
-
-### Service Management
-- CRUD operations for clinic services
-- Service configuration (duration, price, capacity)
-- Icon upload for services (Cloudinary integration)
-- Service-doctor assignment
-
-### Notifications
-- Email notifications for:
-  - Account verification
-  - Booking confirmations
-  - Queue status updates
-  - Appointment reminders
-
-### File Upload
-- Cloudinary integration for image storage
-- User avatar upload
-- Service icon management
-- Multiple format support (JPEG, PNG, GIF, WebP)
+### Giải pháp của SmartClinic
+SmartClinic giải quyết triệt để các vấn đề trên thông qua:
+1. **Đặt lịch khám linh hoạt:** Cho phép bệnh nhân chọn dịch vụ, bác sĩ và khung giờ trực tuyến.
+2. **Đề xuất lịch khám thông minh (Smart Suggestions):** Thuật toán gợi ý khung giờ trống tối ưu dựa trên lịch làm việc của bác sĩ và tải lượng hiện tại của hệ thống.
+3. **Quản lý hàng đợi thời gian thực (Real-time Queue Management):** Hệ thống tự động phân loại, xếp số thứ tự, dự báo thời gian chờ và tự động thăng hạng (auto-promotion) khi có chỗ trống.
 
 ---
 
-## Tech Stack
+## 2. Kiến trúc & Công nghệ sử dụng
 
-| Technology | Version | Purpose |
-|------------|---------|----------|
-| **NestJS** | 11.0.1 | Backend framework |
-| **TypeScript** | 5.7.3 | Programming language |
-| **PostgreSQL** | 17+ | Primary database |
-| **Prisma** | 7.2.0 | ORM & database toolkit |
-| **Passport JWT** | 10.0.0 | Authentication strategy |
-| **class-validator** | 0.14.1 | DTO validation |
-| **Nodemailer / Resend** | 7.0.12 / 6.14.0 | Email service for development / production |
-| **Cloudinary** | 2.8.0 | Image upload & storage |
-| **Swagger/OpenAPI** | 8.0.7 | API documentation |
-| **Jest** | 29.7.0 | Testing framework |
+Phân hệ Backend được xây dựng theo **Kiến trúc phân lớp (Layered Architecture)** kết hợp với **Repository Pattern** và **lightweight CQRS (Command Query Responsibility Segregation)** nhằm đảm bảo tính dễ mở rộng, bảo trì và hiệu năng cao.
 
----
-
-## Prerequisites
-
-Before you begin, ensure you have the following installed:
-
-- **Node.js** (v18.x or higher) - [Download](https://nodejs.org/)
-- **Yarn** (v1.22.x or higher) - `npm install -g yarn`
-- **PostgreSQL** (v14+ recommended) - [Download](https://www.postgresql.org/download/)
-- **Git** - [Download](https://git-scm.com/downloads)
-
-**Optional:**
-- **Docker** - For containerized PostgreSQL
-- **Prisma Studio** - GUI for database inspection (included with Prisma)
+### Công nghệ sử dụng (Tech Stack)
+- **Framework chính:** [NestJS (v11.0.1)](https://nestjs.com/) - Framework Node.js hướng đối tượng mạnh mẽ, hỗ trợ Dependency Injection.
+- **Ngôn ngữ:** [TypeScript (v5.7.3)](https://www.typescriptlang.org/) - Tăng cường kiểm soát kiểu dữ liệu tĩnh chặt chẽ.
+- **Cơ sở dữ liệu chính:** [PostgreSQL (v17+)](https://www.postgresql.org/) - Hệ quản trị cơ sở dữ liệu quan hệ mạnh mẽ, tin cậy.
+- **ORM & Database Toolkit:** [Prisma (v7.2.0)](https://www.prisma.io/) - Hỗ trợ thiết kế schema rõ ràng, sinh type-safe queries tự động.
+- **Caching & Real-time Queue:** [Redis](https://redis.io/) - Lưu trữ hàng đợi tạm thời và xử lý các tác vụ thời gian thực tốc độ cao.
+- **Xác thực & Ủy quyền:** Passport JWT (Access Token & Rotate Refresh Token).
+- **Tích hợp bên thứ 3:** 
+  - **Cloudinary:** Quản lý và lưu trữ tài nguyên hình ảnh (avatar người dùng, icon dịch vụ).
+  - **Nodemailer / Resend:** Gửi email xác thực tài khoản và mã OTP.
+- **Tài liệu hóa:** Swagger/OpenAPI phục vụ việc kiểm thử endpoints trực quan.
 
 ---
 
-## Installation
+## 3. Phân hệ chức năng cốt lõi
 
-### 1. Clone the Repository
+### 🔐 1. Xác thực & Phân quyền (Authentication & Authorization)
+- Đăng ký tài khoản, đăng nhập cấp cặp token: Access Token (hạn ngắn) & Refresh Token (hạn dài, hỗ trợ cơ chế Rotation bảo mật).
+- Cơ chế xác thực OTP qua email (thời gian hết hạn 15 phút) bảo vệ luồng đăng ký.
+- Phân quyền theo vai trò chặt chẽ (Role-Based Access Control - RBAC) sử dụng Custom Guards:
+  - `PATIENT` (Bệnh nhân)
+  - `DOCTOR` (Bác sĩ)
+  - `RECEPTIONIST` (Tiếp tân)
+  - `ADMIN` (Quản trị viên)
 
-```bash
-git clone <repository-url>
-cd ClinicFlow/backend
+### 📅 2. Quản lý Lịch làm việc của Bác sĩ (Smart Scheduling)
+- Thiết lập khung giờ làm việc cố định theo tuần cho từng bác sĩ.
+- Quản lý thời gian nghỉ giữa ca (lunch breaks, meetings) và lịch nghỉ phép (vacations, holidays).
+- Thuật toán kiểm tra xung đột thời gian thực và tự động tính toán các slot trống khả dụng (available slots).
+
+### 🩺 3. Đặt lịch khám (Appointment Booking)
+- Quy trình đặt lịch y tế chuẩn 8 trạng thái (Booking State Machine):
+  `PENDING (Chờ xác nhận) → CONFIRMED (Đã xác nhận) → CHECKED_IN (Đã check-in tại quầy) → IN_PROGRESS (Đang khám) → COMPLETED (Hoàn thành)`
+  (Hỗ trợ các trạng thái hủy: `CANCELLED`, vắng mặt: `NO_SHOW`).
+- Kiểm tra trùng lặp và giữ chỗ tạm thời tránh tình trạng đặt trùng (double-booking).
+- Lưu vết toàn bộ lịch sử thay đổi trạng thái của lịch hẹn (Booking History Tracking).
+
+### 🚶‍♂️ 4. Quản lý Hàng đợi Thông minh (Queue Management)
+- Tự động cấp số thứ tự (STT) khi bệnh nhân Check-in hoặc tự động đẩy vào hàng đợi chờ duyệt khi các slot chính đã đầy.
+- Tính toán thời gian chờ đợi ước tính dựa trên tốc độ xử lý trung bình của phòng khám.
+- Hỗ trợ Tiếp tân thao tác thủ công: Đổi thứ tự ưu tiên (cấp cứu), gọi số tiếp theo, hoặc bỏ qua số (no-show).
+
+### 💡 5. Đề xuất Khung giờ Thông minh (Smart Suggestions)
+- Thuật toán chấm điểm và gợi ý các khung giờ khám tối ưu cho bệnh nhân dựa trên:
+  - Trạng thái trống của bác sĩ.
+  - Tải lượng công việc hiện tại của bác sĩ (workload optimization).
+  - Khoảng thời gian yêu thích của bệnh nhân (sáng/chiều).
+  - Lịch sử đặt khám trước đó.
+
+### 💼 6. Quản lý Danh mục Dịch vụ & Y tế (Service Management)
+- CRUD danh mục dịch vụ khám (tên, giá tiền, thời gian khám mặc định, giới hạn lượt khám).
+- Liên kết dịch vụ với danh sách bác sĩ chuyên khoa phụ trách.
+
+---
+
+## 4. Cấu trúc thư mục dự án
+
+Mã nguồn được cấu trúc module hóa chuẩn NestJS, tách biệt rõ ràng giữa logic nghiệp vụ (Service), truy cập dữ liệu (Repository) và giao tiếp ngoại vi (Controller).
+
+```
+backend/
+├── prisma/
+│   ├── schema.prisma          # Định nghĩa Database Schema (PostgreSQL)
+│   ├── seed.ts                # Script khởi tạo dữ liệu mẫu (Seeding)
+│   └── migrations/            # Lịch sử các phiên bản migration DB
+├── src/
+│   ├── main.ts                # File khởi chạy ứng dụng (Entry point)
+│   ├── app.module.ts          # Module gốc của ứng dụng
+│   ├── common/                # Các thành phần dùng chung toàn hệ thống
+│   │   ├── constants/         # Định nghĩa hằng số (Role, Status, Messages)
+│   │   ├── decorators/        # Custom Decorators (@CurrentUser, @Roles,...)
+│   │   ├── exceptions/        # Lớp bắt lỗi tùy chỉnh
+│   │   ├── filters/           # Lớp lọc ngoại lệ (Exception Filters)
+│   │   ├── guards/            # Bảo vệ endpoint (JWT AuthGuard, RolesGuard)
+│   │   ├── interceptors/      # Transform dữ liệu request/response
+│   │   └── pipes/             # Validation Pipes kiểm tra kiểu dữ liệu DTO
+│   ├── config/                # Cấu hình hệ thống (App, Database, JWT, Mail)
+│   ├── modules/               # Các module chức năng nghiệp vụ độc lập
+│   │   ├── auth/              # Xác thực, cấp phát token, OTP
+│   │   ├── users/             # Quản lý người dùng & Profile bác sĩ/bệnh nhân
+│   │   ├── services/          # Quản lý danh mục dịch vụ khám bệnh
+│   │   ├── schedules/         # Thiết lập & tính toán lịch trình bác sĩ
+│   │   ├── bookings/          # Xử lý luồng đặt lịch khám
+│   │   ├── queue/             # Quản lý hàng đợi và thời gian thực
+│   │   ├── suggestions/       # Thuật toán đề xuất khung giờ thông minh
+│   │   ├── notifications/     # Module gửi mail thông báo
+│   │   ├── upload/            # Tải tệp tin lên Cloudinary
+│   │   └── prisma/            # Kết nối Prisma ORM Client
+│   └── providers/             # Các Provider tích hợp bên thứ ba (Cloudinary)
+├── test/                      # Thư mục kiểm thử E2E
+├── .env                       # File cấu hình môi trường (Cần tạo)
+├── .env.example               # File cấu hình môi trường mẫu
+├── nest-cli.json              # Cấu hình NestJS CLI
+├── package.json               # Quản lý thư viện phụ thuộc & scripts
+└── tsconfig.json              # Cấu hình biên dịch TypeScript
 ```
 
-### 2. Install Dependencies
+---
 
+## 5. Hướng dẫn cài đặt & Cấu hình
+
+### Yêu cầu hệ thống
+- **Node.js**: Phiên bản 18.x trở lên.
+- **Yarn**: Quản lý gói phụ thuộc (`npm install -g yarn`).
+- **PostgreSQL**: Phiên bản 14 trở lên (hoặc chạy qua Docker).
+- **Redis**: Phục vụ hàng đợi thời gian thực.
+
+### Các bước cài đặt
+
+#### 1. Tải mã nguồn về máy
+```bash
+git clone <repository-url>
+cd SmartClinic/backend
+```
+
+#### 2. Cài đặt các gói phụ thuộc
 ```bash
 yarn install
 ```
 
-This will install all required packages including NestJS, Prisma, and development tools.
-
----
-
-## Environment Configuration
-
-### 1. Create Environment File
-
-Copy the example environment file:
-
+#### 3. Cấu hình biến môi trường
+Tạo file `.env` bằng cách sao chép từ `.env.example`:
 ```bash
 cp .env.example .env
 ```
 
-### 2. Configure Environment Variables
-
-Edit `.env` with your configuration:
-
+Mở file `.env` và thiết lập các thông số kết nối:
 ```env
-# Database
-DATABASE_URL="postgresql://username:password@localhost:5432/smart_clinic_db"
+# Database kết nối PostgreSQL
+DATABASE_URL="postgresql://postgres:yourpassword@localhost:5432/smart_clinic_db?schema=public"
 
-# Server
+# Redis kết nối hàng đợi
+REDIS_URL="redis://localhost:6379"
+
+# Cấu hình Port chạy Server Backend
 PORT=8080
 NODE_ENV=development
 FRONTEND_URL=http://localhost:3000
 
-# JWT Authentication
-JWT_SECRET=your_super_secret_jwt_key_change_this_in_production
+# Khóa bí mật mã hóa JWT (Thay đổi ở môi trường Production)
+JWT_SECRET=smart_clinic_jwt_access_secret_key_2026
 JWT_EXPIRES_IN=7d
-JWT_REFRESH_SECRET=your_super_secret_refresh_key_change_this_too
+JWT_REFRESH_SECRET=smart_clinic_jwt_refresh_secret_key_2026
 JWT_REFRESH_EXPIRES_IN=30d
 
-# Email Configuration (development: Nodemailer SMTP)
+# Cấu hình gửi mail OTP bằng Gmail (Môi trường Development)
 MAIL_HOST=smtp.gmail.com
 MAIL_PORT=587
-MAIL_USER=youremail@gmail.com
-MAIL_PASSWORD=your_app_specific_password
-MAIL_FROM="Smart Clinic <youremail@gmail.com>"
+MAIL_USER=your_gmail@gmail.com
+MAIL_PASSWORD=your_app_specific_password  # Mật khẩu ứng dụng Gmail (App Password)
+MAIL_FROM="SmartClinic <your_gmail@gmail.com>"
 
-# Email Configuration (production: Resend)
+# Cấu hình gửi mail thông báo chuyên nghiệp (Môi trường Production)
 RESEND_API_KEY=re_your_resend_api_key
-RESEND_FROM="Smart Clinic <noreply@your-domain.com>"
+RESEND_FROM="SmartClinic <noreply@yourdomain.com>"
 
-# Cloudinary (for image uploads)
-CLOUDINARY_CLOUD_NAME=your_cloud_name
-CLOUDINARY_API_KEY=your_api_key
-CLOUDINARY_API_SECRET=your_api_secret
+# Cấu hình Cloudinary lưu ảnh tải lên
+CLOUDINARY_CLOUD_NAME=your_cloudinary_name
+CLOUDINARY_API_KEY=your_cloudinary_api_key
+CLOUDINARY_API_SECRET=your_cloudinary_api_secret
 CLOUDIARY_FOLDER=smart_clinic
 ```
 
-### Environment Variables Explained
-
-| Variable | Description | Example |
-|----------|-------------|----------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@localhost:5432/db` |
-| `PORT` | API server port | `8080` |
-| `NODE_ENV` | Environment mode | `development` / `production` |
-| `FRONTEND_URL` | Frontend URL for CORS | `http://localhost:3000` |
-| `JWT_SECRET` | Secret for access tokens | Strong random string |
-| `JWT_EXPIRES_IN` | Access token expiry | `7d` (7 days) |
-| `JWT_REFRESH_SECRET` | Secret for refresh tokens | Different strong random string |
-| `JWT_REFRESH_EXPIRES_IN` | Refresh token expiry | `30d` (30 days) |
-| `MAIL_HOST` | SMTP server hostname for development Nodemailer | `smtp.gmail.com` |
-| `MAIL_PORT` | SMTP server port for development Nodemailer | `587` (TLS) or `465` (SSL) |
-| `MAIL_USER` | SMTP username for development Nodemailer | Your email address |
-| `MAIL_PASSWORD` | SMTP password for development Nodemailer | App-specific password |
-| `MAIL_FROM` | Sender email with name; also used as Resend fallback if `RESEND_FROM` is empty | `"Clinic <email@example.com>"` |
-| `RESEND_API_KEY` | Resend API key used when `NODE_ENV=production` | `re_xxxxx` |
-| `RESEND_FROM` | Production sender for Resend; must be on a verified Resend domain | `"Clinic <noreply@example.com>"` |
-| `CLOUDINARY_CLOUD_NAME` | Cloudinary account name | From Cloudinary dashboard |
-| `CLOUDINARY_API_KEY` | Cloudinary API key | From Cloudinary dashboard |
-| `CLOUDINARY_API_SECRET` | Cloudinary API secret | From Cloudinary dashboard |
-| `CLOUDIARY_FOLDER` | Upload folder name | `smart_clinic` |
-
-### Gmail Setup Instructions
-
-1. Enable 2-Factor Authentication on your Gmail account
-2. Generate an App Password:
-   - Go to [Google Account Settings](https://myaccount.google.com/security)
-   - Navigate to **Security** → **2-Step Verification** → **App passwords**
-   - Generate a new app password for "Mail"
-   - Use this password in `MAIL_PASSWORD`
+*(Lưu ý: Để gửi được email qua Gmail, bạn cần bật Xác thực 2 bước trên tài khoản Google và tạo mật khẩu ứng dụng (App Password) tại cài đặt Bảo mật).*
 
 ---
 
-## Database Setup
+## 6. Khởi tạo Cơ sở dữ liệu
 
-### Option 1: Local PostgreSQL
+### Trường hợp 1: Sử dụng PostgreSQL và Redis cài đặt trên máy
+Khởi động service PostgreSQL và Redis trên hệ điều hành của bạn. Sau đó thực hiện Migration:
 
-#### 1. Create Database
-
+#### Chạy Migration để khởi tạo các bảng trong database:
 ```bash
-# Using psql
-psql -U postgres
-CREATE DATABASE smart_clinic_db;
-\q
+npx prisma migrate dev --name init
 ```
 
-#### 2. Run Migrations
-
+#### Đẩy dữ liệu mẫu (Seed Data):
 ```bash
-yarn prisma:migrate
+npx prisma db seed
 ```
 
-This applies all database migrations and creates the schema.
-
-#### 3. Seed Database (Optional)
-
-Populate the database with demo data:
-
+### Trường hợp 2: Chạy PostgreSQL và Redis nhanh chóng qua Docker
+Nếu bạn có cài đặt Docker, bạn có thể khởi chạy nhanh DB và Redis bằng lệnh:
 ```bash
-yarn prisma:seed
-```
-
-**Demo Users Created:**
-- **Admin**: `admin@clinic.com` / `Admin@123`
-- **Doctor**: `doctor@clinic.com` / `Doctor@123`
-- **Receptionist**: `receptionist@clinic.com` / `Reception@123`
-- **Patient**: `patient@clinic.com` / `Patient@123`
-
-### Option 2: Docker PostgreSQL
-
-```bash
-# Start PostgreSQL container
-docker run --name clinic-postgres \
+# Khởi chạy Postgres container
+docker run --name smartclinic-postgres \
   -e POSTGRES_PASSWORD=yourpassword \
   -e POSTGRES_DB=smart_clinic_db \
   -p 5432:5432 \
   -d postgres:17
 
-# Then run migrations
-yarn prisma:migrate
-yarn prisma:seed
+# Khởi chạy Redis container
+docker run --name smartclinic-redis -p 6379:6379 -d redis:alpine
 ```
-
-### View Database (Prisma Studio)
-
-Open a GUI to browse and edit database records:
-
-```bash
-yarn prisma:studio
-```
-
-This opens a browser at `http://localhost:5555`.
+Sau đó tiến hành chạy các lệnh `npx prisma migrate dev` và `npx prisma db seed` như ở trên.
 
 ---
 
-## Running the Application
+## 7. Hướng dẫn chạy ứng dụng
 
-### Development Mode (with hot reload)
-
+### Chế độ phát triển (Development Mode - Hỗ trợ Hot Reload)
 ```bash
 yarn start:dev
 ```
+Server API sẽ được khởi chạy tại địa chỉ: **[http://localhost:8080](http://localhost:8080)**.
 
-The API will be available at `http://localhost:8080`.
-
-### Production Build
-
+### Biên dịch dự án sang Production
 ```bash
-# Build the application
+# Build dự án
 yarn build
 
-# Start production server
+# Chạy server sản phẩm đã build
 yarn start:prod
 ```
 
-### Watch Mode (no hot reload)
-
+### Xem dữ liệu trực quan qua Prisma Studio
+Prisma cung cấp một giao diện web tiện lợi để quản lý dữ liệu nhanh mà không cần cài đặt các tool như pgAdmin:
 ```bash
-yarn start
+npx prisma studio
 ```
+Truy cập qua trình duyệt tại địa chỉ: **[http://localhost:5555](http://localhost:5555)**.
 
 ---
 
-## API Documentation
+## 8. Danh sách tài khoản thử nghiệm
 
-Interactive API documentation is available via **Swagger UI**:
+Dữ liệu seed mặc định sẽ tự động tạo ra các tài khoản với đầy đủ vai trò để Hội đồng kiểm thử hệ thống:
 
-**[http://localhost:8080/api-docs](http://localhost:8080/api-docs)**
-
-The Swagger documentation provides:
-- Complete endpoint reference
-- Request/response schemas
-- Authentication requirements
-- Try-it-out functionality
-- Model definitions
-
-### Quick API Overview
-
-| Module | Base Path | Description |
-|--------|-----------|-------------|
-| Authentication | `/api/auth` | Register, login, verify email, refresh tokens |
-| Users | `/api/users` | User management, profiles, doctors list |
-| Services | `/api/services` | Clinic services CRUD |
-| Schedules | `/api/schedules` | Doctor working hours, breaks, off days, available slots |
-| Bookings | `/api/bookings` | Create, view, update, cancel appointments |
-| Queue | `/api/queue` | Queue management, promotion, statistics |
-| Suggestions | `/api/suggestions` | Smart time slot recommendations |
-| Upload | `/api/upload` | File upload (avatars, service icons) |
+| Vai trò | Email đăng nhập | Mật khẩu mặc định | Quyền hạn chính |
+|---------|-----------------|-------------------|-----------------|
+| **ADMIN** | `admin@clinic.com` | `Admin@123` | Quản trị toàn hệ thống, cấu hình dịch vụ, người dùng |
+| **DOCTOR** | `doctor@clinic.com` | `Doctor@123` | Quản lý ca trực, xem bệnh án, cập nhật trạng thái khám |
+| **RECEPTIONIST** | `receptionist@clinic.com` | `Reception@123` | Check-in bệnh nhân tại quầy, quản lý điều phối hàng đợi |
+| **PATIENT** | `patient@clinic.com` | `Patient@123` | Tìm kiếm bác sĩ, đặt lịch khám trực tuyến, xem STT hàng đợi |
 
 ---
 
-## Project Structure
+## 9. Tài liệu API (Swagger UI)
 
-```
-backend/
-├── prisma/
-│   ├── schema.prisma          # Database schema
-│   ├── seed.ts                # Database seeding script
-│   └── migrations/            # Migration history
-├── src/
-│   ├── main.ts                # Application entry point
-│   ├── app.module.ts          # Root module
-│   ├── common/                # Shared utilities
-│   │   ├── constants/         # Constants (roles, statuses, messages)
-│   │   ├── decorators/        # Custom decorators (@CurrentUser, @Roles)
-│   │   ├── exceptions/        # Custom exceptions
-│   │   ├── filters/           # Exception filters
-│   │   ├── guards/            # Auth guards (JWT, Roles)
-│   │   ├── interceptors/      # Request/response interceptors
-│   │   ├── interfaces/        # Shared interfaces
-│   │   └── pipes/             # Validation pipes
-│   ├── config/                # Configuration files
-│   │   ├── app.config.ts      # App settings
-│   │   ├── database.config.ts # Database connection
-│   │   └── jwt.config.ts      # JWT configuration
-│   ├── modules/               # Feature modules
-│   │   ├── auth/              # Authentication & authorization
-│   │   ├── users/             # User management
-│   │   ├── services/          # Clinic services
-│   │   ├── schedules/         # Doctor schedules
-│   │   ├── bookings/          # Appointment bookings
-│   │   ├── queue/             # Queue management
-│   │   ├── suggestions/       # Smart suggestions
-│   │   ├── notifications/     # Email notifications
-│   │   ├── upload/            # File uploads
-│   │   └── prisma/            # Prisma service
-│   └── providers/             # External service providers
-│       └── cloudinary.provider.ts
-├── test/                      # E2E tests
-├── .env                       # Environment variables (create this)
-├── .env.example               # Example environment file
-├── nest-cli.json              # NestJS CLI configuration
-├── package.json               # Dependencies and scripts
-└── tsconfig.json              # TypeScript configuration
-```
+Hệ thống tự động sinh tài liệu API chuẩn OpenAPI. Sau khi khởi chạy Server Backend, bạn có thể truy cập vào đường dẫn sau để xem danh sách endpoints, cấu trúc request/response chi tiết và test trực tiếp API:
+
+👉 **[http://localhost:8080/api-docs](http://localhost:8080/api-docs)**
 
 ---
 
-## Authentication & Authorization
+## 10. Quy trình nghiệp vụ chính
 
-### Authentication Flow
-
-1. **Registration**:
-   ```
-   POST /api/auth/register → Creates user → Sends OTP via email
-   POST /api/auth/verify-email → Verifies OTP → Activates account
-   ```
-
-2. **Login**:
-   ```
-   POST /api/auth/login → Returns access token + refresh token
-   ```
-
-3. **Token Refresh**:
-   ```
-   POST /api/auth/refresh → Returns new access token
-   ```
-
-4. **Protected Endpoints**:
-   ```
-   Authorization: Bearer <access_token>
-   ```
-
-### Role-Based Access Control
-
-| Role | Permissions |
-|------|-------------|
-| **PATIENT** | Book appointments, view own bookings, update profile |
-| **DOCTOR** | View appointments, update booking status, manage own schedule |
-| **RECEPTIONIST** | Manage all bookings, check-in patients, manage queue |
-| **ADMIN** | Full access - manage users, services, view all data |
-
-### Security Features
-
-- JWT with refresh token rotation
-- Password hashing with bcrypt
-- Email verification with OTP
-- Rate limiting (recommended to add)
-- CORS configuration
-- Input validation with class-validator
-- SQL injection prevention (Prisma ORM)
-- XSS protection
-
----
-
-## Available Scripts
-
-| Script | Command | Description |
-|--------|---------|-------------|
-| **Development** | `yarn start:dev` | Start with hot reload |
-| **Build** | `yarn build` | Compile TypeScript to JavaScript |
-| **Production** | `yarn start:prod` | Run compiled production build |
-| **Watch** | `yarn start` | Start without hot reload |
-| **Lint** | `yarn lint` | Run ESLint |
-| **Format** | `yarn format` | Format code with Prettier |
-| **Test** | `yarn test` | Run unit tests |
-| **Test E2E** | `yarn test:e2e` | Run end-to-end tests |
-| **Test Coverage** | `yarn test:cov` | Generate coverage report |
-| **Prisma Migrate** | `yarn prisma:migrate` | Run database migrations |
-| **Prisma Generate** | `yarn prisma:generate` | Generate Prisma Client |
-| **Prisma Seed** | `yarn prisma:seed` | Seed database with demo data |
-| **Prisma Studio** | `yarn prisma:studio` | Open Prisma Studio GUI |
-| **Prisma Reset** | `yarn prisma:reset` | Reset database (deletes all data) |
-
----
-
-## Testing
-
-### Run Unit Tests
-
-```bash
-yarn test
+### Sơ đồ máy trạng thái Lịch hẹn (Booking State Machine)
 ```
-
-### Run E2E Tests
-
-```bash
-yarn test:e2e
-```
-
-### Generate Coverage Report
-
-```bash
-yarn test:cov
-```
-
-### Test with Watch Mode
-
-```bash
-yarn test:watch
+[ Bệnh nhân Đặt lịch ]
+          │
+          ▼
+     PENDING (Chờ xác nhận) ─────────────► CANCELLED (Đã hủy bởi BN/Hệ thống)
+          │
+          ▼ (Tiếp tân duyệt hoặc hệ thống tự động xác nhận)
+     CONFIRMED (Đã xác nhận) ────────────► NO_SHOW (Bệnh nhân vắng mặt)
+          │
+          ▼ (Bệnh nhân đến phòng khám và Check-in)
+     CHECKED_IN (Đã check-in, xếp hàng đợi)
+          │
+          ▼ (Bác sĩ gọi vào phòng khám)
+     IN_PROGRESS (Đang trong ca khám)
+          │
+          ▼ (Bác sĩ hoàn thành khám bệnh)
+     COMPLETED (Hoàn thành ca khám)
 ```
 
 ---
-
-## Troubleshooting
-
-### Database Connection Issues
-
-**Error**: `Can't reach database server`
-
-**Solutions**:
-1. Verify PostgreSQL is running:
-   ```bash
-   # Linux/Mac
-   sudo systemctl status postgresql
-   
-   # Or check with psql
-   psql -U postgres -c "SELECT version();"
-   ```
-
-2. Check `DATABASE_URL` in `.env`:
-   - Correct format: `postgresql://username:password@host:port/database`
-   - Verify credentials, host, and port
-
-3. Test connection:
-   ```bash
-   yarn prisma db pull
-   ```
-
-### Migration Issues
-
-**Error**: `Migration failed`
-
-**Solutions**:
-```bash
-# Reset database (deletes all data)
-yarn prisma:reset
-
-# Or manually drop and recreate
-psql -U postgres -c "DROP DATABASE smart_clinic_db;"
-psql -U postgres -c "CREATE DATABASE smart_clinic_db;"
-yarn prisma:migrate
-```
-
-### Email Sending Issues
-
-**Error**: `Invalid login: 535 Authentication failed`
-
-**Solutions**:
-1. Enable 2FA and create App Password (see [Gmail Setup](#-gmail-setup-instructions))
-2. Use correct SMTP settings:
-   - Gmail: `smtp.gmail.com:587` (TLS)
-   - Outlook: `smtp-mail.outlook.com:587`
-3. Check firewall/antivirus blocking port 587
-
-### Port Already in Use
-
-**Error**: `Port 8080 is already in use`
-
-**Solutions**:
-```bash
-# Find process using port 8080
-lsof -i :8080          # Mac/Linux
-netstat -ano | findstr :8080  # Windows
-
-# Kill the process or change PORT in .env
-PORT=8081
-```
-
-### Cloudinary Upload Issues
-
-**Error**: `Upload failed`
-
-**Solutions**:
-1. Verify credentials in `.env`
-2. Check Cloudinary dashboard for API limits
-3. Ensure file size < 10MB (default limit)
-4. Verify supported formats: JPEG, PNG, GIF, WebP
-
-### Prisma Client Issues
-
-**Error**: `Prisma Client could not locate the Query Engine`
-
-**Solution**:
-```bash
-yarn prisma generate
-```
-
----
-
-## License
-
-This project is part of the ClinicFlow system. See the root LICENSE file for details.
-
----
-
-## Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## Support
-
-For issues and questions:
-- Create an issue in the repository
-- Check the [API Documentation](http://localhost:8080/api-docs)
-- Review the [Project Documentation](../docs/)
-
----
-
-**Built with ❤️ using NestJS**
+*Dự án thuộc đề tài Đồ án tốt nghiệp / Đồ án chuyên ngành.*
+*Người thực hiện: Lò Văn Bằng - Mã số sinh viên: 2251061721*
+*Giáo viên hướng dẫn: TS. Nguyễn Tu Trung*
