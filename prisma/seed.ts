@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import {
   PrismaClient,
+  Prisma,
   UserRole,
   Gender,
   DayOfWeek,
@@ -65,6 +66,29 @@ interface ProviderSeed {
   consultationFee: number;
   bio: string;
   specializationCategories?: string[];
+}
+
+interface CrawledMedicine {
+  code: string;
+  brandName?: string | null;
+  genericName?: string | null;
+  concentration?: string | null;
+  dosageForm?: string | null;
+  defaultUnit?: string | null;
+  defaultPrice?: number | null;
+  notes?: string | null;
+  imageUrl?: string | null;
+  sourceUrl?: string | null;
+  sourceSite?: string | null;
+  registrationNumber?: string | null;
+  ingredients?: string | null;
+  sideEffects?: string | null;
+  warnings?: string | null;
+  manufacturerBrand?: string | null;
+  country?: string | null;
+  imagePath?: string | null;
+  usage?: string | null;
+  uses?: string | null;
 }
 
 // ============================================
@@ -1208,10 +1232,93 @@ async function main() {
 
   // 13. SEED MEDICINES
   console.log('\n💊 Seeding medicines...');
-  for (const med of MEDICINES) {
-    await prisma.medicine.create({ data: med });
+  const crawlMedicinesPath = path.join(
+    __dirname,
+    '../../Tools/crawl/medicines.json',
+  );
+  let medicinesToSeed: Prisma.MedicineCreateManyInput[] = MEDICINES.map(
+    (med) => ({
+      code: med.code,
+      genericName: med.genericName,
+      brandName: med.brandName || null,
+      concentration: med.concentration || null,
+      dosageForm: med.dosageForm || null,
+      defaultUnit: med.defaultUnit || 'viên',
+      defaultPrice: med.defaultPrice,
+      notes: null,
+      registrationNumber: null,
+      ingredients: null,
+      sideEffects: null,
+      warnings: null,
+      manufacturerBrand: null,
+      country: null,
+      imagePath: null,
+      imageUrl: null,
+      sourceUrl: null,
+      sourceSite: null,
+      usage: null,
+      uses: null,
+      stockQuantity: med.stockQuantity || 100,
+      isActive: true,
+    }),
+  );
+
+  if (fs.existsSync(crawlMedicinesPath)) {
+    try {
+      console.log(`  🔍 Found crawled medicines file at ${crawlMedicinesPath}`);
+      const rawData = fs.readFileSync(crawlMedicinesPath, 'utf8');
+      const crawledMedicines = JSON.parse(rawData) as CrawledMedicine[];
+      if (Array.isArray(crawledMedicines) && crawledMedicines.length > 0) {
+        console.log(
+          `  📦 Loaded ${crawledMedicines.length} medicines from crawl tool.`,
+        );
+        medicinesToSeed = crawledMedicines.map((med) => ({
+          code: med.code,
+          genericName: med.genericName || 'Chưa rõ',
+          brandName: med.brandName || null,
+          concentration: med.concentration || null,
+          dosageForm: med.dosageForm || null,
+          defaultUnit: med.defaultUnit || 'viên',
+          defaultPrice: med.defaultPrice ? Number(med.defaultPrice) : 0.0,
+          notes: med.notes || null,
+          registrationNumber: med.registrationNumber || null,
+          ingredients: med.ingredients || null,
+          sideEffects: med.sideEffects || null,
+          warnings: med.warnings || null,
+          manufacturerBrand: med.manufacturerBrand || null,
+          country: med.country || null,
+          imagePath: med.imagePath || null,
+          imageUrl: med.imageUrl || null,
+          sourceUrl: med.sourceUrl || null,
+          sourceSite: med.sourceSite || null,
+          usage: med.usage || null,
+          uses: med.uses || null,
+          stockQuantity: 100,
+          isActive: true,
+        }));
+      }
+    } catch (err) {
+      console.error('  ❌ Error loading/parsing medicines.json:', err);
+    }
+  } else {
+    console.warn(
+      `  ⚠️ Crawled medicines file not found at ${crawlMedicinesPath}. Falling back to default list.`,
+    );
   }
-  console.log(`  ✅ Created ${MEDICINES.length} medicines`);
+
+  const batchSize = 100;
+  let seededCount = 0;
+  for (let i = 0; i < medicinesToSeed.length; i += batchSize) {
+    const batch = medicinesToSeed.slice(i, i + batchSize);
+    await prisma.medicine.createMany({
+      data: batch,
+      skipDuplicates: true,
+    });
+    seededCount += batch.length;
+  }
+  console.log(
+    `  ✅ Seeded ${seededCount} medicines successfully (including potential duplicates skipped)`,
+  );
 
   console.log('\n🚀 Database seeding completed successfully!');
 }
