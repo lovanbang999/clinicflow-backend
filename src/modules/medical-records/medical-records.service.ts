@@ -690,6 +690,8 @@ export class MedicalRecordsService {
               unit: item.unit ?? 'viên',
               instructions: item.instructions,
               sortOrder: item.sortOrder ?? idx,
+              medicineId: item.medicineId || null,
+              unitPrice: item.unitPrice ?? null,
             })),
           });
         }
@@ -831,6 +833,8 @@ export class MedicalRecordsService {
             quantity: i.quantity,
             unit: i.unit,
             instructions: i.instructions,
+            medicineId: i.medicineId,
+            unitPrice: i.unitPrice,
           })),
         },
         doctorId,
