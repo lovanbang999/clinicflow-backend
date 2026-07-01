@@ -595,6 +595,104 @@ const PATIENTS = [
   },
 ];
 
+interface SeedImageManifest {
+  avatarsByEmail?: Record<string, string>;
+  serviceImagesByName?: Record<string, string>;
+}
+
+function loadSeedImageManifest(): SeedImageManifest {
+  const manifestCandidates = [
+    process.env.SEED_IMAGE_MANIFEST_PATH,
+    path.resolve(
+      __dirname,
+      '../../script-upload-image/seed-image-manifest.json',
+    ),
+    path.resolve(
+      process.cwd(),
+      '../script-upload-image/seed-image-manifest.json',
+    ),
+  ].filter(Boolean) as string[];
+
+  const manifestPath = manifestCandidates.find((candidate) =>
+    fs.existsSync(candidate),
+  );
+
+  if (!manifestPath) return {};
+
+  try {
+    return JSON.parse(
+      fs.readFileSync(manifestPath, 'utf8'),
+    ) as SeedImageManifest;
+  } catch (error) {
+    console.warn(
+      `  ⚠️ Could not read seed image manifest at ${manifestPath}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return {};
+  }
+}
+
+const SEED_IMAGE_MANIFEST = loadSeedImageManifest();
+
+const AVATAR_SEED_BASE_PATH = '/images/avatar-seed';
+const AVATAR_BY_EMAIL: Record<string, string> = {
+  'admin@clinic.com': `${AVATAR_SEED_BASE_PATH}/admin-quan-tri-vien-he-thong.webp`,
+  'bs.nguyenvana@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-nguyen-van-an.webp`,
+  'bs.lethib@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-le-thi-binh.webp`,
+  'bs.hoangquy@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-hoang-quy.webp`,
+  'bs.minhthu@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-dang-minh-thu.webp`,
+  'bs.quanghuy@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-tran-quang-huy.webp`,
+  'bs.tuyetmai@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-vuong-tuyet-mai.webp`,
+  'bs.giabao@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-pham-gia-bao.webp`,
+  'bs.thanhha@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-nguyen-thanh-ha.webp`,
+  'bs.huuphuoc@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-le-huu-phuoc.webp`,
+  'bs.lananh@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-do-lan-anh.webp`,
+  'bs.minhquan@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-ngo-minh-quan.webp`,
+  'bs.thuhuong@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-trinh-thu-huong.webp`,
+  'bs.tiendung@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-bui-tien-dung.webp`,
+  'bs.thaonguyen@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-le-thao-nguyen.webp`,
+  'bs.ngocmai@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-phan-ngoc-mai.webp`,
+  'bs.mylinh@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-truong-my-linh.webp`,
+  'bs.hoangnam@clinic.com': `${AVATAR_SEED_BASE_PATH}/bs-nguyen-hoang-nam.webp`,
+  'ktv.phuong@clinic.com': `${AVATAR_SEED_BASE_PATH}/ktv-tran-thi-phuong.webp`,
+  'ktv.tuan@clinic.com': `${AVATAR_SEED_BASE_PATH}/ktv-le-anh-tuan.webp`,
+  'letan.huong@clinic.com': `${AVATAR_SEED_BASE_PATH}/letan-nguyen-thi-huong.webp`,
+  'letan.lan@clinic.com': `${AVATAR_SEED_BASE_PATH}/letan-tran-thi-lan.webp`,
+  ...(SEED_IMAGE_MANIFEST.avatarsByEmail || {}),
+};
+
+const SERVICE_IMAGE_BASE_PATH = '/images/image-service';
+const SERVICE_IMAGE_BY_NAME: Record<string, string> = {
+  'Khám nội tổng quát': `${SERVICE_IMAGE_BASE_PATH}/kham-noi-tong-quat.webp`,
+  'Khám tim mạch': `${SERVICE_IMAGE_BASE_PATH}/kham-tim-mach.webp`,
+  'Khám nhi khoa': `${SERVICE_IMAGE_BASE_PATH}/kham-nhi-khoa.webp`,
+  'Khám xương khớp': `${SERVICE_IMAGE_BASE_PATH}/kham-xuong-khop.webp`,
+  'Khám sản phụ khoa': `${SERVICE_IMAGE_BASE_PATH}/kham-san-phu-khoa.webp`,
+  'Khám tâm lý': `${SERVICE_IMAGE_BASE_PATH}/kham-tam-ly.webp`,
+  'Khám mắt': `${SERVICE_IMAGE_BASE_PATH}/kham-mat.webp`,
+  'Khám tai mũi họng': `${SERVICE_IMAGE_BASE_PATH}/kham-tai-mui-hong.webp`,
+  'Khám da liễu': `${SERVICE_IMAGE_BASE_PATH}/kham-da-lieu.webp`,
+  'Khám răng hàm mặt': `${SERVICE_IMAGE_BASE_PATH}/kham-rang-ham-mat.webp`,
+  'Khám tiêu hóa': `${SERVICE_IMAGE_BASE_PATH}/kham-tieu-hoa.webp`,
+  'Khám nội tiết': `${SERVICE_IMAGE_BASE_PATH}/kham-noi-tiet.webp`,
+  'Khám thần kinh': `${SERVICE_IMAGE_BASE_PATH}/kham-than-kinh.webp`,
+  'Tổng phân tích tế bào máu (CBC)': `${SERVICE_IMAGE_BASE_PATH}/tong-phan-tich-te-bao-mau-cbc.webp`,
+  'Đường huyết đói (FBS)': `${SERVICE_IMAGE_BASE_PATH}/duong-huyet-doi-fbs.webp`,
+  'Chức năng gan (AST, ALT, GGT)': `${SERVICE_IMAGE_BASE_PATH}/chuc-nang-gan-ast-alt-ggt.webp`,
+  'Chức năng thận (Ure, Creatinin)': `${SERVICE_IMAGE_BASE_PATH}/chuc-nang-than-ure-creatinin.webp`,
+  'Tổng phân tích nước tiểu (10 chỉ số)': `${SERVICE_IMAGE_BASE_PATH}/tong-phan-tich-nuoc-tieu-10-chi-so.webp`,
+  'Siêu âm ổ bụng tổng quát': `${SERVICE_IMAGE_BASE_PATH}/sieu-am-o-bung-tong-quat.webp`,
+  'Siêu âm tim Doppler': `${SERVICE_IMAGE_BASE_PATH}/sieu-am-tim-doppler.webp`,
+  'X-quang ngực thẳng': `${SERVICE_IMAGE_BASE_PATH}/x-quang-nguc-thang.webp`,
+  'Chụp CT-Scanner đầu': `${SERVICE_IMAGE_BASE_PATH}/chup-ct-scanner-dau.webp`,
+  'Điện tâm đồ (ECG)': `${SERVICE_IMAGE_BASE_PATH}/dien-tam-do-ecg.webp`,
+  'Nội soi dạ dày (không gây mê)': `${SERVICE_IMAGE_BASE_PATH}/noi-soi-da-day-khong-gay-me.webp`,
+  'Đo chức năng hô hấp': `${SERVICE_IMAGE_BASE_PATH}/do-chuc-nang-ho-hap.webp`,
+  'Đo loãng xương (DEXA)': `${SERVICE_IMAGE_BASE_PATH}/do-loang-xuong-dexa.webp`,
+  'Dịch vụ kỹ thuật khác': `${SERVICE_IMAGE_BASE_PATH}/dich-vu-ky-thuat-khac.webp`,
+  ...(SEED_IMAGE_MANIFEST.serviceImagesByName || {}),
+};
+
 // ============================================
 // MAIN SEED FUNCTION
 // ============================================
@@ -942,6 +1040,7 @@ async function main() {
       data: {
         name: s.name,
         description: s.description,
+        iconUrl: SERVICE_IMAGE_BY_NAME[s.name],
         price: s.price,
         durationMinutes: 30,
         categoryId: categoryMap.get(s.category)!,
@@ -965,6 +1064,7 @@ async function main() {
       password: await hashPassword('admin123'),
       role: UserRole.ADMIN,
       fullName: 'Quản Trị Viên Hệ Thống',
+      avatar: AVATAR_BY_EMAIL['admin@clinic.com'],
       isActive: true,
       isVerified: true,
     },
@@ -984,6 +1084,7 @@ async function main() {
         role: p.role,
         fullName: p.fullName,
         phone: p.phone,
+        avatar: AVATAR_BY_EMAIL[p.email],
         gender: p.gender,
         isActive: true,
         isVerified: true,
@@ -1157,6 +1258,7 @@ async function main() {
         role: UserRole.RECEPTIONIST,
         fullName: r.fullName,
         phone: r.phone,
+        avatar: AVATAR_BY_EMAIL[r.email],
         gender: r.gender,
         isActive: true,
         isVerified: true,
