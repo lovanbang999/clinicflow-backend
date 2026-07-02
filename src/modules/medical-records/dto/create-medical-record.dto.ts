@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsDateString,
   IsNotEmpty,
+  Min,
 } from 'class-validator';
 
 export class PrescriptionItemDto {
@@ -68,6 +69,25 @@ export class PrescriptionItemDto {
   @IsOptional()
   @IsString()
   instructions?: string;
+
+  @ApiProperty({
+    description: 'ID of the system medicine if selected',
+    example: 'uuid-medicine-id',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  medicineId?: string;
+
+  @ApiProperty({
+    description: 'Unit price of the medicine',
+    example: 15000,
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  unitPrice?: number;
 }
 
 export class CreateMedicalRecordDto {

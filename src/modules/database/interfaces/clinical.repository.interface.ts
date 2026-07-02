@@ -4,6 +4,7 @@ import {
   VisitServiceOrder,
   Prescription,
   Icd10Code,
+  Medicine,
   Prisma,
 } from '@prisma/client';
 
@@ -88,6 +89,18 @@ export interface IClinicalRepository {
 
   // ICD10 Code
   findManyIcd10Code(args: Prisma.Icd10CodeFindManyArgs): Promise<Icd10Code[]>;
+
+  // Medicine
+  countMedicine(args: Prisma.MedicineCountArgs): Promise<number>;
+  findManyMedicine<T extends Prisma.MedicineFindManyArgs>(
+    args?: Prisma.SelectSubset<T, Prisma.MedicineFindManyArgs>,
+  ): Promise<Prisma.MedicineGetPayload<T>[]>;
+  findUniqueMedicine<T extends Prisma.MedicineFindUniqueArgs>(
+    args: Prisma.SelectSubset<T, Prisma.MedicineFindUniqueArgs>,
+  ): Promise<Prisma.MedicineGetPayload<T> | null>;
+  createMedicine(args: Prisma.MedicineCreateArgs): Promise<Medicine>;
+  updateMedicine(args: Prisma.MedicineUpdateArgs): Promise<Medicine>;
+  deleteMedicine(args: Prisma.MedicineDeleteArgs): Promise<Medicine>;
 
   transaction<T>(fn: (tx: TransactionClient) => Promise<T>): Promise<T>;
 }

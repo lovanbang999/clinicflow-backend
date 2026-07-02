@@ -690,6 +690,8 @@ export class MedicalRecordsService {
               unit: item.unit ?? 'viên',
               instructions: item.instructions,
               sortOrder: item.sortOrder ?? idx,
+              medicineId: item.medicineId || null,
+              unitPrice: item.unitPrice ?? null,
             })),
           });
         }
@@ -831,6 +833,8 @@ export class MedicalRecordsService {
             quantity: i.quantity,
             unit: i.unit,
             instructions: i.instructions,
+            medicineId: i.medicineId,
+            unitPrice: i.unitPrice,
           })),
         },
         doctorId,
@@ -862,6 +866,28 @@ export class MedicalRecordsService {
       },
       take: 20,
       orderBy: { code: 'asc' },
+    });
+  }
+
+  // Medicine Search
+  async searchMedicines(query: string) {
+    if (!query) {
+      return this.clinicalRepository.findManyMedicine({
+        where: { isActive: true },
+        take: 10,
+        orderBy: { brandName: 'asc' },
+      });
+    }
+    return this.clinicalRepository.findManyMedicine({
+      where: {
+        isActive: true,
+        OR: [
+          { brandName: { contains: query } },
+          { genericName: { contains: query } },
+        ],
+      },
+      take: 20,
+      orderBy: { brandName: 'asc' },
     });
   }
 
