@@ -4,7 +4,7 @@ import {
   FindCategoriesResult,
 } from '../interfaces/catalog.repository.interface';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Category, Prisma, Service } from '@prisma/client';
+import { Category, Prisma, Service, Room } from '@prisma/client';
 
 @Injectable()
 export class PrismaCatalogRepository implements ICatalogRepository {
@@ -151,5 +151,45 @@ export class PrismaCatalogRepository implements ICatalogRepository {
     return this.prisma.service.findUnique(
       args,
     ) as unknown as Promise<Prisma.ServiceGetPayload<T> | null>;
+  }
+
+  // Room implementations
+  async findUniqueRoom<T extends Prisma.RoomFindUniqueArgs>(
+    args: Prisma.SelectSubset<T, Prisma.RoomFindUniqueArgs>,
+  ): Promise<Prisma.RoomGetPayload<T> | null> {
+    return this.prisma.room.findUnique(
+      args,
+    ) as unknown as Promise<Prisma.RoomGetPayload<T> | null>;
+  }
+
+  async findFirstRoom<T extends Prisma.RoomFindFirstArgs>(
+    args: Prisma.SelectSubset<T, Prisma.RoomFindFirstArgs>,
+  ): Promise<Prisma.RoomGetPayload<T> | null> {
+    return this.prisma.room.findFirst(
+      args,
+    ) as unknown as Promise<Prisma.RoomGetPayload<T> | null>;
+  }
+
+  async findManyRooms<T extends Prisma.RoomFindManyArgs>(
+    args?: Prisma.SelectSubset<T, Prisma.RoomFindManyArgs>,
+  ): Promise<Prisma.RoomGetPayload<T>[]> {
+    return this.prisma.room.findMany(args) as unknown as Promise<
+      Prisma.RoomGetPayload<T>[]
+    >;
+  }
+
+  async createRoom(data: Prisma.RoomUncheckedCreateInput): Promise<Room> {
+    return this.prisma.room.create({ data });
+  }
+
+  async updateRoom(
+    id: string,
+    data: Prisma.RoomUncheckedUpdateInput,
+  ): Promise<Room> {
+    return this.prisma.room.update({ where: { id }, data });
+  }
+
+  async countRooms(args?: Prisma.RoomCountArgs): Promise<number> {
+    return this.prisma.room.count(args);
   }
 }

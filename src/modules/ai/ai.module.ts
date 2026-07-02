@@ -10,12 +10,11 @@ import { MyBookingsTool } from './tools/my-bookings.tool';
 import { CloudflareAdapter } from './cloudflare.adapter';
 import { GroqAdapter } from './groq.adapter';
 import { AiSessionService } from './ai-session.service';
-import { PrismaModule } from '../prisma/prisma.module';
 import { BookingsModule } from '../bookings/bookings.module';
 import { DatabaseModule } from '../database/database.module';
 
 @Module({
-  imports: [PrismaModule, DatabaseModule, BookingsModule],
+  imports: [DatabaseModule, BookingsModule],
   controllers: [AiController],
   providers: [
     AiService,

@@ -3,6 +3,10 @@ import {
   I_CLINICAL_REPOSITORY,
 } from '../database/interfaces/clinical.repository.interface';
 import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../database/interfaces/user.repository.interface';
+import {
   IBookingRepository,
   I_BOOKING_REPOSITORY,
 } from '../database/interfaces/booking.repository.interface';
@@ -31,7 +35,6 @@ import { forwardRef } from '@nestjs/common';
 import { LabOrderDeleteInclude } from '../database/types/prisma-payload.types';
 import { Gender } from '@prisma/client';
 import { MedicalRecordsService } from '../medical-records/medical-records.service';
-import { PrismaService } from '../prisma/prisma.service';
 
 export interface InternalService {
   id: string;
@@ -141,11 +144,12 @@ export class LabOrdersService {
     private readonly bookingRepository: IBookingRepository,
     @Inject(I_PROFILE_REPOSITORY)
     private readonly profileRepository: IProfileRepository,
+    @Inject(I_USER_REPOSITORY)
+    private readonly userRepository: IUserRepository,
     private readonly labOrdersGateway: LabOrdersGateway,
     @Inject(forwardRef(() => BillingService))
     private readonly billingService: BillingService,
     private readonly medicalRecordsService: MedicalRecordsService,
-    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -504,7 +508,7 @@ export class LabOrdersService {
     }
 
     // Query recent 3 completed lab orders of same patient and test/service type
-    const recentResults = await this.prisma.labOrder.findMany({
+    const recentResults = await this.clinicalRepository.findManyLabOrder({
       where: {
         patientProfileId: rawOrder.patientProfileId,
         id: { not: rawOrder.id },
@@ -556,10 +560,7 @@ export class LabOrdersService {
 
     if (currentUser?.role === 'TECHNICIAN') {
       const specializations =
-        await this.prisma.technicianSpecialization.findMany({
-          where: { userId: currentUser.id },
-          select: { categoryId: true },
-        });
+        await this.userRepository.findTechnicianSpecializations(currentUser.id);
       technicianCategoryIds = specializations.map((s) => s.categoryId);
       hasSpecializations = technicianCategoryIds.length > 0;
     }
@@ -751,7 +752,7 @@ export class LabOrdersService {
     }
 
     const [total, rawOrders] = await Promise.all([
-      this.prisma.labOrder.count({ where }),
+      this.clinicalRepository.countLabOrder({ where }),
       this.clinicalRepository.findManyLabOrder({
         where,
         include: {
