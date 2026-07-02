@@ -29,7 +29,6 @@ import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { RedisService } from '../database/services/redis.service';
 import { MailService } from '../notifications/mail.service';
-import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class UsersService {
@@ -44,7 +43,6 @@ export class UsersService {
     private readonly sequenceService: SequenceService,
     private readonly redisService: RedisService,
     private readonly mailService: MailService,
-    private readonly prisma: PrismaService,
   ) {}
 
   private async clearPublicDoctorsCache() {
@@ -1068,12 +1066,10 @@ export class UsersService {
     }
 
     // Upsert — ignore duplicate (unique constraint)
-    const spec = await this.prisma.technicianSpecialization.upsert({
-      where: { userId_categoryId: { userId: technicianId, categoryId } },
-      create: { userId: technicianId, categoryId },
-      update: {},
-      include: { category: { select: { id: true, name: true, code: true } } },
-    });
+    const spec = await this.userRepository.addTechnicianSpecialization(
+      technicianId,
+      categoryId,
+    );
 
     this.logger.log(
       `Added specialization categoryId=${categoryId} to technician ${technicianId}`,
@@ -1089,9 +1085,10 @@ export class UsersService {
     technicianId: string,
     categoryId: string,
   ) {
-    await this.prisma.technicianSpecialization.deleteMany({
-      where: { userId: technicianId, categoryId },
-    });
+    await this.userRepository.removeTechnicianSpecialization(
+      technicianId,
+      categoryId,
+    );
 
     this.logger.log(
       `Removed specialization categoryId=${categoryId} from technician ${technicianId}`,
