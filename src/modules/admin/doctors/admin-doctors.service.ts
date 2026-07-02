@@ -11,14 +11,12 @@ import { FilterDoctorDto } from './dto/filter-doctor.dto';
 import { AdminCreateDoctorDto } from './dto/admin-create-doctor.dto';
 import { AdminUpdateDoctorProfileDto } from './dto/admin-update-doctor-profile.dto';
 import { AdminSuspendUserDto } from '../users/dto/admin-suspend-user.dto';
-import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class AdminDoctorsService {
   constructor(
     @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
     private readonly usersService: UsersService,
-    private readonly prisma: PrismaService,
   ) {}
 
   async getDoctorStatistics() {
@@ -280,17 +278,7 @@ export class AdminDoctorsService {
 
     // If serviceIds is provided, sync DoctorService relations
     if (dto.serviceIds !== undefined) {
-      await this.prisma.doctorService.deleteMany({
-        where: { doctorProfileId: profile.id },
-      });
-      if (dto.serviceIds.length > 0) {
-        await this.prisma.doctorService.createMany({
-          data: dto.serviceIds.map((serviceId) => ({
-            doctorProfileId: profile.id,
-            serviceId,
-          })),
-        });
-      }
+      await this.userRepository.syncDoctorServices(profile.id, dto.serviceIds);
     }
 
     return profile;

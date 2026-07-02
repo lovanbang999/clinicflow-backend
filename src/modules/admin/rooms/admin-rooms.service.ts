@@ -1,15 +1,27 @@
-import { Injectable, HttpStatus } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Injectable, HttpStatus, Inject } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ApiException } from '../../../common/exceptions/api.exception';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { FilterRoomDto } from './dto/filter-room.dto';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
+import {
+  ICatalogRepository,
+  I_CATALOG_REPOSITORY,
+} from '../../database/interfaces/catalog.repository.interface';
+import {
+  IBookingRepository,
+  I_BOOKING_REPOSITORY,
+} from '../../database/interfaces/booking.repository.interface';
 
 @Injectable()
 export class AdminRoomsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_CATALOG_REPOSITORY)
+    private readonly catalogRepository: ICatalogRepository,
+    @Inject(I_BOOKING_REPOSITORY)
+    private readonly bookingRepository: IBookingRepository,
+  ) {}
 
   async findAll(filter: FilterRoomDto) {
     const { search, isActive, page = 1, limit = 20 } = filter;
@@ -32,7 +44,7 @@ export class AdminRoomsService {
     }
 
     const [rooms, total] = await Promise.all([
-      this.prisma.room.findMany({
+      this.catalogRepository.findManyRooms({
         where,
         include: {
           _count: { select: { scheduleSlots: true, doctorProfiles: true } },
@@ -41,7 +53,7 @@ export class AdminRoomsService {
         take: limit,
         orderBy: { name: 'asc' },
       }),
-      this.prisma.room.count({ where }),
+      this.catalogRepository.countRooms({ where }),
     ]);
 
     return {
@@ -56,7 +68,7 @@ export class AdminRoomsService {
   }
 
   async findOne(id: string) {
-    const room = await this.prisma.room.findUnique({
+    const room = await this.catalogRepository.findUniqueRoom({
       where: { id },
       include: {
         _count: { select: { scheduleSlots: true, doctorProfiles: true } },
@@ -76,7 +88,7 @@ export class AdminRoomsService {
   }
 
   async create(dto: CreateRoomDto) {
-    const existing = await this.prisma.room.findUnique({
+    const existing = await this.catalogRepository.findUniqueRoom({
       where: { name: dto.name },
     });
     if (existing) {
@@ -88,22 +100,22 @@ export class AdminRoomsService {
       );
     }
 
-    const room = await this.prisma.room.create({
-      data: {
-        name: dto.name,
-        type: dto.type,
-        floor: dto.floor,
-        capacity: dto.capacity ?? 1,
-        notes: dto.notes,
-        isActive: dto.isActive ?? true,
-      },
+    const room = await this.catalogRepository.createRoom({
+      name: dto.name,
+      type: dto.type,
+      floor: dto.floor,
+      capacity: dto.capacity ?? 1,
+      notes: dto.notes,
+      isActive: dto.isActive ?? true,
     });
 
     return room;
   }
 
   async update(id: string, dto: UpdateRoomDto) {
-    const existing = await this.prisma.room.findUnique({ where: { id } });
+    const existing = await this.catalogRepository.findUniqueRoom({
+      where: { id },
+    });
     if (!existing) {
       throw new ApiException(
         MessageCodes.ROOM_NOT_FOUND,
@@ -114,7 +126,7 @@ export class AdminRoomsService {
     }
 
     if (dto.name && dto.name !== existing.name) {
-      const duplicate = await this.prisma.room.findUnique({
+      const duplicate = await this.catalogRepository.findUniqueRoom({
         where: { name: dto.name },
       });
       if (duplicate) {
@@ -127,23 +139,20 @@ export class AdminRoomsService {
       }
     }
 
-    const updated = await this.prisma.room.update({
-      where: { id },
-      data: {
-        ...(dto.name !== undefined && { name: dto.name }),
-        ...(dto.type !== undefined && { type: dto.type }),
-        ...(dto.floor !== undefined && { floor: dto.floor }),
-        ...(dto.capacity !== undefined && { capacity: dto.capacity }),
-        ...(dto.notes !== undefined && { notes: dto.notes }),
-        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
-      },
+    const updated = await this.catalogRepository.updateRoom(id, {
+      ...(dto.name !== undefined && { name: dto.name }),
+      ...(dto.type !== undefined && { type: dto.type }),
+      ...(dto.floor !== undefined && { floor: dto.floor }),
+      ...(dto.capacity !== undefined && { capacity: dto.capacity }),
+      ...(dto.notes !== undefined && { notes: dto.notes }),
+      ...(dto.isActive !== undefined && { isActive: dto.isActive }),
     });
 
     return updated;
   }
 
   async remove(id: string) {
-    const room = await this.prisma.room.findUnique({ where: { id } });
+    const room = await this.catalogRepository.findUniqueRoom({ where: { id } });
     if (!room) {
       throw new ApiException(
         MessageCodes.ROOM_NOT_FOUND,
@@ -155,7 +164,7 @@ export class AdminRoomsService {
 
     // Block delete if room has upcoming/active schedule slots
     const now = new Date();
-    const activeSlots = await this.prisma.doctorScheduleSlot.count({
+    const activeSlots = await this.bookingRepository.countDoctorScheduleSlot({
       where: {
         roomId: id,
         date: { gte: now },
@@ -172,16 +181,15 @@ export class AdminRoomsService {
       );
     }
 
-    const updated = await this.prisma.room.update({
-      where: { id },
-      data: { isActive: false },
+    const updated = await this.catalogRepository.updateRoom(id, {
+      isActive: false,
     });
 
     return updated;
   }
 
   async restore(id: string) {
-    const room = await this.prisma.room.findUnique({ where: { id } });
+    const room = await this.catalogRepository.findUniqueRoom({ where: { id } });
     if (!room) {
       throw new ApiException(
         MessageCodes.ROOM_NOT_FOUND,
@@ -200,9 +208,8 @@ export class AdminRoomsService {
       );
     }
 
-    const updated = await this.prisma.room.update({
-      where: { id },
-      data: { isActive: true },
+    const updated = await this.catalogRepository.updateRoom(id, {
+      isActive: true,
     });
 
     return updated;
