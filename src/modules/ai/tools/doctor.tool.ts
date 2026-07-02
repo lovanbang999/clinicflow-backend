@@ -1,14 +1,20 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Injectable, Inject } from '@nestjs/common';
+import {
+  IUserRepository,
+  I_USER_REPOSITORY,
+} from '../../database/interfaces/user.repository.interface';
 
 @Injectable()
 export class DoctorTool {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(I_USER_REPOSITORY)
+    private readonly userRepository: IUserRepository,
+  ) {}
 
   async execute(args: { doctorName?: string; specialtyName?: string }) {
     const { doctorName, specialtyName } = args;
 
-    const doctors = await this.prisma.user.findMany({
+    const doctors = await this.userRepository.findMany({
       where: {
         role: 'DOCTOR',
         isActive: true,

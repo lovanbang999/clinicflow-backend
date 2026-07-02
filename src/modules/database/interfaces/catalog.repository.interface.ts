@@ -1,4 +1,4 @@
-import { Category, Service, Prisma } from '@prisma/client';
+import { Category, Service, Room, Prisma } from '@prisma/client';
 
 export const I_CATALOG_REPOSITORY = 'ICatalogRepository';
 
@@ -56,4 +56,18 @@ export interface ICatalogRepository {
   findUniqueService<T extends Prisma.ServiceFindUniqueArgs>(
     args: Prisma.SelectSubset<T, Prisma.ServiceFindUniqueArgs>,
   ): Promise<Prisma.ServiceGetPayload<T> | null>;
+
+  // Room methods
+  findUniqueRoom<T extends Prisma.RoomFindUniqueArgs>(
+    args: Prisma.SelectSubset<T, Prisma.RoomFindUniqueArgs>,
+  ): Promise<Prisma.RoomGetPayload<T> | null>;
+  findFirstRoom<T extends Prisma.RoomFindFirstArgs>(
+    args: Prisma.SelectSubset<T, Prisma.RoomFindFirstArgs>,
+  ): Promise<Prisma.RoomGetPayload<T> | null>;
+  findManyRooms<T extends Prisma.RoomFindManyArgs>(
+    args?: Prisma.SelectSubset<T, Prisma.RoomFindManyArgs>,
+  ): Promise<Prisma.RoomGetPayload<T>[]>;
+  createRoom(data: Prisma.RoomUncheckedCreateInput): Promise<Room>;
+  updateRoom(id: string, data: Prisma.RoomUncheckedUpdateInput): Promise<Room>;
+  countRooms(args?: Prisma.RoomCountArgs): Promise<number>;
 }

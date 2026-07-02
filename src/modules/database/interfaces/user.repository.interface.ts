@@ -221,4 +221,25 @@ export interface IUserRepository {
     args: Prisma.SelectSubset<T, Prisma.UserFindManyArgs>,
   ): Promise<Prisma.UserGetPayload<T>[]>;
   count(args: Prisma.UserCountArgs): Promise<number>;
+
+  // Relation methods
+  syncDoctorServices(
+    doctorProfileId: string,
+    serviceIds: string[],
+  ): Promise<void>;
+  addTechnicianSpecialization(
+    technicianId: string,
+    categoryId: string,
+  ): Promise<
+    Prisma.TechnicianSpecializationGetPayload<{
+      include: { category: { select: { id: true; name: true; code: true } } };
+    }>
+  >;
+  removeTechnicianSpecialization(
+    technicianId: string,
+    categoryId: string,
+  ): Promise<void>;
+  findTechnicianSpecializations(
+    userId: string,
+  ): Promise<{ categoryId: string }[]>;
 }

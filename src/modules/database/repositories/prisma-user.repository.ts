@@ -496,4 +496,59 @@ export class PrismaUserRepository implements IUserRepository {
   async count(args: Prisma.UserCountArgs): Promise<number> {
     return this.prisma.user.count(args);
   }
+
+  async syncDoctorServices(
+    doctorProfileId: string,
+    serviceIds: string[],
+  ): Promise<void> {
+    await this.prisma.doctorService.deleteMany({
+      where: { doctorProfileId },
+    });
+    if (serviceIds.length > 0) {
+      await this.prisma.doctorService.createMany({
+        data: serviceIds.map((serviceId) => ({
+          doctorProfileId,
+          serviceId,
+        })),
+      });
+    }
+  }
+
+  async addTechnicianSpecialization(
+    technicianId: string,
+    categoryId: string,
+  ): Promise<
+    Prisma.TechnicianSpecializationGetPayload<{
+      include: { category: { select: { id: true; name: true; code: true } } };
+    }>
+  > {
+    return this.prisma.technicianSpecialization.upsert({
+      where: { userId_categoryId: { userId: technicianId, categoryId } },
+      create: { userId: technicianId, categoryId },
+      update: {},
+      include: { category: { select: { id: true, name: true, code: true } } },
+    }) as unknown as Promise<
+      Prisma.TechnicianSpecializationGetPayload<{
+        include: { category: { select: { id: true; name: true; code: true } } };
+      }>
+    >;
+  }
+
+  async removeTechnicianSpecialization(
+    technicianId: string,
+    categoryId: string,
+  ): Promise<void> {
+    await this.prisma.technicianSpecialization.deleteMany({
+      where: { userId: technicianId, categoryId },
+    });
+  }
+
+  async findTechnicianSpecializations(
+    userId: string,
+  ): Promise<{ categoryId: string }[]> {
+    return this.prisma.technicianSpecialization.findMany({
+      where: { userId },
+      select: { categoryId: true },
+    });
+  }
 }

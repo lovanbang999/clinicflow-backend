@@ -7,13 +7,16 @@ import {
   IUserRepository,
   I_USER_REPOSITORY,
 } from '../../database/interfaces/user.repository.interface';
+import {
+  ICatalogRepository,
+  I_CATALOG_REPOSITORY,
+} from '../../database/interfaces/catalog.repository.interface';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { FilterScheduleDto } from './dto/filter-schedule.dto';
 import { Prisma, ScheduleSlotStatus } from '@prisma/client';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
 import { ApiException } from '../../../common/exceptions/api.exception';
-import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class AdminSchedulesService {
@@ -21,11 +24,12 @@ export class AdminSchedulesService {
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
     @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
-    private readonly prisma: PrismaService,
+    @Inject(I_CATALOG_REPOSITORY)
+    private readonly catalogRepository: ICatalogRepository,
   ) {}
 
   async getRooms() {
-    const rooms = await this.prisma.room.findMany({
+    const rooms = await this.catalogRepository.findManyRooms({
       where: { isActive: true },
       select: { id: true, name: true, type: true },
       orderBy: { name: 'asc' },
