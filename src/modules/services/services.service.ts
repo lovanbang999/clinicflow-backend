@@ -199,7 +199,28 @@ export class ServicesService {
    * Get service by ID
    */
   async findOne(id: string) {
-    const service = await this.catalogRepository.findServiceById(id);
+    const service = await this.catalogRepository.findUnique({
+      where: { id },
+      include: {
+        category: true,
+        doctorServices: {
+          include: {
+            doctorProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    fullName: true,
+                    avatar: true,
+                    email: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
 
     if (!service) {
       throw new ApiException(
