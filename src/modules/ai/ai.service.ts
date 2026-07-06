@@ -4,7 +4,10 @@ import {
   SendMessageParameters,
   FunctionCall,
   Part,
+  Content,
 } from '@google/genai';
+import { AiSessionOutcome, AiMessageRole } from '@prisma/client';
+import { Observable, Subscriber } from 'rxjs';
 import {
   AI_PROVIDER,
   CHATBOT_TOOLS,
@@ -19,8 +22,27 @@ import { MyBookingsTool } from './tools/my-bookings.tool';
 import { CloudflareAdapter } from './cloudflare.adapter';
 import { GroqAdapter } from './groq.adapter';
 import { AiSessionService } from './ai-session.service';
-import { AiSessionOutcome, AiMessageRole } from '@prisma/client';
-import { Observable, Subscriber } from 'rxjs';
+
+interface DoctorSlot {
+  slotId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  roomName?: string;
+}
+
+interface DoctorInfoEntry {
+  doctorId: string;
+  fullName: string;
+  specialties?: string[];
+  services?: { serviceId: string }[];
+  upcomingSlots?: DoctorSlot[];
+}
+
+interface DoctorInfoResult {
+  found?: boolean;
+  doctors?: DoctorInfoEntry[];
+}
 
 @Injectable()
 export class AiService {
@@ -57,9 +79,6 @@ export class AiService {
     );
   }
 
-  /**
-   * Handles tool call execution mapping
-   */
   private async executeTool(
     name: string,
     args: Record<string, unknown>,
@@ -68,58 +87,56 @@ export class AiService {
   ): Promise<unknown> {
     this.logger.log(`Executing tool: ${name}`);
 
-    if (name === 'getSpecialtyBySymptoms') {
-      return this.specialtyTool.execute(args as { symptoms: string });
-    }
-
-    if (name === 'getDoctorInfo') {
-      return this.doctorTool.execute(
-        args as { doctorName: string; specialtyName?: string },
-      );
-    }
-
-    if (name === 'getAvailableSlots') {
-      return this.scheduleTool.execute(
-        args as {
+    const toolMap: Record<
+      string,
+      (args: Record<string, unknown>) => Promise<unknown>
+    > = {
+      getSpecialtyBySymptoms: (a) =>
+        this.specialtyTool.execute(a as { symptoms: string }),
+      getDoctorInfo: (a) =>
+        this.doctorTool.execute(
+          a as { doctorName?: string; specialtyName?: string },
+        ),
+      getAvailableSlots: (a) =>
+        this.scheduleTool.execute(
+          a as {
+            serviceId?: string;
+            specialtyName?: string;
+            doctorId?: string;
+            date?: string;
+            limit?: number;
+          },
+        ),
+      createBookingFromChat: (a) => {
+        const bookingArgs = a as {
+          doctorId: string;
           serviceId?: string;
-          specialtyName?: string;
-          doctorId?: string;
-          date?: string;
-          limit?: number;
-        },
-      );
-    }
+          slotId?: string;
+          date: string;
+          startTime: string;
+          endTime?: string;
+        };
+        return this.bookingTool.execute({
+          ...bookingArgs,
+          patientProfileId: patientId,
+          userId: userId!,
+        });
+      },
+      getMyBookings: (a) =>
+        this.myBookingsTool.execute({
+          patientProfileId: patientId,
+          includeAll: !!a.includeAll,
+        }),
+    };
 
-    if (name === 'createBookingFromChat') {
-      return this.bookingTool.execute({
-        ...args,
-        patientProfileId: patientId,
-        userId: userId!,
-      } as {
-        patientProfileId: string;
-        userId: string;
-        doctorId: string;
-        serviceId: string;
-        date: string;
-        startTime: string;
-      });
-    }
-
-    if (name === 'getMyBookings') {
-      return this.myBookingsTool.execute({
-        patientProfileId: patientId,
-        includeAll: (args.includeAll as boolean | undefined) ?? false,
-      });
+    const executor = toolMap[name];
+    if (executor) {
+      return executor(args);
     }
 
     return { error: `Tool ${name} not found` };
   }
 
-  /**
-   * SSE Stream endpoint. Uses RxJS Observable to stream chunks.
-   * Persists all messages to the session.
-   * Accepts optional patientContext to build a personalized system prompt.
-   */
   chatStream(
     historyMessages: unknown[],
     userMessage: string,
@@ -144,7 +161,6 @@ export class AiService {
           return;
         }
 
-        // Retry once with a different key before falling back
         this.logger.warn(
           `Gemini failed (${(err as { status?: number })?.status ?? 'unknown'}). Retrying with alternate key...`,
         );
@@ -202,14 +218,12 @@ export class AiService {
     subscriber: Subscriber<unknown>,
     patientContext?: PatientContext,
   ) {
-    // Persist the user message first (fire-and-forget, non-blocking)
     void this.aiSessionService.saveMessage(
       sessionId,
       AiMessageRole.USER,
       userMessage,
     );
 
-    // Build a personalized system prompt with patient context + current time
     const systemInstruction = buildSystemPrompt(patientContext);
 
     const chat = this.pickAiInstance().chats.create({
@@ -218,7 +232,7 @@ export class AiService {
         systemInstruction,
         tools: CHATBOT_TOOLS,
       },
-      history: historyMessages as any[],
+      history: historyMessages as Content[],
     });
 
     let messageToProcess: SendMessageParameters = {
@@ -227,7 +241,7 @@ export class AiService {
     let hasMoreTurns = true;
     let turnCount = 0;
     const MAX_TURNS = 8;
-    let fullModelText = ''; // Accumulates the complete AI response for persistence
+    let fullModelText = '';
 
     while (hasMoreTurns) {
       if (++turnCount > MAX_TURNS) {
@@ -268,10 +282,7 @@ export class AiService {
               userId,
             );
 
-            // Sanitize result to remove non-serializable objects (like Prisma Decimals)
             const result = this.sanitizeToolResult(rawResult);
-
-            // Persist tool call message with result
             const toolResult = result as Record<string, unknown>;
             void this.aiSessionService.saveMessage(
               sessionId,
@@ -284,7 +295,6 @@ export class AiService {
               },
             );
 
-            // Emit structured slots data for the frontend SlotPicker
             if (call.name === 'getAvailableSlots') {
               const r = toolResult as { slots?: unknown[]; metadata?: unknown };
               if (r?.slots && Array.isArray(r.slots) && r.slots.length > 0) {
@@ -292,30 +302,10 @@ export class AiService {
               }
             }
 
-            // Emit doctor info with slots for SlotPicker
             if (call.name === 'getDoctorInfo') {
-              interface DoctorSlot {
-                slotId: string;
-                date: string;
-                startTime: string;
-                endTime: string;
-                roomName?: string;
-              }
-              interface DoctorInfoEntry {
-                doctorId: string;
-                fullName: string;
-                specialties?: string[];
-                services?: { serviceId: string }[];
-                upcomingSlots?: DoctorSlot[];
-              }
-              interface DoctorInfoResult {
-                found?: boolean;
-                doctors?: DoctorInfoEntry[];
-              }
               const r = toolResult as DoctorInfoResult;
               if (r?.found && r.doctors && r.doctors.length > 0) {
                 const slots = r.doctors.flatMap((d) => {
-                  // Fallback to the first available service ID, required for online bookings
                   const serviceId =
                     d.services && d.services.length > 0
                       ? d.services[0].serviceId
@@ -335,7 +325,6 @@ export class AiService {
               }
             }
 
-            // If booking was just created, mark session as BOOKING_MADE
             const r = result as { bookingId?: string; status?: string };
             if (call.name === 'createBookingFromChat' && r?.bookingId) {
               void this.aiSessionService.endSession(
@@ -358,7 +347,6 @@ export class AiService {
       }
     }
 
-    // Persist the complete model response
     if (fullModelText) {
       void this.aiSessionService.saveMessage(
         sessionId,
@@ -370,15 +358,9 @@ export class AiService {
     subscriber.complete();
   }
 
-  /**
-   * Deeply cleans tool results to ensure they are plain JSON objects.
-   * Specifically converts Prisma Decimal objects to numbers/strings
-   * and ensures no functions or non-clonable classes remain.
-   */
   private sanitizeToolResult(result: unknown): unknown {
     if (!result) return result;
     try {
-      // Simple but effective: pipe through JSON to strip functions and convert Decimals to strings/numbers
       return JSON.parse(JSON.stringify(result));
     } catch (error) {
       this.logger.error('Failed to sanitize tool result:', error);

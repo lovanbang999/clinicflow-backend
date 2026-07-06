@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { BookingsService } from '../../bookings/bookings.service';
 import { BookingSource, BookingPriority, Booking } from '@prisma/client';
+import { BookingsService } from '../../bookings/bookings.service';
 import { CreateBookingDto } from '../../bookings/dto/create-booking.dto';
+import { isValidUuid } from '../ai.provider';
 
 @Injectable()
 export class BookingTool {
@@ -21,11 +22,6 @@ export class BookingTool {
   }) {
     const { patientProfileId, userId, doctorId, serviceId, date, startTime } =
       args;
-
-    const isValidUuid = (v?: string) =>
-      !!v &&
-      v !== 'unknown' &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
     if (!isValidUuid(patientProfileId)) {
       return {
@@ -114,13 +110,11 @@ export class BookingTool {
       const errorCode =
         err?.response?.messageCode || err?.response?.errorCode || '';
 
-      // Patient already has an active booking with this doctor on this date
       const isDuplicate =
         errorCode.includes('DUPLICATE') ||
         (typeof detail === 'string' &&
           detail.toLowerCase().includes('already has an active booking'));
 
-      // Slot taken by another patient concurrently
       const isConflict =
         !isDuplicate &&
         typeof detail === 'string' &&
