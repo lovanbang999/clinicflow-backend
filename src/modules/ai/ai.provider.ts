@@ -10,6 +10,14 @@ export interface PatientContext {
   chronicConditions?: string | null;
 }
 
+export function isValidUuid(v?: string): boolean {
+  return (
+    !!v &&
+    v !== 'unknown' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
+  );
+}
+
 // ─── Prompt Injection Sanitizer ───────────────────────────────────────────────
 
 /**

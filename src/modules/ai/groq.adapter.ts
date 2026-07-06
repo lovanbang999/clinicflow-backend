@@ -7,6 +7,7 @@ import {
   OpenAiTool,
   OpenAiToolCall,
   convertToOpenAiTools,
+  handleToolCalls,
 } from './cloudflare.adapter';
 
 type GroqResponse = {
@@ -71,36 +72,12 @@ export class GroqAdapter {
           tool_calls: toolCalls,
         });
 
-        await Promise.all(
-          toolCalls.map(async (tc) => {
-            let args: Record<string, unknown> = {};
-            try {
-              args = JSON.parse(tc.function.arguments) as Record<
-                string,
-                unknown
-              >;
-            } catch {
-              // malformed args — proceed with empty
-            }
-
-            let result: unknown;
-            try {
-              result = await executeTool(
-                tc.function.name,
-                args,
-                patientId ?? '',
-                userId,
-              );
-            } catch (e) {
-              result = { error: String(e) };
-            }
-
-            messages.push({
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: JSON.stringify(result),
-            });
-          }),
+        await handleToolCalls(
+          toolCalls,
+          executeTool,
+          patientId ?? '',
+          userId,
+          messages,
         );
       } else {
         subscriber.next({
