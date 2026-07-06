@@ -158,9 +158,11 @@ export class AdminSchedulesService {
   }
 
   async create(createDto: CreateScheduleDto) {
-    const doctor = await this.userRepository.findFirst({
+    const doctor = (await this.userRepository.findFirst({
       where: { id: createDto.doctorId, role: 'DOCTOR' },
-    });
+      include: { doctorProfile: true },
+    })) as Prisma.UserGetPayload<{ include: { doctorProfile: true } }> | null;
+
     if (!doctor) {
       throw new ApiException(
         MessageCodes.USER_NOT_FOUND,
@@ -170,9 +172,15 @@ export class AdminSchedulesService {
       );
     }
 
+    const roomId =
+      createDto.roomId && createDto.roomId !== 'none'
+        ? createDto.roomId
+        : doctor.doctorProfile?.roomId || undefined;
+
     const newSlot = await this.bookingRepository.createDoctorScheduleSlot({
       data: {
         ...createDto,
+        roomId,
         date: new Date(createDto.date),
       },
     });
