@@ -66,7 +66,6 @@ export class DoctorTool {
       take: 5,
     });
 
-    // Filter by specialty if provided
     const filtered = specialtyName
       ? doctors.filter((d) => {
           const specs = d.doctorProfile?.specialties as string[] | undefined;
@@ -113,6 +112,7 @@ export class DoctorTool {
               year: 'numeric',
               month: '2-digit',
               day: '2-digit',
+              hour12: false,
             }).format(s.date),
             startTime: s.startTime,
             endTime: s.endTime,

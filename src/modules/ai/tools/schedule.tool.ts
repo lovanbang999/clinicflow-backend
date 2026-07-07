@@ -3,6 +3,7 @@ import {
   I_BOOKING_REPOSITORY,
   IBookingRepository,
 } from '../../database/interfaces/booking.repository.interface';
+import { isValidUuid } from '../ai.provider';
 
 interface SlotWithRelations {
   id: string;
@@ -39,11 +40,6 @@ export class ScheduleTool {
   }) {
     const { serviceId, specialtyName, doctorId, date, limit = 5 } = args;
 
-    const isValidUuid = (v?: string) =>
-      !!v &&
-      v !== 'unknown' &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
-
     if (doctorId && !isValidUuid(doctorId)) {
       return {
         slots: [],
@@ -54,14 +50,12 @@ export class ScheduleTool {
       };
     }
 
-    // Compute Vietnam time constants once (Vietnam is fixed UTC+7, no DST)
     const nowUTC = new Date();
     const todayVN = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Ho_Chi_Minh',
-    }).format(nowUTC); // e.g. "2026-04-20"
+    }).format(nowUTC);
     const todayStart = new Date(todayVN + 'T00:00:00.000Z');
 
-    // Current VN wall-clock time as "HH:MM" for past-slot filtering
     const vnNow = new Date(nowUTC.getTime() + 7 * 60 * 60 * 1000);
     const nowTimeVN = `${String(vnNow.getUTCHours()).padStart(2, '0')}:${String(vnNow.getUTCMinutes()).padStart(2, '0')}`;
 
@@ -76,15 +70,13 @@ export class ScheduleTool {
         if (isRange) {
           whereClause.date = {
             gte: searchDate,
-            lte: new Date(searchDate.getTime() + 7 * 24 * 60 * 60 * 1000), // + 7 days
+            lte: new Date(searchDate.getTime() + 7 * 24 * 60 * 60 * 1000),
           };
         } else {
-          // Exact date: searchDate from user input "YYYY-MM-DD" is already UTC midnight
           const nextDay = new Date(searchDate.getTime() + 24 * 60 * 60 * 1000);
           whereClause.date = { gte: searchDate, lt: nextDay };
         }
       } else {
-        // Today and future in VN timezone
         whereClause.date = { gte: todayStart };
       }
 
@@ -116,37 +108,36 @@ export class ScheduleTool {
         timeZone: 'Asia/Ho_Chi_Minh',
       });
 
-      return (
-        slots
-          .filter((slot) => slot.bookedCount < slot.maxPatients)
-          .filter((s) => {
-            if (!specialtyName) return true;
-            return s.doctor.doctorProfile?.specialties.some((sp) =>
-              sp.toLowerCase().includes(specialtyName.toLowerCase()),
-            );
-          })
-          .filter((s) => {
-            if (!serviceId) return true;
-            return s.doctor.doctorProfile?.services.some(
-              (sv) => sv.serviceId === serviceId,
-            );
-          })
-          // Exclude past time slots for today (e.g. it's 22:40 — all 08:00-16:30 slots are over)
-          .filter((slot) => {
-            const slotDateStr = slotDateFormatter.format(slot.date);
-            if (slotDateStr === todayVN) {
-              return slot.startTime > nowTimeVN;
-            }
-            return true;
-          })
-      );
+      return slots.filter((slot) => {
+        if (slot.bookedCount >= slot.maxPatients) return false;
+
+        if (specialtyName) {
+          const matchesSpecialty = slot.doctor.doctorProfile?.specialties.some(
+            (sp) => sp.toLowerCase().includes(specialtyName.toLowerCase()),
+          );
+          if (!matchesSpecialty) return false;
+        }
+
+        if (serviceId) {
+          const matchesService = slot.doctor.doctorProfile?.services.some(
+            (sv) => sv.serviceId === serviceId,
+          );
+          if (!matchesService) return false;
+        }
+
+        const slotDateStr = slotDateFormatter.format(slot.date);
+        if (slotDateStr === todayVN && slot.startTime <= nowTimeVN) {
+          return false;
+        }
+
+        return true;
+      });
     };
 
     const searchDate = date ? new Date(date) : undefined;
     let filteredSlots = await findSlots(searchDate, false);
     let isFallback = false;
 
-    // If no slots found on specific date, try 7 days starting from the requested date
     if (date && filteredSlots.length === 0) {
       filteredSlots = await findSlots(searchDate, true);
       isFallback = true;

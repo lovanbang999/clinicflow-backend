@@ -1,4 +1,5 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
+import { AiSessionOutcome, AiMessageRole, Prisma } from '@prisma/client';
 import {
   I_AI_REPOSITORY,
   IAiRepository,
@@ -7,7 +8,30 @@ import {
   I_PROFILE_REPOSITORY,
   IProfileRepository,
 } from '../database/interfaces/profile.repository.interface';
-import { AiSessionOutcome, AiMessageRole, Prisma } from '@prisma/client';
+
+interface SessionListItem {
+  id: string;
+  startedAt: Date;
+  endedAt: Date | null;
+  outcome: AiSessionOutcome;
+  totalTokens: number;
+  messages: { content: string }[];
+  _count: { messages: number };
+}
+
+interface SessionDetails {
+  id: string;
+  startedAt: Date;
+  endedAt: Date | null;
+  outcome: AiSessionOutcome;
+  messages: {
+    id: string;
+    role: string;
+    content: string;
+    toolName: string | null;
+    createdAt: Date;
+  }[];
+}
 
 @Injectable()
 export class AiSessionService {
@@ -19,10 +43,6 @@ export class AiSessionService {
     private readonly profileRepository: IProfileRepository,
   ) {}
 
-  /**
-   * Create a new chat session for the user.
-   * Resolves patientProfileId automatically from userId if not supplied.
-   */
   async createSession(userId: string, modelName?: string): Promise<string> {
     const patientProfile = await this.profileRepository.findFirstPatientProfile(
       {
@@ -44,9 +64,6 @@ export class AiSessionService {
     return session.id;
   }
 
-  /**
-   * Append a single message (user / model / tool) to the session.
-   */
   async saveMessage(
     sessionId: string,
     role: AiMessageRole,
@@ -77,9 +94,6 @@ export class AiSessionService {
     });
   }
 
-  /**
-   * Accumulate token count into the session total.
-   */
   async addTokens(sessionId: string, tokens: number): Promise<void> {
     await this.aiRepository.updateAiChatSession({
       where: { id: sessionId },
@@ -87,10 +101,6 @@ export class AiSessionService {
     });
   }
 
-  /**
-   * Mark the session as ended with the given outcome.
-   * Optionally link the resulting booking.
-   */
   async endSession(
     sessionId: string,
     outcome: AiSessionOutcome,
@@ -106,9 +116,6 @@ export class AiSessionService {
     });
   }
 
-  /**
-   * Record a user-submitted issue report for a session.
-   */
   async reportSession(sessionId: string, note?: string): Promise<void> {
     await this.aiRepository.updateAiChatSession({
       where: { id: sessionId },
@@ -121,9 +128,6 @@ export class AiSessionService {
     });
   }
 
-  /**
-   * Check if a session belongs to the given user (authorization guard).
-   */
   async ownsSession(sessionId: string, userId: string): Promise<boolean> {
     const session = await this.aiRepository.findFirstAiChatSession({
       where: { id: sessionId, userId },
@@ -132,10 +136,6 @@ export class AiSessionService {
     return session !== null;
   }
 
-  /**
-   * List paginated chat sessions for a user, newest first.
-   * Includes message count and first user message as preview.
-   */
   async listSessions(
     userId: string,
     page: number = 1,
@@ -182,25 +182,22 @@ export class AiSessionService {
     ]);
 
     return {
-      sessions: sessions.map((s) => ({
-        id: s.id,
-        startedAt: s.startedAt,
-        endedAt: s.endedAt,
-        outcome: s.outcome,
-        totalTokens: s.totalTokens,
-        messageCount: (s as { _count: { messages: number } })._count.messages,
-        firstMessage:
-          (s as { messages: { content: string }[] }).messages[0]?.content ??
-          null,
-      })),
+      sessions: sessions.map((s) => {
+        const item = s as unknown as SessionListItem;
+        return {
+          id: item.id,
+          startedAt: item.startedAt,
+          endedAt: item.endedAt,
+          outcome: item.outcome,
+          totalTokens: item.totalTokens,
+          messageCount: item._count.messages,
+          firstMessage: item.messages[0]?.content ?? null,
+        };
+      }),
       total: total.length,
     };
   }
 
-  /**
-   * Get all messages for a specific session.
-   * Returns null if session doesn't belong to the user.
-   */
   async getSessionMessages(
     sessionId: string,
     userId: string,
@@ -241,24 +238,16 @@ export class AiSessionService {
 
     if (!session) return null;
 
+    const details = session as unknown as SessionDetails;
+
     return {
       session: {
-        id: session.id,
-        startedAt: session.startedAt,
-        endedAt: session.endedAt,
-        outcome: session.outcome,
+        id: details.id,
+        startedAt: details.startedAt,
+        endedAt: details.endedAt,
+        outcome: details.outcome,
       },
-      messages: (
-        session as {
-          messages: {
-            id: string;
-            role: string;
-            content: string;
-            toolName: string | null;
-            createdAt: Date;
-          }[];
-        }
-      ).messages,
+      messages: details.messages,
     };
   }
 }

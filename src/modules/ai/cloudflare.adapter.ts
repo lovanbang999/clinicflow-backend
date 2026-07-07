@@ -49,10 +49,6 @@ export function convertToOpenAiTools(): OpenAiTool[] {
   }));
 }
 
-/**
- * Cloudflare Workers AI native format — flat, not wrapped in { type, function }.
- * Used for the /ai/run/{model} endpoint which differs from OpenAI's format.
- */
 type CloudflareTool = {
   name: string;
   description: string;
@@ -97,6 +93,38 @@ function convertSchema(schema: unknown): Record<string, unknown> {
 
   if (s.items) result.items = convertSchema(s.items);
   return result;
+}
+
+export async function handleToolCalls(
+  toolCalls: OpenAiToolCall[],
+  executeTool: ToolExecutorFn,
+  patientId: string,
+  userId: string | undefined,
+  messages: OpenAiMessage[],
+): Promise<void> {
+  await Promise.all(
+    toolCalls.map(async (tc) => {
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+      } catch {
+        // Ignored
+      }
+
+      let result: unknown;
+      try {
+        result = await executeTool(tc.function.name, args, patientId, userId);
+      } catch (e) {
+        result = { error: String(e) };
+      }
+
+      messages.push({
+        role: 'tool',
+        tool_call_id: tc.id,
+        content: JSON.stringify(result),
+      });
+    }),
+  );
 }
 
 @Injectable()
@@ -144,12 +172,10 @@ export class CloudflareAdapter {
       }
       messages.push({ role: 'user', content: userMessage });
 
-      // Cloudflare native endpoint uses flat tool format, not OpenAI { type, function } wrapper
       const tools = executeTool ? convertToCloudflareTools() : undefined;
       const MAX_TOOL_TURNS = 6;
 
       for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
-        // On 400 (format error), gracefully retry without tools so user still gets a text reply
         let data: {
           result?: { response?: string; tool_calls?: OpenAiToolCall[] };
         };
@@ -171,48 +197,20 @@ export class CloudflareAdapter {
         const text: string = data.result?.response ?? '';
 
         if (toolCalls && toolCalls.length > 0 && executeTool) {
-          // Add assistant's tool-call message to history
           messages.push({
             role: 'assistant',
             content: null,
             tool_calls: toolCalls,
           });
 
-          // Execute each tool and append results
-          await Promise.all(
-            toolCalls.map(async (tc) => {
-              let args: Record<string, unknown> = {};
-              try {
-                args = JSON.parse(tc.function.arguments) as Record<
-                  string,
-                  unknown
-                >;
-              } catch {
-                // malformed args
-              }
-
-              let result: unknown;
-              try {
-                result = await executeTool(
-                  tc.function.name,
-                  args,
-                  patientId ?? '',
-                  userId,
-                );
-              } catch (e) {
-                result = { error: String(e) };
-              }
-
-              messages.push({
-                role: 'tool',
-                tool_call_id: tc.id,
-                content: JSON.stringify(result),
-              });
-            }),
+          await handleToolCalls(
+            toolCalls,
+            executeTool,
+            patientId ?? '',
+            userId,
+            messages,
           );
-          // Continue loop to let model process tool results
         } else {
-          // Final text response
           subscriber.next({
             data: {
               text:
@@ -225,7 +223,6 @@ export class CloudflareAdapter {
         }
       }
 
-      // Exceeded max turns
       subscriber.next({
         data: {
           text: 'Xin lỗi, tôi không thể xử lý yêu cầu này. Vui lòng liên hệ lễ tân hoặc thử lại.',

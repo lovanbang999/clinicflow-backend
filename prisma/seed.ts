@@ -1072,8 +1072,44 @@ async function main() {
   console.log('  ✅ Admin created');
 
   // 6. SEED DOCTORS & TECHNICIANS
+  const dbRoomsForProviders = await prisma.room.findMany();
+  const consultationRoomsForProviders = dbRoomsForProviders.filter(
+    (r) => r.type === RoomType.CONSULTATION,
+  );
+  const ultrasoundRoomsForProviders = dbRoomsForProviders.filter(
+    (r) => r.type === RoomType.ULTRASOUND,
+  );
+  const labRoomsForProviders = dbRoomsForProviders.filter(
+    (r) => r.type === RoomType.LAB,
+  );
+
   const allProviders: ProviderSeed[] = [...DOCTORS, ...TECHNICIANS];
+  let seededDocCount = 0;
   for (const p of allProviders) {
+    let assignedRoomId: string | null = null;
+    if (p.role === UserRole.DOCTOR) {
+      if (consultationRoomsForProviders.length > 0) {
+        const room =
+          consultationRoomsForProviders[
+            seededDocCount % consultationRoomsForProviders.length
+          ];
+        assignedRoomId = room.id;
+        seededDocCount++;
+      }
+    } else if (p.role === UserRole.TECHNICIAN) {
+      if (
+        p.specialties.includes('Xét nghiệm') &&
+        labRoomsForProviders.length > 0
+      ) {
+        assignedRoomId = labRoomsForProviders[0].id;
+      } else if (
+        p.specialties.includes('Chẩn đoán hình ảnh') &&
+        ultrasoundRoomsForProviders.length > 0
+      ) {
+        assignedRoomId = ultrasoundRoomsForProviders[0].id;
+      }
+    }
+
     const user = await prisma.user.create({
       data: {
         id: STATIC_USER_IDS[p.email] || undefined,
@@ -1097,6 +1133,7 @@ async function main() {
             consultationFee: p.consultationFee,
             rating: 4.5 + Math.random() * 0.5,
             reviewCount: Math.floor(Math.random() * 200),
+            roomId: assignedRoomId,
           },
         },
       },
@@ -1173,7 +1210,14 @@ async function main() {
   console.log('\n📅 Creating schedule slots...');
   const allDoctors = await prisma.user.findMany({
     where: { role: UserRole.DOCTOR, isActive: true },
-    select: { id: true },
+    select: {
+      id: true,
+      doctorProfile: {
+        select: {
+          roomId: true,
+        },
+      },
+    },
   });
   const consultationRooms = await prisma.room.findMany({
     where: { type: RoomType.CONSULTATION, isActive: true },
@@ -1217,11 +1261,13 @@ async function main() {
       slotDate.setDate(today.getDate() + dayOffset);
 
       for (let di = 0; di < allDoctors.length; di++) {
-        const room = consultationRooms[di % consultationRooms.length];
+        const doc = allDoctors[di];
+        const defaultRoom = consultationRooms[di % consultationRooms.length];
+        const roomId = doc.doctorProfile?.roomId || defaultRoom.id;
         for (const block of timeBlocks) {
           slotData.push({
-            doctorId: allDoctors[di].id,
-            roomId: room.id,
+            doctorId: doc.id,
+            roomId: roomId,
             date: slotDate,
             startTime: block.start,
             endTime: block.end,

@@ -32,7 +32,6 @@ export class SpecialtyTool {
       },
     };
 
-    // Step 1: Try to find matching categories by name or description
     let categories: Prisma.CategoryGetPayload<{
       select: {
         id: true;
@@ -70,7 +69,6 @@ export class SpecialtyTool {
       matchedByKeyword = categories.length > 0;
     }
 
-    // Step 2: Fallback — return ALL active examination categories for AI to choose
     if (categories.length === 0) {
       categories = await this.catalogRepository.findManyCategory({
         where: {
