@@ -12,13 +12,18 @@ async function bootstrap() {
   // Security headers
   app.use(helmet());
 
-  // CORS — require explicit FRONTEND_URL in production
-  const allowedOrigin = process.env.FRONTEND_URL;
-  if (!allowedOrigin && process.env.NODE_ENV === 'production') {
+  // CORS — support comma-separated list of origins in FRONTEND_URL
+  const frontendUrlEnv = process.env.FRONTEND_URL;
+  if (!frontendUrlEnv && process.env.NODE_ENV === 'production') {
     throw new Error('FRONTEND_URL env var must be set in production');
   }
+
+  const allowedOrigins = frontendUrlEnv
+    ? frontendUrlEnv.split(',').map((origin) => origin.trim())
+    : ['http://localhost:3000'];
+
   app.enableCors({
-    origin: allowedOrigin || 'http://localhost:3000',
+    origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
