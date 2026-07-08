@@ -21,45 +21,45 @@ model Icd10Code {
 }
 
 model User {
-  id                            String                 @id @default(uuid())
-  email                         String                 @unique
+  id                            String                     @id @default(uuid())
+  email                         String                     @unique
   password                      String
-  role                          UserRole               @default(PATIENT)
+  role                          UserRole                   @default(PATIENT)
   fullName                      String
   phone                         String?
   avatar                        String?
-  dateOfBirth                   DateTime?              @db.Date
+  dateOfBirth                   DateTime?                  @db.Date
   gender                        Gender?
   address                       String?
-  isActive                      Boolean                @default(false)
+  isActive                      Boolean                    @default(false)
   lockReason                    String?
-  isVerified                    Boolean                @default(false)
-  isPasswordTemp                Boolean                @default(false)
+  isVerified                    Boolean                    @default(false)
+  isPasswordTemp                Boolean                    @default(false)
   deletedAt                     DateTime?
-  createdAt                     DateTime               @default(now())
-  updatedAt                     DateTime               @updatedAt
+  createdAt                     DateTime                   @default(now())
+  updatedAt                     DateTime                   @updatedAt
   aiChatSessions                AiChatSession[]
-  auditLogs                     AuditLog[]             @relation("ActorLogs")
-  statusChanges                 BookingStatusHistory[] @relation("ChangedByUser")
-  bookedBookings                Booking[]              @relation("BookedByUser")
-  cancelledBookings             Booking[]              @relation("CancelledByUser")
-  bookingsAsDoctor              Booking[]              @relation("DoctorBookings")
+  auditLogs                     AuditLog[]                 @relation("ActorLogs")
+  statusChanges                 BookingStatusHistory[]     @relation("ChangedByUser")
+  bookedBookings                Booking[]                  @relation("BookedByUser")
+  cancelledBookings             Booking[]                  @relation("CancelledByUser")
+  bookingsAsDoctor              Booking[]                  @relation("DoctorBookings")
   breakTimes                    DoctorBreakTime[]
-  approvedOffDays               DoctorOffDay[]         @relation("ApprovedOffDays")
-  offDays                       DoctorOffDay[]         @relation("DoctorOffDays")
+  approvedOffDays               DoctorOffDay[]             @relation("ApprovedOffDays")
+  offDays                       DoctorOffDay[]             @relation("DoctorOffDays")
   doctorProfile                 DoctorProfile?
-  scheduleSlots                 DoctorScheduleSlot[]   @relation("DoctorScheduleSlots")
+  scheduleSlots                 DoctorScheduleSlot[]       @relation("DoctorScheduleSlots")
   workingHours                  DoctorWorkingHours[]
-  labResultsRecorded            LabResult[]            @relation("RecordedByUser")
+  labResultsRecorded            LabResult[]                @relation("RecordedByUser")
   notifications                 Notification[]
   patientProfile                PatientProfile?
-  paymentsConfirmed             Payment[]              @relation("ConfirmedByUser")
+  paymentsConfirmed             Payment[]                  @relation("ConfirmedByUser")
   refreshTokens                 RefreshToken[]
-  systemConfigsUpdated          SystemConfig[]         @relation("UpdatedByUser")
+  systemConfigsUpdated          SystemConfig[]             @relation("UpdatedByUser")
   verificationCodes             VerificationCode[]
-  visitServiceOrdersAsPerformer VisitServiceOrder[]    @relation("PerformedBy")
+  visitServiceOrdersAsPerformer VisitServiceOrder[]        @relation("PerformedBy")
   technicianSpecializations     TechnicianSpecialization[]
-  assignedLabOrders             LabOrder[]             @relation("AssignedTechnician")
+  assignedLabOrders             LabOrder[]                 @relation("AssignedTechnician")
 
   @@index([email])
   @@index([role])
@@ -273,15 +273,15 @@ model PatientProfile {
 }
 
 model Category {
-  id          String              @id @default(uuid())
-  code        String              @unique
-  name        String
-  description String?
-  type        ServiceCategoryType @default(LAB)
-  isActive    Boolean             @default(true)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-  services    Service[]
+  id                        String                     @id @default(uuid())
+  code                      String                     @unique
+  name                      String
+  description               String?
+  type                      ServiceCategoryType        @default(LAB)
+  isActive                  Boolean                    @default(true)
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  services                  Service[]
   technicianSpecializations TechnicianSpecialization[]
 
   @@index([isActive])
@@ -601,13 +601,13 @@ model Medicine {
   notes              String?            @db.Text
   registrationNumber String?            @map("registration_number")
   ingredients        String?            @db.Text
-  sideEffects        String?            @db.Text @map("side_effects")
+  sideEffects        String?            @map("side_effects") @db.Text
   warnings           String?            @db.Text
   manufacturerBrand  String?            @map("manufacturer_brand")
   country            String?
   imagePath          String?            @map("image_path")
-  imageUrl           String?            @db.VarChar(512) @map("image_url")
-  sourceUrl          String?            @db.VarChar(512) @map("source_url")
+  imageUrl           String?            @map("image_url") @db.VarChar(512)
+  sourceUrl          String?            @map("source_url") @db.VarChar(512)
   sourceSite         String?            @map("source_site")
   usage              String?            @db.Text
   uses               String?            @db.Text
