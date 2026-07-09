@@ -102,15 +102,14 @@ export class NotificationsService {
     metadata?: Prisma.InputJsonValue;
   }) {
     try {
-      const users = await this.userRepository.findMany({
-        where: { role: data.role, isActive: true },
-        select: { id: true },
-      });
+      const userIds = await this.userRepository.findActiveUserIdsByRole(
+        data.role,
+      );
 
       const notifications = await Promise.all(
-        users.map((user) =>
+        userIds.map((userId) =>
           this.createInAppNotification({
-            userId: user.id,
+            userId,
             title: data.title,
             content: data.content,
             type: data.type,
@@ -140,23 +139,12 @@ export class NotificationsService {
    * Get user's in-app notifications
    */
   async getMyNotifications(userId: string) {
-    const list = await this.systemRepository.findManyNotification({
-      where: {
-        userId,
-        channel: NotificationChannel.IN_APP,
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
-
-    const unreadCount = await this.systemRepository.countNotification({
-      where: {
-        userId,
-        channel: NotificationChannel.IN_APP,
-        isRead: false,
-      },
-    });
-
+    const list = await this.systemRepository.findUserInAppNotifications(
+      userId,
+      50,
+    );
+    const unreadCount =
+      await this.systemRepository.countUnreadInAppNotifications(userId);
     return { notifications: list, unreadCount };
   }
 
@@ -164,26 +152,14 @@ export class NotificationsService {
    * Mark notification as read
    */
   async markAsRead(userId: string, id: string) {
-    return this.systemRepository.updateNotification({
-      where: { id, userId },
-      data: {
-        isRead: true,
-        readAt: new Date(),
-      },
-    });
+    return this.systemRepository.markNotificationAsRead(id, userId);
   }
 
   /**
    * Mark all as read
    */
   async markAllAsRead(userId: string) {
-    return this.systemRepository.updateManyNotification({
-      where: { userId, isRead: false, channel: NotificationChannel.IN_APP },
-      data: {
-        isRead: true,
-        readAt: new Date(),
-      },
-    });
+    return this.systemRepository.markAllNotificationsAsRead(userId);
   }
 
   /**
@@ -469,18 +445,17 @@ export class NotificationsService {
     metadata?: Prisma.InputJsonValue;
   }) {
     try {
-      const admins = await this.userRepository.findMany({
-        where: { role: 'ADMIN', isActive: true },
-        select: { id: true },
-      });
+      const adminIds = await this.userRepository.findActiveUserIdsByRole(
+        UserRole.ADMIN,
+      );
 
-      if (admins.length === 0) return;
+      if (adminIds.length === 0) return;
 
       const notifications = await Promise.all(
-        admins.map((admin) =>
+        adminIds.map((adminId) =>
           this.systemRepository.createNotification({
             data: {
-              userId: admin.id,
+              userId: adminId,
               title: data.title,
               content: data.content,
               type: NotificationType.ADMIN_ACTIVITY,
@@ -492,12 +467,12 @@ export class NotificationsService {
       );
 
       // Broadcast to each admin via WebSocket
-      admins.forEach((admin, index) => {
-        this.gateway.sendToUser(admin.id, notifications[index]);
+      adminIds.forEach((adminId, index) => {
+        this.gateway.sendToUser(adminId, notifications[index]);
       });
 
       this.logger.log(
-        `System activity notification sent to ${admins.length} admins`,
+        `System activity notification sent to ${adminIds.length} admins`,
       );
     } catch (error) {
       this.logger.error('Failed to notify admins:', error);
@@ -513,18 +488,17 @@ export class NotificationsService {
     metadata?: Prisma.InputJsonValue;
   }) {
     try {
-      const staff = await this.userRepository.findMany({
-        where: { role: 'RECEPTIONIST', isActive: true },
-        select: { id: true },
-      });
+      const receptionistIds = await this.userRepository.findActiveUserIdsByRole(
+        UserRole.RECEPTIONIST,
+      );
 
-      if (staff.length === 0) return;
+      if (receptionistIds.length === 0) return;
 
       const notifications = await Promise.all(
-        staff.map((s) =>
+        receptionistIds.map((id) =>
           this.systemRepository.createNotification({
             data: {
-              userId: s.id,
+              userId: id,
               title: data.title,
               content: data.content,
               type: NotificationType.SYSTEM,
@@ -535,12 +509,12 @@ export class NotificationsService {
         ),
       );
 
-      staff.forEach((s, index) => {
-        this.gateway.sendToUser(s.id, notifications[index]);
+      receptionistIds.forEach((id, index) => {
+        this.gateway.sendToUser(id, notifications[index]);
       });
 
       this.logger.log(
-        `Staff notification sent to ${staff.length} receptionists`,
+        `Staff notification sent to ${receptionistIds.length} receptionists`,
       );
     } catch (error) {
       this.logger.error('Failed to notify receptionists:', error);

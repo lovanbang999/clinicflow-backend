@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { NotificationsService } from './notifications.service';
-import { BookingStatus } from '@prisma/client';
 import { format, addDays, startOfDay, endOfDay } from 'date-fns';
 import { vi } from 'date-fns/locale';
 import {
@@ -35,26 +34,11 @@ export class BookingReminderService {
     const end = endOfDay(tomorrow);
 
     try {
-      const bookings = await this.bookingRepository.findManyBooking({
-        where: {
-          bookingDate: { gte: start, lte: end },
-          isPreBooked: true, // Walk-in bookings don't have a fixed time — skip reminders
-          startTime: { not: null },
-          status: { in: [BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN] },
-        },
-        include: {
-          patientProfile: {
-            select: {
-              id: true,
-              userId: true,
-              fullName: true,
-              user: { select: { email: true } },
-            },
-          },
-          doctor: true,
-          service: true,
-        },
-      });
+      const bookings =
+        await this.bookingRepository.findConfirmedBookingsInTimeRange(
+          start,
+          end,
+        );
 
       this.logger.log(
         `Found ${bookings.length} bookings for tomorrow (${format(tomorrow, 'dd/MM/yyyy')})`,
@@ -101,29 +85,11 @@ export class BookingReminderService {
     const targetDate = format(oneHourLater, 'yyyy-MM-dd');
 
     try {
-      const bookings = await this.bookingRepository.findManyBooking({
-        where: {
-          bookingDate: {
-            gte: startOfDay(oneHourLater),
-            lte: endOfDay(oneHourLater),
-          },
-          isPreBooked: true, // Walk-in bookings don't have a fixed time — skip
-          startTime: { not: null },
-          status: { in: [BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN] },
-        },
-        include: {
-          patientProfile: {
-            select: {
-              id: true,
-              userId: true,
-              fullName: true,
-              user: { select: { email: true } },
-            },
-          },
-          doctor: true,
-          service: true,
-        },
-      });
+      const bookings =
+        await this.bookingRepository.findConfirmedBookingsInTimeRange(
+          startOfDay(oneHourLater),
+          endOfDay(oneHourLater),
+        );
 
       // Filter to only bookings starting in ~1 hour
       const upcomingBookings = bookings.filter((b) => {

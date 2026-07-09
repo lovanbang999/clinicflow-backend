@@ -26,13 +26,8 @@ export class NotificationsCleanupService {
     try {
       const thirtyDaysAgo = subDays(new Date(), 30);
 
-      const result = await this.systemRepository.deleteManyNotification({
-        where: {
-          createdAt: {
-            lt: thirtyDaysAgo,
-          },
-        },
-      });
+      const result =
+        await this.systemRepository.deleteNotificationsBefore(thirtyDaysAgo);
 
       this.logger.log(
         `Cleanup successful. Deleted ${result.count} notifications older than 30 days.`,
