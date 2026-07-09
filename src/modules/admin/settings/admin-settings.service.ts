@@ -18,9 +18,7 @@ export class AdminSettingsService {
   async getSettingsByCategory(
     category: string,
   ): Promise<Record<string, unknown>> {
-    const configs = await this.systemRepository.findManySystemConfig({
-      where: { category: category.toUpperCase() },
-    });
+    const configs = await this.systemRepository.findConfigByCategory(category);
 
     const settings: Record<string, unknown> = {};
     configs.forEach((c) => {
@@ -65,20 +63,13 @@ export class AdminSettingsService {
       const dataType = typeof value;
 
       operations.push(
-        this.systemRepository.upsertSystemConfig({
-          where: { key: fullKey },
-          update: {
-            value: stringValue,
-            updatedBy: userId,
-          },
-          create: {
-            key: fullKey,
-            value: stringValue,
-            category: category.toUpperCase(),
-            dataType: dataType === 'object' ? 'json' : dataType,
-            updatedBy: userId,
-          },
-        }),
+        this.systemRepository.upsertConfigValue(
+          fullKey,
+          stringValue,
+          category,
+          dataType === 'object' ? 'json' : dataType,
+          userId,
+        ),
       );
     }
 

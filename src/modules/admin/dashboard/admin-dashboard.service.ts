@@ -31,24 +31,6 @@ export class AdminDashboardService {
     @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
   ) {}
 
-  private async fetchPaidInvoices(filter: { gte?: Date; lte?: Date }) {
-    return this.financeRepository.findManyInvoice({
-      where: {
-        status: 'PAID',
-        ...(filter.gte || filter.lte
-          ? { paidAt: { gte: filter.gte, lte: filter.lte } }
-          : {}),
-      },
-      select: {
-        totalAmount: true,
-        paidAt: true,
-        booking: {
-          select: { doctorId: true },
-        },
-      },
-    });
-  }
-
   async getDashboardOverview(query: DateRangeQueryDto) {
     const { from, to } = query;
     const now = new Date();
@@ -57,11 +39,7 @@ export class AdminDashboardService {
 
     const filterGte = from ? new Date(from) : undefined;
     const filterLte = to ? new Date(to) : undefined;
-
-    const currentPeriodInvoices = await this.fetchPaidInvoices({
-      gte: filterGte || startOfMonth,
-      lte: filterLte,
-    });
+    const periodGte = filterGte || startOfMonth;
 
     const [
       totalPatients,
@@ -69,56 +47,42 @@ export class AdminDashboardService {
       totalBookings,
       periodPatients,
       comparisonPatients,
+      currentPeriodInvoices,
+      allPaid,
     ] = await Promise.all([
-      this.profileRepository.countPatientProfile({}),
-      this.userRepository.count({
-        where: { role: UserRole.DOCTOR, isActive: true },
-      }),
-      this.bookingRepository.countBooking({}),
-      // New patient profiles in selected period OR this month
-      this.profileRepository.countPatientProfile({
-        where: {
-          createdAt: {
-            gte: filterGte || startOfMonth,
-            lte: filterLte,
-          },
-        },
-      }),
-      // Comparison: if no filter, use last month
+      this.profileRepository.countTotalPatients(),
+      this.userRepository.countActiveDoctors(),
+      this.bookingRepository.countTotalBookings(),
+      this.profileRepository.countPatientsByDateRange(periodGte, filterLte),
       !from
-        ? this.profileRepository.countPatientProfile({
-            where: {
-              createdAt: { gte: startOfLastMonth, lt: startOfMonth },
-            },
-          })
+        ? this.profileRepository.countPatientsByDateRange(
+            startOfLastMonth,
+            new Date(startOfMonth.getTime() - 1),
+          )
         : Promise.resolve(0),
+      this.financeRepository.findPaidInvoicesForAnalytics({
+        gte: periodGte,
+        lte: filterLte,
+      }),
+      this.financeRepository.findPaidInvoicesForAnalytics({}),
     ]);
 
-    // Total Revenue (all time for KPI, unless we want it filtered?)
-    // Usually "Total Revenue" KPI is all time, but "Revenue this period" is filtered.
-    const allPaid = await this.fetchPaidInvoices({});
     const totalRevenue = allPaid.reduce(
       (sum, inv) => sum + Number(inv.totalAmount),
       0,
     );
 
-    // Filtered revenue
     const periodRevenue = currentPeriodInvoices.reduce(
       (sum, inv) => sum + Number(inv.totalAmount),
       0,
     );
 
-    // Period Bookings
-    const periodBookings = await this.bookingRepository.countBooking({
-      where: {
-        createdAt: {
-          gte: filterGte || startOfMonth,
-          lte: filterLte,
-        },
-      },
-    });
+    const periodBookings =
+      await this.bookingRepository.countBookingsByDateRange(
+        periodGte,
+        filterLte,
+      );
 
-    // Trend calculation (only if no custom filter, otherwise trend might not make sense without same-duration comparison)
     let revenueGrowthPct = 0;
     let lastMonthRevenue = 0;
     let lastMonthBookings = 0;
@@ -135,9 +99,10 @@ export class AdminDashboardService {
             )
             .reduce((sum, inv) => sum + Number(inv.totalAmount), 0),
         ),
-        this.bookingRepository.countBooking({
-          where: { createdAt: { gte: startOfLastMonth, lt: startOfMonth } },
-        }),
+        this.bookingRepository.countBookingsByDateRange(
+          startOfLastMonth,
+          new Date(startOfMonth.getTime() - 1),
+        ),
       ]);
 
       lastMonthRevenue = lmRev;
@@ -185,28 +150,25 @@ export class AdminDashboardService {
     const start = new Date(year, monthIndex, 1);
     const end = new Date(year, monthIndex + 1, 0, 23, 59, 59);
 
-    const [bookingCount, completedCount, newPatients] = await Promise.all([
-      this.bookingRepository.countBooking({
-        where: { createdAt: { gte: start, lte: end } },
-      }),
-      this.bookingRepository.countBooking({
-        where: {
-          status: BookingStatus.COMPLETED,
-          createdAt: { gte: start, lte: end },
-        },
-      }),
-      this.userRepository.count({
-        where: {
-          role: UserRole.PATIENT,
-          createdAt: { gte: start, lte: end },
-        },
-      }),
-    ]);
+    const [bookingCount, completedCount, newPatients, paidInvoices] =
+      await Promise.all([
+        this.bookingRepository.countBookingsByDateRange(start, end),
+        this.bookingRepository.countBookingsByStatusAndDateRange(
+          BookingStatus.COMPLETED,
+          start,
+          end,
+        ),
+        this.userRepository.countUsersByRoleAndDateRange(
+          UserRole.PATIENT,
+          start,
+          end,
+        ),
+        this.financeRepository.findPaidInvoicesForAnalytics({
+          gte: start,
+          lte: end,
+        }),
+      ]);
 
-    const paidInvoices = await this.fetchPaidInvoices({
-      gte: start,
-      lte: end,
-    });
     const revenue = paidInvoices.reduce(
       (sum, inv) => sum + Number(inv.totalAmount),
       0,

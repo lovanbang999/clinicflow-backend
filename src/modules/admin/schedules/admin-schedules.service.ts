@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { Injectable, Inject } from '@nestjs/common';
 import {
   IBookingRepository,
@@ -14,7 +15,6 @@ import {
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { FilterScheduleDto } from './dto/filter-schedule.dto';
-import { Prisma, ScheduleSlotStatus } from '@prisma/client';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
 import { ApiException } from '../../../common/exceptions/api.exception';
 
@@ -29,12 +29,7 @@ export class AdminSchedulesService {
   ) {}
 
   async getRooms() {
-    const rooms = await this.catalogRepository.findManyRooms({
-      where: { isActive: true },
-      select: { id: true, name: true, type: true },
-      orderBy: { name: 'asc' },
-    });
-
+    const rooms = await this.catalogRepository.findActiveRooms();
     return rooms;
   }
 
@@ -45,78 +40,16 @@ export class AdminSchedulesService {
     const endOfToday = new Date();
     endOfToday.setHours(23, 59, 59, 999);
 
-    const [totalAppointments, todaysSlots, canceledBookings] =
-      await Promise.all([
-        this.bookingRepository.count({}),
-        this.bookingRepository.countDoctorScheduleSlot({
-          where: {
-            date: {
-              gte: today,
-              lte: endOfToday,
-            },
-          },
-        }),
-        this.bookingRepository.countBooking({
-          where: {
-            status: 'CANCELLED',
-            bookingDate: {
-              gte: today,
-              lte: endOfToday,
-            },
-          },
-        }),
-      ]);
+    const stats = await this.bookingRepository.getScheduleDashboardStats(
+      today,
+      endOfToday,
+    );
 
-    // Calculate a mock avg waiting time based on booking queue
-    const queuedBookings = await this.bookingRepository.aggregateQueue({
-      _avg: {
-        estimatedWaitMinutes: true,
-      },
-    });
-
-    return {
-      totalAppointments,
-      todaysSlots,
-      canceledToday: canceledBookings,
-      avgWaitTime: Math.round(queuedBookings._avg?.estimatedWaitMinutes ?? 0),
-    };
+    return stats;
   }
 
   async findAll(filters: FilterScheduleDto) {
-    const where: Prisma.DoctorScheduleSlotWhereInput = {};
-
-    if (filters.doctorId) {
-      where.doctorId = filters.doctorId;
-    }
-    if (filters.status) {
-      where.status = filters.status.toUpperCase() as ScheduleSlotStatus;
-    } else if (filters.isActive !== undefined) {
-      where.isActive = filters.isActive;
-    }
-    if (filters.startDate || filters.endDate) {
-      where.date = {};
-      if (filters.startDate) where.date.gte = new Date(filters.startDate);
-      if (filters.endDate) where.date.lte = new Date(filters.endDate);
-    }
-
-    const slots = await this.bookingRepository.findManyDoctorScheduleSlot({
-      where,
-      include: {
-        doctor: {
-          select: {
-            id: true,
-            fullName: true,
-            doctorProfile: {
-              select: { specialties: true },
-            },
-          },
-        },
-        room: {
-          select: { id: true, name: true },
-        },
-      },
-      orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
-    });
+    const slots = await this.bookingRepository.findAdminScheduleSlots(filters);
 
     return {
       data: slots,
@@ -127,17 +60,7 @@ export class AdminSchedulesService {
   }
 
   private async findById(id: string) {
-    const slot = await this.bookingRepository.findUniqueDoctorScheduleSlot({
-      where: { id },
-      include: {
-        doctor: {
-          select: { fullName: true },
-        },
-        room: {
-          select: { id: true, name: true },
-        },
-      },
-    });
+    const slot = await this.bookingRepository.findAdminScheduleSlotDetail(id);
 
     if (!slot) {
       throw new ApiException(
@@ -158,10 +81,9 @@ export class AdminSchedulesService {
   }
 
   async create(createDto: CreateScheduleDto) {
-    const doctor = (await this.userRepository.findFirst({
-      where: { id: createDto.doctorId, role: 'DOCTOR' },
-      include: { doctorProfile: true },
-    })) as Prisma.UserGetPayload<{ include: { doctorProfile: true } }> | null;
+    const doctor = await this.userRepository.findDoctorWithProfile(
+      createDto.doctorId,
+    );
 
     if (!doctor) {
       throw new ApiException(
@@ -177,12 +99,10 @@ export class AdminSchedulesService {
         ? createDto.roomId
         : doctor.doctorProfile?.roomId || undefined;
 
-    const newSlot = await this.bookingRepository.createDoctorScheduleSlot({
-      data: {
-        ...createDto,
-        roomId,
-        date: new Date(createDto.date),
-      },
+    const newSlot = await this.bookingRepository.createScheduleSlot({
+      ...createDto,
+      roomId,
+      date: new Date(createDto.date),
     });
 
     return newSlot;
@@ -192,15 +112,15 @@ export class AdminSchedulesService {
     await this.findById(id); // Check exists
 
     // Format date string to Date object if updating
-    const updateData: Prisma.DoctorScheduleSlotUpdateInput = { ...updateDto };
-    if (updateDto.date) {
-      updateData.date = new Date(updateDto.date);
-    }
+    const updateData: Prisma.DoctorScheduleSlotUncheckedUpdateInput = {
+      ...updateDto,
+      date: updateDto.date ? new Date(updateDto.date) : undefined,
+    };
 
-    const updatedSlot = await this.bookingRepository.updateDoctorScheduleSlot({
-      where: { id },
-      data: updateData,
-    });
+    const updatedSlot = await this.bookingRepository.updateScheduleSlot(
+      id,
+      updateData,
+    );
 
     return updatedSlot;
   }
@@ -208,9 +128,8 @@ export class AdminSchedulesService {
   async remove(id: string) {
     await this.findById(id);
 
-    const deletedSlot = await this.bookingRepository.updateDoctorScheduleSlot({
-      where: { id },
-      data: { isActive: false },
+    const deletedSlot = await this.bookingRepository.updateScheduleSlot(id, {
+      isActive: false,
     });
 
     return deletedSlot;
@@ -218,9 +137,8 @@ export class AdminSchedulesService {
 
   async restore(id: string) {
     await this.findById(id);
-    const restoredSlot = await this.bookingRepository.updateDoctorScheduleSlot({
-      where: { id },
-      data: { isActive: true },
+    const restoredSlot = await this.bookingRepository.updateScheduleSlot(id, {
+      isActive: true,
     });
 
     return restoredSlot;

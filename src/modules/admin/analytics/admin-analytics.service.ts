@@ -32,24 +32,6 @@ export class AdminAnalyticsService {
     @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
   ) {}
 
-  private async fetchPaidInvoices(filter: { gte?: Date; lte?: Date }) {
-    return this.financeRepository.findManyInvoice({
-      where: {
-        status: 'PAID',
-        ...(filter.gte || filter.lte
-          ? { paidAt: { gte: filter.gte, lte: filter.lte } }
-          : {}),
-      },
-      select: {
-        totalAmount: true,
-        paidAt: true,
-        booking: {
-          select: { doctorId: true },
-        },
-      },
-    });
-  }
-
   async getAnalyticsOverview(query: DateRangeQueryDto) {
     const { from, to } = query;
     const now = new Date();
@@ -59,15 +41,7 @@ export class AdminAnalyticsService {
     const filterGte = from ? new Date(from) : undefined;
     const filterLte = to ? new Date(to) : undefined;
 
-    const currentPeriodInvoices = await this.fetchPaidInvoices({
-      gte: filterGte || startOfMonth,
-      lte: filterLte,
-    });
-
-    type InvoiceGroupByTypeRow = {
-      invoiceType: string;
-      _sum: { totalAmount?: number | null };
-    };
+    const periodGte = filterGte || startOfMonth;
 
     const [
       totalPatients,
@@ -75,7 +49,9 @@ export class AdminAnalyticsService {
       totalBookings,
       periodPatients,
       comparisonPatients,
-      revenueByTypeRaw,
+      revenueByTypeRows,
+      currentPeriodInvoices,
+      allPaid,
     ] = await Promise.all([
       this.profileRepository.countPatientProfile({}),
       this.userRepository.count({
@@ -85,7 +61,7 @@ export class AdminAnalyticsService {
       this.profileRepository.countPatientProfile({
         where: {
           createdAt: {
-            gte: filterGte || startOfMonth,
+            gte: periodGte,
             lte: filterLte,
           },
         },
@@ -97,14 +73,15 @@ export class AdminAnalyticsService {
             },
           })
         : Promise.resolve(0),
-      this.financeRepository.groupByInvoice({
-        by: ['invoiceType'],
-        where: {
-          status: 'PAID',
-          paidAt: { gte: filterGte || startOfMonth, lte: filterLte },
-        },
-        _sum: { totalAmount: true },
-      }) as Promise<InvoiceGroupByTypeRow[]>,
+      this.financeRepository.getRevenueByInvoiceType({
+        gte: periodGte,
+        lte: filterLte,
+      }),
+      this.financeRepository.findPaidInvoicesForAnalytics({
+        gte: periodGte,
+        lte: filterLte,
+      }),
+      this.financeRepository.findPaidInvoicesForAnalytics({}),
     ]);
 
     const revenueByType = {
@@ -112,7 +89,7 @@ export class AdminAnalyticsService {
       SERVICE: 0,
       PHARMACY: 0,
     };
-    for (const r of revenueByTypeRaw) {
+    for (const r of revenueByTypeRows) {
       if (r.invoiceType in revenueByType) {
         revenueByType[
           r.invoiceType as 'CONSULTATION' | 'SERVICE' | 'PHARMACY'
@@ -120,7 +97,6 @@ export class AdminAnalyticsService {
       }
     }
 
-    const allPaid = await this.fetchPaidInvoices({});
     const totalRevenue = allPaid.reduce(
       (sum, inv) => sum + Number(inv.totalAmount),
       0,
@@ -134,7 +110,7 @@ export class AdminAnalyticsService {
     const periodBookings = await this.bookingRepository.countBooking({
       where: {
         createdAt: {
-          gte: filterGte || startOfMonth,
+          gte: periodGte,
           lte: filterLte,
         },
       },
@@ -215,6 +191,7 @@ export class AdminAnalyticsService {
     const bookingIds = topRaw
       .map((r) => r.bookingId)
       .filter((id): id is string => Boolean(id));
+
     const doctorRevenueMap = new Map<string, number>();
     const doctorCountMap = new Map<string, number>();
     const doctorInfoMap = new Map<
@@ -222,20 +199,12 @@ export class AdminAnalyticsService {
       { fullName: string; avatar: string | null; specialties: string[] }
     >();
 
-    const bookingsWithProfiles = await this.bookingRepository.findManyBooking({
-      where: { id: { in: bookingIds } },
-      select: {
-        id: true,
-        doctorId: true,
-        doctor: {
-          select: {
-            fullName: true,
-            avatar: true,
-            doctorProfile: { select: { specialties: true } },
-          },
-        },
-      },
-    });
+    const bookingsWithProfiles =
+      await this.bookingRepository.findBookingsForTopDoctors({
+        gte: filterGte,
+        lte: filterLte,
+        bookingIds,
+      });
 
     for (const row of topRaw) {
       const booking = bookingsWithProfiles.find((b) => b.id === row.bookingId);
@@ -319,10 +288,11 @@ export class AdminAnalyticsService {
       points = months;
     }
 
-    const paidInvoices = await this.fetchPaidInvoices({
-      gte: since,
-      lte: until,
-    });
+    const paidInvoices =
+      await this.financeRepository.findPaidInvoicesForAnalytics({
+        gte: since,
+        lte: until,
+      });
 
     const revenueByPoint = new Map<string, number>();
 
@@ -426,20 +396,11 @@ export class AdminAnalyticsService {
     const filterGte = query?.from ? new Date(query.from) : startOfThisMonth;
     const filterLte = query?.to ? new Date(query.to) : undefined;
 
-    const topInvoices = await this.financeRepository.findManyInvoice({
-      where: {
-        status: 'PAID',
-        paidAt: { gte: filterGte, lte: filterLte },
-      },
-      include: {
-        booking: {
-          select: {
-            serviceId: true,
-            service: { select: { name: true } },
-          },
-        },
-      },
-    });
+    const topInvoices =
+      await this.financeRepository.findPaidInvoicesWithServiceInfo({
+        gte: filterGte,
+        lte: filterLte,
+      });
 
     const serviceRevenueMap = new Map<
       string,
@@ -483,36 +444,9 @@ export class AdminAnalyticsService {
     const filterGte = from ? new Date(from) : undefined;
     const filterLte = to ? new Date(to) : undefined;
 
-    const invoices = await this.financeRepository.findManyInvoice({
-      where: {
-        status: 'PAID',
-        ...(filterGte || filterLte
-          ? { paidAt: { gte: filterGte, lte: filterLte } }
-          : {}),
-      },
-      include: {
-        booking: {
-          select: {
-            patientProfile: {
-              select: {
-                fullName: true,
-                patientCode: true,
-              },
-            },
-            doctor: {
-              select: {
-                fullName: true,
-              },
-            },
-          },
-        },
-        payments: {
-          select: {
-            paymentMethod: true,
-          },
-        },
-      },
-      orderBy: { paidAt: 'desc' },
+    const invoices = await this.financeRepository.findPaidInvoicesForReport({
+      gte: filterGte,
+      lte: filterLte,
     });
 
     const totalRevenue = invoices.reduce(
