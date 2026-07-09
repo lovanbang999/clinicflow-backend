@@ -111,11 +111,16 @@ export type InvoiceWithBooking = Prisma.InvoiceGetPayload<{
         bookingCode: true;
         bookingDate: true;
         patientProfile: {
-          select: { fullName: true; phone: true; email: true };
+          select: {
+            fullName: true;
+            phone: true;
+            email: true;
+            patientCode: true;
+          };
         };
       };
     };
-    invoiceItem: true;
+    items: true;
     payments: true;
   };
 }>;
@@ -179,3 +184,352 @@ export interface SlotReservation {
   expiresAt: Date;
   createdAt: Date;
 }
+
+export type ConfirmedBookingReminder = Prisma.BookingGetPayload<{
+  include: {
+    patientProfile: {
+      select: {
+        id: true;
+        userId: true;
+        fullName: true;
+        user: { select: { email: true } };
+      };
+    };
+    doctor: true;
+    service: true;
+  };
+}>;
+
+export type PendingOffDayWithDoctor = Prisma.DoctorOffDayGetPayload<{
+  include: {
+    doctor: {
+      select: {
+        id: true;
+        fullName: true;
+        email: true;
+      };
+    };
+  };
+}>;
+
+export type BookingForQueue = Prisma.BookingGetPayload<{
+  include: {
+    service: true;
+    patientProfile: true;
+  };
+}>;
+
+export type QueueRecordDetail = Prisma.BookingQueueGetPayload<{
+  include: {
+    booking: {
+      include: typeof BookingInclude & {
+        medicalRecord: {
+          select: {
+            id: true;
+            isFinalized: true;
+            chiefComplaint: true;
+            clinicalFindings: true;
+            diagnosisCode: true;
+            diagnosisName: true;
+            treatmentPlan: true;
+            doctorNotes: true;
+            followUpDate: true;
+            followUpNote: true;
+          };
+        };
+      };
+    };
+  };
+}>;
+
+export type ActiveWalkInQueueForRecalculation = Prisma.BookingQueueGetPayload<{
+  include: {
+    booking: {
+      select: {
+        id: true;
+        service: { select: { durationMinutes: true } };
+      };
+    };
+  };
+}>;
+
+export type FirstInQueueDetail = Prisma.BookingQueueGetPayload<{
+  include: {
+    booking: {
+      include: {
+        service: true;
+      };
+    };
+  };
+}>;
+
+export type DoctorSpecialistQueueItem = Prisma.VisitServiceOrderGetPayload<{
+  include: {
+    service: { select: { id: true; name: true } };
+    medicalRecord: {
+      include: {
+        booking: {
+          include: {
+            patientProfile: true;
+            doctor: true;
+            service: true;
+            medicalRecord: {
+              select: {
+                id: true;
+                isFinalized: true;
+                chiefComplaint: true;
+                clinicalFindings: true;
+                diagnosisCode: true;
+                diagnosisName: true;
+                treatmentPlan: true;
+                doctorNotes: true;
+                followUpDate: true;
+                followUpNote: true;
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+}>;
+
+export type MedicalRecordDetail = Prisma.MedicalRecordGetPayload<{
+  include: {
+    visitServiceOrders: {
+      include: { service: true; performer: true };
+    };
+    labOrders: {
+      include: { result: true; service: true };
+    };
+    prescription: {
+      include: { items: true };
+    };
+    booking: {
+      include: {
+        doctor: true;
+        patientProfile: true;
+      };
+    };
+  };
+}>;
+
+export type PatientHistoryItem = Prisma.MedicalRecordGetPayload<{
+  include: {
+    booking: {
+      include: {
+        doctor: { select: { id: true; fullName: true } };
+        service: { select: { id: true; name: true } };
+      };
+    };
+    visitServiceOrders: { include: { service: true } };
+    labOrders: { include: { service: true } };
+    prescription: {
+      include: { items: true };
+    };
+  };
+}>;
+
+export type AdvancedMedicalRecordWithBooking = Prisma.MedicalRecordGetPayload<{
+  include: {
+    booking: {
+      include: { patientProfile: true };
+    };
+  };
+}>;
+
+export type UserWithProfile = Prisma.UserGetPayload<{
+  select: {
+    id: true;
+    email: true;
+    fullName: true;
+    phone: true;
+    role: true;
+    avatar: true;
+    isActive: true;
+    createdAt: true;
+    updatedAt: true;
+    patientProfile: {
+      select: { id: true; patientCode: true };
+    };
+  };
+}>;
+
+export type VisitServiceOrderWorklistItem = Prisma.VisitServiceOrderGetPayload<{
+  include: {
+    service: {
+      select: { id: true; name: true; category: true; serviceCode: true };
+    };
+    medicalRecord: {
+      include: {
+        booking: {
+          include: {
+            patientProfile: {
+              select: {
+                id: true;
+                patientCode: true;
+                fullName: true;
+                phone: true;
+                gender: true;
+                dateOfBirth: true;
+              };
+            };
+            doctor: { select: { id: true; fullName: true } };
+          };
+        };
+      };
+    };
+  };
+}>;
+
+export type VisitServiceOrderDetail = Prisma.VisitServiceOrderGetPayload<{
+  include: {
+    service: true;
+    medicalRecord: {
+      include: {
+        booking: {
+          include: {
+            patientProfile: true;
+            doctor: { select: { id: true; fullName: true } };
+          };
+        };
+      };
+    };
+  };
+}>;
+
+export type TechnicianSpecializationDetail =
+  Prisma.TechnicianSpecializationGetPayload<{
+    include: { category: { select: { id: true; name: true; code: true } } };
+  }>;
+
+export type ServiceWithFiltersResult = Prisma.ServiceGetPayload<{
+  include: {
+    category: true;
+    doctorServices: {
+      include: {
+        doctorProfile: {
+          include: { user: { select: { id: true; fullName: true } } };
+        };
+      };
+    };
+  };
+}>;
+
+export type ServiceDetailResult = Prisma.ServiceGetPayload<{
+  include: {
+    category: true;
+    doctorServices: {
+      include: {
+        doctorProfile: {
+          include: {
+            user: {
+              select: {
+                id: true;
+                fullName: true;
+                avatar: true;
+                email: true;
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+}>;
+
+export type InvoiceDetailResult = Prisma.InvoiceGetPayload<{
+  include: {
+    items: {
+      include: {
+        labOrder: {
+          include: {
+            service: {
+              include: { category: true };
+            };
+          };
+        };
+        visitServiceOrder: {
+          include: {
+            performer: true;
+            service: {
+              include: { category: true };
+            };
+          };
+        };
+      };
+    };
+    payments: true;
+    booking: {
+      include: {
+        doctor: { select: { id: true; fullName: true } };
+        patientProfile: {
+          select: {
+            id: true;
+            fullName: true;
+            patientCode: true;
+            phone: true;
+          };
+        };
+        service: { select: { id: true; name: true } };
+        medicalRecord: true;
+      };
+    };
+  };
+}>;
+
+export type InvoiceDetailForPaymentResult = Prisma.InvoiceGetPayload<{
+  include: {
+    payments: true;
+    booking: {
+      include: {
+        patientProfile: { select: { fullName: true; userId: true } };
+        medicalRecord: true;
+      };
+    };
+  };
+}>;
+
+export type InvoiceDetailPostPaymentResult = Prisma.InvoiceGetPayload<{
+  include: {
+    items: {
+      include: {
+        labOrder: true;
+        visitServiceOrder: {
+          include: { performer: true; service: true };
+        };
+      };
+    };
+    payments: true;
+    booking: {
+      include: {
+        patientProfile: {
+          select: {
+            id: true;
+            userId: true;
+            fullName: true;
+            user: { select: { email: true } };
+          };
+        };
+      };
+    };
+  };
+}>;
+
+export type InvoiceDetailForFinalizeResult = Prisma.InvoiceGetPayload<{
+  include: {
+    items: {
+      include: {
+        labOrder: true;
+      };
+    };
+    payments: true;
+    booking: {
+      include: {
+        patientProfile: true;
+        doctor: true;
+        room: true;
+      };
+    };
+  };
+}>;
