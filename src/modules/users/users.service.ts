@@ -2,6 +2,7 @@ import {
   IUserRepository,
   I_USER_REPOSITORY,
   PublicDoctorResult,
+  TechnicianSpecializationDetail,
 } from '../database/interfaces/user.repository.interface';
 import {
   IProfileRepository,
@@ -23,7 +24,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { FilterUserDto } from './dto/filter-user.dto';
 import { FilterPatientDto } from './dto/filter-patient.dto';
 import { UpdatePatientProfileDto } from './dto/update-patient-profile.dto';
-import { Prisma, UserRole, Gender } from '@prisma/client';
+import { UserRole, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
@@ -105,7 +106,7 @@ export class UsersService {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Create user (admin-created users are auto-active)
-    const userData: Prisma.UserCreateInput = {
+    const userData = {
       email,
       password: hashedPassword,
       fullName,
@@ -383,56 +384,11 @@ export class UsersService {
    * Includes both guests and registered patients
    */
   async findAllPatients(filterDto: FilterPatientDto) {
-    const { search, isGuest, page = 1, limit = 10 } = filterDto;
+    const pPage = parseInt(String(filterDto.page), 10) || 1;
+    const pLimit = parseInt(String(filterDto.limit), 10) || 10;
 
-    const pPage = parseInt(String(page), 10) || 1;
-    const pLimit = parseInt(String(limit), 10) || 10;
-
-    const where: Prisma.PatientProfileWhereInput = {};
-
-    if (search) {
-      where.OR = [
-        { fullName: { contains: search } },
-        { phone: { contains: search } },
-        { patientCode: { contains: search } },
-        { nationalId: { contains: search } },
-      ];
-    }
-
-    if (isGuest !== undefined) {
-      where.isGuest = isGuest;
-    }
-
-    if (filterDto.gender) {
-      const genders = filterDto.gender
-        .split(',')
-        .map((g) => g.trim() as Gender);
-      where.gender = { in: genders };
-    }
-
-    if (filterDto.bloodType) {
-      const bloodTypes = filterDto.bloodType.split(',').map((bt) => bt.trim());
-      where.bloodType = { in: bloodTypes };
-    }
-
-    if (filterDto.status) {
-      const statuses = filterDto.status.split(',').map((s) => s.trim());
-      const hasActive = statuses.includes('active');
-      const hasInactive = statuses.includes('inactive');
-      if (hasActive && !hasInactive) {
-        where.user = { isActive: true };
-      } else if (hasInactive && !hasActive) {
-        where.user = { isActive: false };
-      }
-    }
-
-    const skip = (pPage - 1) * pLimit;
     const [profiles, total] =
-      await this.profileRepository.findPatientProfilesWithPagination(
-        where,
-        skip,
-        pLimit,
-      );
+      await this.profileRepository.findPatientProfilesWithPagination(filterDto);
 
     // Map profiles to a format the frontend expects (User-like objects)
     const users = profiles.map((profile) => {
@@ -564,51 +520,10 @@ export class UsersService {
    * Find all users with filters and pagination
    */
   async findAll(filterDto: FilterUserDto) {
-    const {
-      role,
-      isActive,
-      isVerified,
-      search,
-      page = 1,
-      limit = 10,
-      sortBy = 'createdAt',
-      sortOrder = 'desc',
-    } = filterDto;
+    const { page = 1, limit = 10 } = filterDto;
 
-    // Build where clause
-    const where: Prisma.UserWhereInput = { deletedAt: null };
-
-    if (role) {
-      where.role = role;
-    } else {
-      where.role = {
-        in: [UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN],
-      };
-    }
-
-    if (typeof isActive === 'boolean') {
-      where.isActive = isActive;
-    }
-
-    if (typeof isVerified === 'boolean') {
-      where.isVerified = isVerified;
-    }
-
-    if (search) {
-      where.OR = [
-        { fullName: { contains: search } },
-        { email: { contains: search } },
-        { phone: { contains: search } },
-      ];
-    }
-
-    const [users, total] = await this.userRepository.findUsersWithPagination(
-      where,
-      (page - 1) * limit,
-      limit,
-      sortBy,
-      sortOrder,
-    );
+    const [users, total] =
+      await this.userRepository.findUsersWithPagination(filterDto);
 
     return {
       users,
@@ -650,27 +565,9 @@ export class UsersService {
       }
     }
 
-    const skip = (page - 1) * limit;
-
-    // Build Prisma where — always restrict to active doctors only
-    const where: Prisma.UserWhereInput = {
-      role: UserRole.DOCTOR,
-      isActive: true,
-      deletedAt: null,
-      ...(serviceId
-        ? {
-            doctorProfile: {
-              services: {
-                some: { serviceId },
-              },
-            },
-          }
-        : {}),
-    };
-
     const [users, total] = await this.userRepository.findPublicDoctors(
-      where,
-      skip,
+      serviceId,
+      page,
       limit,
     );
 
@@ -790,7 +687,7 @@ export class UsersService {
       }
     }
 
-    // Prepare update data with proper typing
+    // Prepare update data
     const updateData: Prisma.UserUpdateInput = {};
 
     // Copy allowed fields
@@ -870,12 +767,6 @@ export class UsersService {
         };
       }
     }
-
-    // Update user
-    // Auto-update DoctorProfile if role is DOCTOR and data is passed
-    // NOTE: This complex nested update is handled gracefully by Prisma directly.
-    // Given the repository pattern, we pass the raw data and let the repository figure it out.
-    // However, PrismaUserRepository currently passes 'updateData' directly to 'this.prisma.user.update'.
 
     const updatedUser = await this.userRepository.update(id, updateData);
 
@@ -1014,46 +905,16 @@ export class UsersService {
    * Optional filter: categoryId — returns only technicians who have that specialization
    */
   async getTechnicians(categoryId?: string) {
-    const where: Prisma.UserWhereInput = {
-      role: UserRole.TECHNICIAN,
-      isActive: true,
-      deletedAt: null,
-      ...(categoryId
-        ? {
-            technicianSpecializations: {
-              some: { categoryId },
-            },
-          }
-        : {}),
-    };
-
-    const technicians = await this.userRepository.findMany({
-      where,
-      select: {
-        id: true,
-        fullName: true,
-        avatar: true,
-        phone: true,
-        technicianSpecializations: {
-          select: {
-            id: true,
-            categoryId: true,
-            category: {
-              select: { id: true, name: true, code: true },
-            },
-          },
-        },
-      } as unknown as Prisma.UserSelect,
-      orderBy: { fullName: 'asc' },
-    });
-
-    return technicians;
+    return this.userRepository.findTechnicians(categoryId);
   }
 
   /**
    * Add a specialization category to a technician (admin only)
    */
-  async addTechnicianSpecialization(technicianId: string, categoryId: string) {
+  async addTechnicianSpecialization(
+    technicianId: string,
+    categoryId: string,
+  ): Promise<TechnicianSpecializationDetail> {
     // Verify user exists and is a TECHNICIAN
     const user = await this.userRepository.findById(technicianId);
     if (!user || user.role !== UserRole.TECHNICIAN) {

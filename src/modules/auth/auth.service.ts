@@ -25,6 +25,7 @@ import type { StringValue } from 'ms';
 import {
   IUserRepository,
   I_USER_REPOSITORY,
+  UserWithProfile,
 } from '../database/interfaces/user.repository.interface';
 import {
   ITokenRepository,
@@ -843,7 +844,7 @@ export class AuthService {
   /**
    * Validate user (used by JWT strategy)
    */
-  async validateUser(userId: string) {
+  async validateUser(userId: string): Promise<UserWithProfile> {
     const user = await this.userRepository.findByIdWithProfile(userId);
 
     if (!user) {
