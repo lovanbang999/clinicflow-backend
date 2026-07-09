@@ -84,12 +84,8 @@ export class BookingValidatorService {
       }
     }
 
-    // 2. Check patientProfile exists
-    const patientProfile = await this.profileRepository.findFirstPatientProfile(
-      {
-        where: { id: patientProfileId },
-      },
-    );
+    const patientProfile =
+      await this.profileRepository.findPatientProfileById(patientProfileId);
 
     if (!patientProfile) {
       throw new ApiException(
@@ -101,9 +97,7 @@ export class BookingValidatorService {
     }
 
     // 3. Check doctor exists and is active
-    const doctor = await this.userRepository.findUnique({
-      where: { id: doctorId },
-    });
+    const doctor = await this.userRepository.findById(doctorId);
 
     if (!doctor) {
       throw new ApiException(
@@ -178,20 +172,12 @@ export class BookingValidatorService {
     }
 
     // 8. Rule: 1 patient + 1 doctor + 1 date = max 1 active booking
-    const existingBooking = await this.bookingRepository.findFirst({
-      where: {
+    const existingBooking =
+      await this.bookingRepository.findActiveBookingForPatient(
         patientProfileId,
         doctorId,
-        bookingDate: new Date(bookingDate),
-        status: {
-          notIn: [
-            BookingStatus.CANCELLED,
-            BookingStatus.NO_SHOW,
-            BookingStatus.COMPLETED,
-          ],
-        },
-      },
-    });
+        new Date(bookingDate),
+      );
 
     if (existingBooking) {
       throw new ApiException(
@@ -215,22 +201,11 @@ export class BookingValidatorService {
     patientProfileId?: string,
   ): Promise<boolean> {
     const [confirmedBookings, reservations] = await Promise.all([
-      this.bookingRepository.count({
-        where: {
-          doctorId,
-          bookingDate: new Date(bookingDate),
-          startTime,
-          status: {
-            in: [
-              BookingStatus.PENDING,
-              BookingStatus.CONFIRMED,
-              BookingStatus.CHECKED_IN,
-              BookingStatus.IN_PROGRESS,
-              BookingStatus.AWAITING_RESULTS,
-            ],
-          },
-        },
-      }),
+      this.bookingRepository.countActiveBookingsForDoctorInSlot(
+        doctorId,
+        new Date(bookingDate),
+        startTime,
+      ),
       this.bookingRepository.findSlotReservations(
         doctorId,
         new Date(bookingDate),

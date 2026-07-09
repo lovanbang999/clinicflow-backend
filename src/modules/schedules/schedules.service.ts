@@ -16,6 +16,7 @@ import {
   User,
   DoctorWorkingHours,
   OffDayStatus,
+  BookingStatus,
 } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -26,7 +27,10 @@ import {
   IBookingRepository,
   I_BOOKING_REPOSITORY,
 } from '../database/interfaces/booking.repository.interface';
-import { SlotReservation } from '../database/types/prisma-payload.types';
+import {
+  SlotReservation,
+  PendingOffDayWithDoctor,
+} from '../database/types/prisma-payload.types';
 import {
   IUserRepository,
   I_USER_REPOSITORY,
@@ -958,10 +962,8 @@ export class SchedulesService {
     return updatedList;
   }
 
-  async getPendingOffDays() {
-    return this.bookingRepository.findOffDaysWithDoctor({
-      status: OffDayStatus.PENDING,
-    });
+  async getPendingOffDays(): Promise<PendingOffDayWithDoctor[]> {
+    return this.bookingRepository.findPendingOffDaysWithDoctor();
   }
 
   async approveOffDay(id: string, adminUserId: string) {
@@ -997,9 +999,9 @@ export class SchedulesService {
       try {
         await this.bookingRepository.updateBookingStatusTransaction(
           booking.id,
-          'CANCELLED',
-          `Bác sĩ nghỉ phép vào ngày ${format(offDateObj, 'dd/MM/yyyy')}: ${offDay.reason || 'Nghỉ phép'}`,
+          BookingStatus.CANCELLED,
           adminUserId,
+          `Bác sĩ nghỉ phép vào ngày ${format(offDateObj, 'dd/MM/yyyy')}: ${offDay.reason || 'Nghỉ phép'}`,
         );
 
         // Send email

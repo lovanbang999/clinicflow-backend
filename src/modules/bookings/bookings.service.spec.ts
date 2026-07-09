@@ -25,6 +25,7 @@ describe('BookingsService Unit Tests', () => {
     updateStatus: jest.fn(),
     findConflictingBooking: jest.fn(),
     findDoctorScheduleSlot: jest.fn(),
+    createOnlinePreBookingTransaction: jest.fn(),
     transaction: jest.fn().mockImplementation(
       (
         cb: (tx: {
@@ -199,13 +200,17 @@ describe('BookingsService Unit Tests', () => {
         durationMinutes: 30,
         maxSlotsPerHour: 2,
       });
-      mockBookingRepository.create.mockResolvedValue(mockCreatedBooking);
+      mockBookingRepository.createOnlinePreBookingTransaction.mockResolvedValue(
+        mockCreatedBooking,
+      );
 
       const result = await service.create(mockDto, 'created-by-user-id');
 
       expect(result).toEqual(mockCreatedBooking);
       expect(mockSequenceService.generateNextSequence).toHaveBeenCalled();
-      expect(mockBookingRepository.create).toHaveBeenCalled();
+      expect(
+        mockBookingRepository.createOnlinePreBookingTransaction,
+      ).toHaveBeenCalled();
     });
   });
 });
