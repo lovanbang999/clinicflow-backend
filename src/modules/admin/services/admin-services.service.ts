@@ -7,7 +7,6 @@ import {
   I_BOOKING_REPOSITORY,
   IBookingRepository,
 } from '../../database/interfaces/booking.repository.interface';
-import { BookingStatus, Prisma } from '@prisma/client';
 import { ApiException } from '../../../common/exceptions/api.exception';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
 import { AdminCreateServiceDto } from './dto/admin-create-service.dto';
@@ -27,47 +26,31 @@ export class AdminServicesService {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const [totalServices, activeServices, newThisMonth] = await Promise.all([
-      this.catalogRepository.countServices(),
-      this.catalogRepository.countServices({ where: { isActive: true } }),
-      this.catalogRepository.countServices({
-        where: { createdAt: { gte: startOfMonth } },
-      }),
+    const [stats, topBooking] = await Promise.all([
+      this.catalogRepository.getServiceDashboardStats(startOfMonth),
+      this.bookingRepository.getMostBookedServiceId(),
     ]);
-
-    type BookingGroupByRow = {
-      serviceId?: string | null;
-      _count?: { id?: number };
-    };
-    const topBooking = (await this.bookingRepository.groupByBooking({
-      by: ['serviceId'],
-      where: { status: BookingStatus.COMPLETED },
-      _count: { id: true },
-      orderBy: { _count: { id: 'desc' } },
-      take: 1,
-    })) as BookingGroupByRow[];
 
     let mostBooked: { id: string; name: string; bookingCount: number } | null =
       null;
-    if (topBooking.length > 0) {
-      const svc = await this.catalogRepository.findUnique({
-        where: { id: topBooking[0].serviceId! },
-        select: { id: true, name: true },
-      });
+    if (topBooking) {
+      const svc = await this.catalogRepository.findServiceDetailById(
+        topBooking.serviceId,
+      );
       if (svc) {
         mostBooked = {
           id: svc.id,
           name: svc.name,
-          bookingCount: topBooking[0]._count?.id ?? 0,
+          bookingCount: topBooking.count,
         };
       }
     }
 
     return {
-      totalServices,
-      activeServices,
-      inactiveServices: totalServices - activeServices,
-      newThisMonth,
+      totalServices: stats.totalServices,
+      activeServices: stats.activeServices,
+      inactiveServices: stats.totalServices - stats.activeServices,
+      newThisMonth: stats.newThisMonth,
       mostBooked,
     };
   }
@@ -78,34 +61,13 @@ export class AdminServicesService {
    */
   async findAllServices(filterDto: FilterServiceDto) {
     const { isActive, search, category, page = 1, limit = 10 } = filterDto;
-    const where: Prisma.ServiceWhereInput = {};
 
-    if (typeof isActive === 'boolean') {
-      where.isActive = isActive;
-    }
-
-    if (category && category !== 'all') {
-      where.categoryId = category;
-    }
-
-    if (search) {
-      where.OR = [
-        { name: { contains: search } },
-        { description: { contains: search } },
-        { tags: { string_contains: search } },
-      ];
-    }
-
-    const [services, total] = await Promise.all([
-      this.catalogRepository.findManyServices({
-        where,
-        include: { category: true },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.catalogRepository.countServices({ where }),
-    ]);
+    const [services, total] =
+      await this.catalogRepository.findAdminServicesPage(
+        { isActive, search, category },
+        page,
+        limit,
+      );
 
     return {
       services,
@@ -123,10 +85,7 @@ export class AdminServicesService {
    * Detail of a single service with booking stats.
    */
   async findOneService(id: string) {
-    const service = await this.catalogRepository.findUnique({
-      where: { id },
-      include: { category: true },
-    });
+    const service = await this.catalogRepository.findServiceDetailById(id);
     if (!service) {
       throw new ApiException(
         MessageCodes.SERVICE_NOT_FOUND,
@@ -136,16 +95,8 @@ export class AdminServicesService {
       );
     }
 
-    const [totalBookings, completedBookings, cancelledBookings] =
-      await Promise.all([
-        this.bookingRepository.countBooking({ where: { serviceId: id } }),
-        this.bookingRepository.countBooking({
-          where: { serviceId: id, status: BookingStatus.COMPLETED },
-        }),
-        this.bookingRepository.countBooking({
-          where: { serviceId: id, status: BookingStatus.CANCELLED },
-        }),
-      ]);
+    const { totalBookings, completedBookings, cancelledBookings } =
+      await this.bookingRepository.getServiceBookingStats(id);
 
     return {
       ...service,
@@ -167,11 +118,8 @@ export class AdminServicesService {
    */
   async createService(dto: AdminCreateServiceDto) {
     // Duplicate name check
-    const existing = await this.catalogRepository.findManyServices({
-      where: { name: { equals: dto.name } },
-      take: 1,
-    });
-    if (existing.length > 0) {
+    const existing = await this.catalogRepository.findServiceByName(dto.name);
+    if (existing) {
       throw new ApiException(
         MessageCodes.SERVICE_NAME_EXISTS,
         'Service with this name already exists',
@@ -201,7 +149,7 @@ export class AdminServicesService {
    * Update service fields.
    */
   async updateService(id: string, dto: AdminUpdateServiceDto) {
-    const existing = await this.catalogRepository.findUnique({ where: { id } });
+    const existing = await this.catalogRepository.findServiceDetailById(id);
     if (!existing) {
       throw new ApiException(
         MessageCodes.SERVICE_NOT_FOUND,
@@ -213,14 +161,11 @@ export class AdminServicesService {
 
     // Duplicate name check (exclude self)
     if (dto.name) {
-      const duplicate = await this.catalogRepository.findManyServices({
-        where: {
-          name: { equals: dto.name },
-          id: { not: id },
-        },
-        take: 1,
-      });
-      if (duplicate.length > 0) {
+      const duplicate = await this.catalogRepository.findServiceByName(
+        dto.name,
+        id,
+      );
+      if (duplicate) {
         throw new ApiException(
           MessageCodes.SERVICE_NAME_EXISTS,
           'Service with this name already exists',
@@ -258,7 +203,7 @@ export class AdminServicesService {
    * Blocked if service has active bookings.
    */
   async removeService(id: string) {
-    const service = await this.catalogRepository.findUnique({ where: { id } });
+    const service = await this.catalogRepository.findServiceDetailById(id);
     if (!service) {
       throw new ApiException(
         MessageCodes.SERVICE_NOT_FOUND,
@@ -268,12 +213,8 @@ export class AdminServicesService {
       );
     }
 
-    const activeBookings = await this.bookingRepository.countBooking({
-      where: {
-        serviceId: id,
-        status: { in: ['PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS'] },
-      },
-    });
+    const activeBookings =
+      await this.bookingRepository.countActiveBookingsForService(id);
     if (activeBookings > 0) {
       throw new BadRequestException(
         'Cannot delete service with active bookings',
@@ -292,7 +233,7 @@ export class AdminServicesService {
    * Restore a soft-deleted service.
    */
   async restoreService(id: string) {
-    const service = await this.catalogRepository.findUnique({ where: { id } });
+    const service = await this.catalogRepository.findServiceDetailById(id);
     if (!service) {
       throw new ApiException(
         MessageCodes.SERVICE_NOT_FOUND,

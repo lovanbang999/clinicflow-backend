@@ -1,4 +1,10 @@
-import { Prisma } from '@prisma/client';
+import {
+  Prisma,
+  AiSessionOutcome,
+  AiMessageRole,
+  AiChatSession,
+  AiChatMessage,
+} from '@prisma/client';
 import { TransactionClient } from './clinical.repository.interface';
 
 export const I_AI_REPOSITORY = 'IAiRepository';
@@ -22,6 +28,45 @@ export interface IAiRepository {
   deleteAiChatSession<T extends Prisma.AiChatSessionDeleteArgs>(
     args: Prisma.SelectSubset<T, Prisma.AiChatSessionDeleteArgs>,
   ): Promise<Prisma.AiChatSessionGetPayload<T>>;
+  countAiChatSession(args?: Prisma.AiChatSessionCountArgs): Promise<number>;
+  findSessionsPaginated(
+    userId: string,
+    skip: number,
+    limit: number,
+  ): Promise<unknown[]>;
+  countSessions(userId: string): Promise<number>;
+  findSessionDetails(sessionId: string, userId: string): Promise<unknown>;
+  checkSessionOwnership(sessionId: string, userId: string): Promise<boolean>;
+
+  createChatSession(data: {
+    userId: string;
+    patientProfileId: string | null;
+    modelName: string;
+    outcome: AiSessionOutcome;
+  }): Promise<AiChatSession>;
+  createChatMessage(data: {
+    sessionId: string;
+    role: AiMessageRole;
+    content: string;
+    toolName?: string | null;
+    toolInput?: unknown;
+    toolOutput?: unknown;
+    toolError?: string | null;
+    tokenCount?: number | null;
+  }): Promise<AiChatMessage>;
+  incrementSessionTokens(
+    sessionId: string,
+    tokens: number,
+  ): Promise<AiChatSession>;
+  endSession(
+    sessionId: string,
+    outcome: AiSessionOutcome,
+    bookingId?: string | null,
+  ): Promise<AiChatSession>;
+  reportSession(
+    sessionId: string,
+    note?: string | null,
+  ): Promise<AiChatSession>;
 
   createAiChatMessage<T extends Prisma.AiChatMessageCreateArgs>(
     args: Prisma.SelectSubset<T, Prisma.AiChatMessageCreateArgs>,

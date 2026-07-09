@@ -29,6 +29,14 @@ export interface ISystemRepository {
   deleteManyNotification(
     args: Prisma.NotificationDeleteManyArgs,
   ): Promise<Prisma.BatchPayload>;
+  findUserInAppNotifications(
+    userId: string,
+    limit?: number,
+  ): Promise<Notification[]>;
+  countUnreadInAppNotifications(userId: string): Promise<number>;
+  markNotificationAsRead(id: string, userId: string): Promise<Notification>;
+  markAllNotificationsAsRead(userId: string): Promise<Prisma.BatchPayload>;
+  deleteNotificationsBefore(cutoff: Date): Promise<Prisma.BatchPayload>;
 
   countSystemConfig(args: Prisma.SystemConfigCountArgs): Promise<number>;
   findFirstSystemConfig<T extends Prisma.SystemConfigFindFirstArgs>(
@@ -66,6 +74,15 @@ export interface ISystemRepository {
   updateAuditLog(args: Prisma.AuditLogUpdateArgs): Promise<AuditLog>;
   createAuditLog(args: Prisma.AuditLogCreateArgs): Promise<AuditLog>;
   deleteAuditLog(args: Prisma.AuditLogDeleteArgs): Promise<AuditLog>;
+
+  findConfigByCategory(category: string): Promise<SystemConfig[]>;
+  upsertConfigValue(
+    key: string,
+    value: string,
+    category: string,
+    dataType: string,
+    userId: string,
+  ): Promise<SystemConfig>;
 
   transaction<T>(fn: (tx: TransactionClient) => Promise<T>): Promise<T>;
 }

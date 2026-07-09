@@ -5,9 +5,19 @@ import {
   UserPaginationResult,
   PublicDoctorResult,
   PublicDoctorByIdResult,
+  TechnicianSpecializationDetail,
 } from '../interfaces/user.repository.interface';
 import { PrismaService } from '../../prisma/prisma.service';
-import { User, UserRole, Prisma, DoctorProfile } from '@prisma/client';
+import {
+  User,
+  UserRole,
+  Prisma,
+  DoctorProfile,
+  DoctorWorkingHours,
+  DoctorBreakTime,
+  DoctorOffDay,
+} from '@prisma/client';
+import { UserFilterInput } from '../types/user.repository.types';
 
 const USER_SORT_FIELDS = new Set([
   'createdAt',
@@ -76,20 +86,7 @@ export class PrismaUserRepository implements IUserRepository {
     });
   }
 
-  async findByIdWithProfile(id: string): Promise<Prisma.UserGetPayload<{
-    select: {
-      id: true;
-      email: true;
-      fullName: true;
-      phone: true;
-      role: true;
-      avatar: true;
-      isActive: true;
-      createdAt: true;
-      updatedAt: true;
-      patientProfile: { select: { id: true; patientCode: true } };
-    };
-  }> | null> {
+  async findByIdWithProfile(id: string): Promise<UserWithProfile | null> {
     return this.prisma.user.findUnique({
       where: { id },
       select: {
@@ -106,21 +103,56 @@ export class PrismaUserRepository implements IUserRepository {
           select: { id: true, patientCode: true },
         },
       },
-    });
+    }) as unknown as Promise<UserWithProfile | null>;
   }
 
   async findUsersWithPagination(
-    filters: Prisma.UserWhereInput,
-    skip: number,
-    take: number,
-    sortBy = 'createdAt',
-    sortOrder: 'asc' | 'desc' = 'desc',
+    filters: UserFilterInput,
   ): Promise<[UserPaginationResult[], number]> {
+    const {
+      role,
+      isActive,
+      isVerified,
+      search,
+      page = 1,
+      limit = 10,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+    } = filters;
+
+    // Build where clause
+    const where: Prisma.UserWhereInput = { deletedAt: null };
+
+    if (role) {
+      where.role = role;
+    } else {
+      where.role = {
+        in: [UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN],
+      };
+    }
+
+    if (typeof isActive === 'boolean') {
+      where.isActive = isActive;
+    }
+
+    if (typeof isVerified === 'boolean') {
+      where.isVerified = isVerified;
+    }
+
+    if (search) {
+      where.OR = [
+        { fullName: { contains: search } },
+        { email: { contains: search } },
+        { phone: { contains: search } },
+      ];
+    }
+
     const safeSortBy = USER_SORT_FIELDS.has(sortBy) ? sortBy : 'createdAt';
+    const skip = (page - 1) * limit;
 
     const [users, total] = await Promise.all([
       this.prisma.user.findMany({
-        where: filters,
+        where,
         select: {
           id: true,
           email: true,
@@ -149,22 +181,39 @@ export class PrismaUserRepository implements IUserRepository {
           },
         },
         skip,
-        take,
+        take: limit,
         orderBy: { [safeSortBy]: sortOrder },
       }),
-      this.prisma.user.count({ where: filters }),
+      this.prisma.user.count({ where }),
     ]);
-    return [users, total];
+    return [users as UserPaginationResult[], total];
   }
 
   async findPublicDoctors(
-    filters: Prisma.UserWhereInput,
-    skip: number,
-    take: number,
+    serviceId?: string,
+    page = 1,
+    limit = 100,
   ): Promise<[PublicDoctorResult[], number]> {
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.UserWhereInput = {
+      role: UserRole.DOCTOR,
+      isActive: true,
+      deletedAt: null,
+      ...(serviceId
+        ? {
+            doctorProfile: {
+              services: {
+                some: { serviceId },
+              },
+            },
+          }
+        : {}),
+    };
+
     const [users, total] = await Promise.all([
       this.prisma.user.findMany({
-        where: filters,
+        where,
         select: {
           id: true,
           email: true,
@@ -223,12 +272,12 @@ export class PrismaUserRepository implements IUserRepository {
           },
         },
         skip,
-        take,
+        take: limit,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.user.count({ where: filters }),
+      this.prisma.user.count({ where }),
     ]);
-    return [users, total];
+    return [users as PublicDoctorResult[], total];
   }
 
   async findPublicDoctorById(
@@ -289,7 +338,7 @@ export class PrismaUserRepository implements IUserRepository {
     guestProfileId: string,
     userData: Prisma.UserCreateInput,
     profileData: Prisma.PatientProfileUpdateInput,
-  ): Promise<Prisma.UserGetPayload<{ include: { patientProfile: true } }>> {
+  ): Promise<UserWithProfile> {
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({ data: userData });
 
@@ -305,16 +354,14 @@ export class PrismaUserRepository implements IUserRepository {
       return tx.user.findUnique({
         where: { id: user.id },
         include: { patientProfile: true },
-      }) as unknown as Prisma.UserGetPayload<{
-        include: { patientProfile: true };
-      }>;
-    });
+      });
+    }) as unknown as Promise<UserWithProfile>;
   }
 
   async createRegisteredPatient(
     userData: Prisma.UserCreateInput,
-    profileData: Prisma.PatientProfileCreateInput,
-  ): Promise<Prisma.UserGetPayload<{ include: { patientProfile: true } }>> {
+    profileData: Prisma.PatientProfileCreateWithoutUserInput,
+  ): Promise<UserWithProfile> {
     return this.prisma.user.create({
       data: {
         ...userData,
@@ -323,13 +370,13 @@ export class PrismaUserRepository implements IUserRepository {
       include: {
         patientProfile: true,
       },
-    });
+    }) as unknown as Promise<UserWithProfile>;
   }
 
   async createAdminUser(
     data: Prisma.UserCreateInput,
     doctorProfileData?: Prisma.DoctorProfileCreateWithoutUserInput,
-  ): Promise<Prisma.UserGetPayload<{ include: { doctorProfile: true } }>> {
+  ): Promise<User> {
     const userData: Prisma.UserCreateInput = { ...data };
 
     if (data.role === UserRole.DOCTOR && doctorProfileData) {
@@ -341,9 +388,7 @@ export class PrismaUserRepository implements IUserRepository {
       include: {
         doctorProfile: true,
       },
-    }) as unknown as Promise<
-      Prisma.UserGetPayload<{ include: { doctorProfile: true } }>
-    >;
+    });
   }
 
   async verifyEmailTransaction(
@@ -475,6 +520,60 @@ export class PrismaUserRepository implements IUserRepository {
     return this.prisma.doctorOffDay.findMany(args);
   }
 
+  async findDoctorWorkingHours(
+    doctorId: string,
+  ): Promise<DoctorWorkingHours[]> {
+    return this.prisma.doctorWorkingHours.findMany({
+      where: { doctorId },
+    });
+  }
+
+  async findDoctorBreakTimesInDateRange(
+    doctorId: string,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<DoctorBreakTime[]> {
+    return this.prisma.doctorBreakTime.findMany({
+      where: {
+        doctorId,
+        breakDate: {
+          gte: startDate,
+          lte: endDate,
+        },
+      },
+    });
+  }
+
+  async findDoctorOffDaysInDateRange(
+    doctorId: string,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<DoctorOffDay[]> {
+    return this.prisma.doctorOffDay.findMany({
+      where: {
+        doctorId,
+        offDate: {
+          gte: startDate,
+          lte: endDate,
+        },
+      },
+    });
+  }
+
+  async findActiveUserIdsByRole(role: UserRole): Promise<string[]> {
+    const users = await this.prisma.user.findMany({
+      where: {
+        role,
+        isActive: true,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+      },
+    });
+    return users.map((u) => u.id);
+  }
+
   async findUnique<T extends Prisma.UserFindUniqueArgs>(
     args: Prisma.SelectSubset<T, Prisma.UserFindUniqueArgs>,
   ): Promise<Prisma.UserGetPayload<T> | null> {
@@ -497,6 +596,33 @@ export class PrismaUserRepository implements IUserRepository {
     return this.prisma.user.count(args);
   }
 
+  async countActiveDoctors(): Promise<number> {
+    return this.prisma.user.count({
+      where: {
+        role: UserRole.DOCTOR,
+        isActive: true,
+        deletedAt: null,
+      },
+    });
+  }
+
+  async countUsersByRoleAndDateRange(
+    role: string,
+    gte: Date,
+    lte?: Date,
+  ): Promise<number> {
+    return this.prisma.user.count({
+      where: {
+        role: role as UserRole,
+        createdAt: {
+          gte,
+          ...(lte ? { lte } : {}),
+        },
+        deletedAt: null,
+      },
+    });
+  }
+
   async syncDoctorServices(
     doctorProfileId: string,
     serviceIds: string[],
@@ -517,21 +643,13 @@ export class PrismaUserRepository implements IUserRepository {
   async addTechnicianSpecialization(
     technicianId: string,
     categoryId: string,
-  ): Promise<
-    Prisma.TechnicianSpecializationGetPayload<{
-      include: { category: { select: { id: true; name: true; code: true } } };
-    }>
-  > {
+  ): Promise<TechnicianSpecializationDetail> {
     return this.prisma.technicianSpecialization.upsert({
       where: { userId_categoryId: { userId: technicianId, categoryId } },
       create: { userId: technicianId, categoryId },
       update: {},
       include: { category: { select: { id: true, name: true, code: true } } },
-    }) as unknown as Promise<
-      Prisma.TechnicianSpecializationGetPayload<{
-        include: { category: { select: { id: true; name: true; code: true } } };
-      }>
-    >;
+    }) as unknown as Promise<TechnicianSpecializationDetail>;
   }
 
   async removeTechnicianSpecialization(
@@ -550,5 +668,513 @@ export class PrismaUserRepository implements IUserRepository {
       where: { userId },
       select: { categoryId: true },
     });
+  }
+
+  async findTechnicians(categoryId?: string): Promise<any[]> {
+    const where: Prisma.UserWhereInput = {
+      role: UserRole.TECHNICIAN,
+      isActive: true,
+      deletedAt: null,
+      ...(categoryId
+        ? {
+            technicianSpecializations: {
+              some: { categoryId },
+            },
+          }
+        : {}),
+    };
+
+    return this.prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        fullName: true,
+        avatar: true,
+        phone: true,
+        technicianSpecializations: {
+          select: {
+            id: true,
+            categoryId: true,
+            category: {
+              select: { id: true, name: true, code: true },
+            },
+          },
+        },
+      },
+      orderBy: { fullName: 'asc' },
+    });
+  }
+
+  async getDoctorDashboardStats(startOfMonth: Date): Promise<{
+    totalDoctors: number;
+    activeDoctors: number;
+    newThisMonth: number;
+    bySpecialty: Record<string, number>;
+  }> {
+    const [totalDoctors, activeDoctors, newThisMonth, profilesWithSpecialties] =
+      await Promise.all([
+        this.prisma.user.count({ where: { role: UserRole.DOCTOR } }),
+        this.prisma.user.count({
+          where: { role: UserRole.DOCTOR, isActive: true },
+        }),
+        this.prisma.user.count({
+          where: {
+            role: UserRole.DOCTOR,
+            createdAt: { gte: startOfMonth },
+          },
+        }),
+        this.prisma.doctorProfile.findMany({
+          select: { specialties: true },
+          where: { user: { isActive: true } },
+        }),
+      ]);
+
+    const bySpecialty: Record<string, number> = {};
+    for (const p of profilesWithSpecialties) {
+      if (Array.isArray(p.specialties)) {
+        for (const sp of p.specialties as string[]) {
+          bySpecialty[sp] = (bySpecialty[sp] ?? 0) + 1;
+        }
+      }
+    }
+
+    return {
+      totalDoctors,
+      activeDoctors,
+      newThisMonth,
+      bySpecialty,
+    };
+  }
+
+  async findAdminDoctorsPage(
+    filters: {
+      specialty?: string;
+      isActive?: boolean;
+      search?: string;
+    },
+    page = 1,
+    limit = 10,
+  ): Promise<
+    [
+      Prisma.UserGetPayload<{
+        select: {
+          id: true;
+          email: true;
+          fullName: true;
+          phone: true;
+          avatar: true;
+          isActive: true;
+          createdAt: true;
+          updatedAt: true;
+          doctorProfile: {
+            select: {
+              id: true;
+              specialties: true;
+              qualifications: true;
+              yearsOfExperience: true;
+              bio: true;
+              rating: true;
+              reviewCount: true;
+              consultationFee: true;
+              roomId: true;
+              room: {
+                select: {
+                  id: true;
+                  name: true;
+                };
+              };
+            };
+          };
+        };
+      }>[],
+      number,
+    ]
+  > {
+    const { specialty, isActive, search } = filters;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.UserWhereInput = {
+      role: UserRole.DOCTOR,
+    };
+
+    if (typeof isActive === 'boolean') {
+      where.isActive = isActive;
+    }
+
+    if (search) {
+      where.OR = [
+        { fullName: { contains: search } },
+        { email: { contains: search } },
+      ];
+    }
+
+    if (specialty) {
+      where.doctorProfile = {
+        specialties: { string_contains: specialty },
+      };
+    }
+
+    const [doctors, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          phone: true,
+          avatar: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+          doctorProfile: {
+            select: {
+              id: true,
+              specialties: true,
+              qualifications: true,
+              yearsOfExperience: true,
+              bio: true,
+              rating: true,
+              reviewCount: true,
+              consultationFee: true,
+              roomId: true,
+              room: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return [doctors, total] as [
+      Prisma.UserGetPayload<{
+        select: {
+          id: true;
+          email: true;
+          fullName: true;
+          phone: true;
+          avatar: true;
+          isActive: true;
+          createdAt: true;
+          updatedAt: true;
+          doctorProfile: {
+            select: {
+              id: true;
+              specialties: true;
+              qualifications: true;
+              yearsOfExperience: true;
+              bio: true;
+              rating: true;
+              reviewCount: true;
+              consultationFee: true;
+              roomId: true;
+              room: {
+                select: {
+                  id: true;
+                  name: true;
+                };
+              };
+            };
+          };
+        };
+      }>[],
+      number,
+    ];
+  }
+
+  async findAdminDoctorDetailById(id: string): Promise<Prisma.UserGetPayload<{
+    select: {
+      id: true;
+      email: true;
+      fullName: true;
+      phone: true;
+      avatar: true;
+      gender: true;
+      address: true;
+      isActive: true;
+      createdAt: true;
+      updatedAt: true;
+      doctorProfile: {
+        select: {
+          id: true;
+          specialties: true;
+          qualifications: true;
+          yearsOfExperience: true;
+          bio: true;
+          rating: true;
+          reviewCount: true;
+          consultationFee: true;
+          roomId: true;
+          room: {
+            select: {
+              id: true;
+              name: true;
+            };
+          };
+          services: {
+            select: {
+              service: {
+                select: {
+                  id: true;
+                  name: true;
+                };
+              };
+            };
+          };
+        };
+      };
+      _count: {
+        select: {
+          bookingsAsDoctor: {
+            where: { status: 'COMPLETED' };
+          };
+        };
+      };
+    };
+  }> | null> {
+    return this.prisma.user.findFirst({
+      where: { id, role: UserRole.DOCTOR },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        phone: true,
+        avatar: true,
+        gender: true,
+        address: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+        doctorProfile: {
+          select: {
+            id: true,
+            specialties: true,
+            qualifications: true,
+            yearsOfExperience: true,
+            bio: true,
+            rating: true,
+            reviewCount: true,
+            consultationFee: true,
+            roomId: true,
+            room: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            services: {
+              select: {
+                service: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        _count: {
+          select: {
+            bookingsAsDoctor: {
+              where: { status: 'COMPLETED' },
+            },
+          },
+        },
+      },
+    }) as unknown as Promise<Prisma.UserGetPayload<{
+      select: {
+        id: true;
+        email: true;
+        fullName: true;
+        phone: true;
+        avatar: true;
+        gender: true;
+        address: true;
+        isActive: true;
+        createdAt: true;
+        updatedAt: true;
+        doctorProfile: {
+          select: {
+            id: true;
+            specialties: true;
+            qualifications: true;
+            yearsOfExperience: true;
+            bio: true;
+            rating: true;
+            reviewCount: true;
+            consultationFee: true;
+            roomId: true;
+            room: {
+              select: {
+                id: true;
+                name: true;
+              };
+            };
+            services: {
+              select: {
+                service: {
+                  select: {
+                    id: true;
+                    name: true;
+                  };
+                };
+              };
+            };
+          };
+        };
+        _count: {
+          select: {
+            bookingsAsDoctor: {
+              where: { status: 'COMPLETED' };
+            };
+          };
+        };
+      };
+    }> | null>;
+  }
+
+  async findByEmailOrPhone(
+    email: string,
+    phone?: string | null,
+  ): Promise<User | null> {
+    const queryOr: Prisma.UserWhereInput[] = [{ email }];
+    if (phone) {
+      queryOr.push({ phone });
+    }
+    return this.prisma.user.findFirst({
+      where: { OR: queryOr },
+    });
+  }
+
+  async findDoctorById(id: string): Promise<User | null> {
+    return this.prisma.user.findFirst({
+      where: { id, role: UserRole.DOCTOR },
+    });
+  }
+
+  async findDoctorWithProfile(id: string): Promise<Prisma.UserGetPayload<{
+    include: { doctorProfile: true };
+  }> | null> {
+    return this.prisma.user.findFirst({
+      where: { id, role: UserRole.DOCTOR },
+      include: { doctorProfile: true },
+    }) as unknown as Promise<Prisma.UserGetPayload<{
+      include: { doctorProfile: true };
+    }> | null>;
+  }
+
+  async upsertDoctorProfileByUserId(
+    userId: string,
+    data: {
+      specialties?: string[];
+      qualifications?: string[];
+      yearsOfExperience?: number;
+      bio?: string | null;
+      rating?: number;
+      consultationFee?: number;
+      roomId?: string | null;
+    },
+  ): Promise<
+    Prisma.DoctorProfileGetPayload<{
+      select: {
+        id: true;
+        userId: true;
+        specialties: true;
+        qualifications: true;
+        yearsOfExperience: true;
+        bio: true;
+        rating: true;
+        reviewCount: true;
+        consultationFee: true;
+        roomId: true;
+        room: {
+          select: {
+            id: true;
+            name: true;
+          };
+        };
+        updatedAt: true;
+      };
+    }>
+  > {
+    return this.prisma.doctorProfile.upsert({
+      where: { userId },
+      create: {
+        userId,
+        specialties: data.specialties ?? [],
+        qualifications: data.qualifications ?? [],
+        yearsOfExperience: data.yearsOfExperience ?? 0,
+        bio: data.bio ?? null,
+        rating: data.rating ?? 0,
+        consultationFee: data.consultationFee ?? 0,
+        roomId: data.roomId ?? null,
+      },
+      update: {
+        ...(data.specialties !== undefined && {
+          specialties: data.specialties,
+        }),
+        ...(data.qualifications !== undefined && {
+          qualifications: data.qualifications,
+        }),
+        ...(data.yearsOfExperience !== undefined && {
+          yearsOfExperience: data.yearsOfExperience,
+        }),
+        ...(data.bio !== undefined && { bio: data.bio }),
+        ...(data.rating !== undefined && { rating: data.rating }),
+        ...(data.consultationFee !== undefined && {
+          consultationFee: data.consultationFee,
+        }),
+        ...(data.roomId !== undefined && { roomId: data.roomId }),
+      },
+      select: {
+        id: true,
+        userId: true,
+        specialties: true,
+        qualifications: true,
+        yearsOfExperience: true,
+        bio: true,
+        rating: true,
+        reviewCount: true,
+        consultationFee: true,
+        roomId: true,
+        room: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        updatedAt: true,
+      },
+    }) as unknown as Promise<
+      Prisma.DoctorProfileGetPayload<{
+        select: {
+          id: true;
+          userId: true;
+          specialties: true;
+          qualifications: true;
+          yearsOfExperience: true;
+          bio: true;
+          rating: true;
+          reviewCount: true;
+          consultationFee: true;
+          roomId: true;
+          room: {
+            select: {
+              id: true;
+              name: true;
+            };
+          };
+          updatedAt: true;
+        };
+      }>
+    >;
   }
 }

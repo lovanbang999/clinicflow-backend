@@ -1,5 +1,5 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
-import { AiSessionOutcome, AiMessageRole, Prisma } from '@prisma/client';
+import { AiSessionOutcome, AiMessageRole } from '@prisma/client';
 import {
   I_AI_REPOSITORY,
   IAiRepository,
@@ -9,28 +9,57 @@ import {
   IProfileRepository,
 } from '../database/interfaces/profile.repository.interface';
 
-interface SessionListItem {
+export interface SessionListItem {
   id: string;
   startedAt: Date;
   endedAt: Date | null;
   outcome: AiSessionOutcome;
   totalTokens: number;
-  messages: { content: string }[];
+  messages: Array<{ content: string }>;
   _count: { messages: number };
 }
 
-interface SessionDetails {
+export interface SessionDetails {
   id: string;
   startedAt: Date;
   endedAt: Date | null;
   outcome: AiSessionOutcome;
-  messages: {
+  messages: Array<{
     id: string;
-    role: string;
+    role: AiMessageRole;
     content: string;
     toolName: string | null;
     createdAt: Date;
-  }[];
+  }>;
+}
+
+export interface ListSessionsResponse {
+  sessions: Array<{
+    id: string;
+    startedAt: Date;
+    endedAt: Date | null;
+    outcome: AiSessionOutcome;
+    totalTokens: number;
+    messageCount: number;
+    firstMessage: string | null;
+  }>;
+  total: number;
+}
+
+export interface SessionMessagesResponse {
+  session: {
+    id: string;
+    startedAt: Date;
+    endedAt: Date | null;
+    outcome: AiSessionOutcome;
+  };
+  messages: Array<{
+    id: string;
+    role: AiMessageRole;
+    content: string;
+    toolName: string | null;
+    createdAt: Date;
+  }>;
 }
 
 @Injectable()
@@ -44,20 +73,14 @@ export class AiSessionService {
   ) {}
 
   async createSession(userId: string, modelName?: string): Promise<string> {
-    const patientProfile = await this.profileRepository.findFirstPatientProfile(
-      {
-        where: { userId },
-        select: { id: true },
-      },
-    );
+    const patientProfileId =
+      await this.profileRepository.findPatientProfileIdByUserId(userId);
 
-    const session = await this.aiRepository.createAiChatSession({
-      data: {
-        userId,
-        patientProfileId: patientProfile?.id ?? null,
-        modelName: modelName ?? 'gemini-2.5-flash',
-        outcome: AiSessionOutcome.ONGOING,
-      },
+    const session = await this.aiRepository.createChatSession({
+      userId,
+      patientProfileId,
+      modelName: modelName ?? 'gemini-2.0-flash',
+      outcome: AiSessionOutcome.ONGOING,
     });
 
     this.logger.log(`Created AI session ${session.id} for user ${userId}`);
@@ -76,29 +99,20 @@ export class AiSessionService {
       tokenCount?: number;
     },
   ): Promise<void> {
-    await this.aiRepository.createAiChatMessage({
-      data: {
-        sessionId,
-        role,
-        content,
-        toolName: opts?.toolName ?? null,
-        toolInput: opts?.toolInput
-          ? (opts.toolInput as Prisma.InputJsonValue)
-          : undefined,
-        toolOutput: opts?.toolOutput
-          ? (opts.toolOutput as Prisma.InputJsonValue)
-          : undefined,
-        toolError: opts?.toolError ?? null,
-        tokenCount: opts?.tokenCount ?? null,
-      },
+    await this.aiRepository.createChatMessage({
+      sessionId,
+      role,
+      content,
+      toolName: opts?.toolName,
+      toolInput: opts?.toolInput,
+      toolOutput: opts?.toolOutput,
+      toolError: opts?.toolError,
+      tokenCount: opts?.tokenCount,
     });
   }
 
   async addTokens(sessionId: string, tokens: number): Promise<void> {
-    await this.aiRepository.updateAiChatSession({
-      where: { id: sessionId },
-      data: { totalTokens: { increment: tokens } },
-    });
+    await this.aiRepository.incrementSessionTokens(sessionId, tokens);
   }
 
   async endSession(
@@ -106,137 +120,59 @@ export class AiSessionService {
     outcome: AiSessionOutcome,
     bookingId?: string,
   ): Promise<void> {
-    await this.aiRepository.updateAiChatSession({
-      where: { id: sessionId },
-      data: {
-        outcome,
-        bookingId: bookingId ?? null,
-        endedAt: new Date(),
-      },
-    });
+    await this.aiRepository.endSession(sessionId, outcome, bookingId);
   }
 
   async reportSession(sessionId: string, note?: string): Promise<void> {
-    await this.aiRepository.updateAiChatSession({
-      where: { id: sessionId },
-      data: {
-        outcome: AiSessionOutcome.REPORTED,
-        feedbackNote: note ?? null,
-        reportedAt: new Date(),
-        endedAt: new Date(),
-      },
-    });
+    await this.aiRepository.reportSession(sessionId, note);
   }
 
   async ownsSession(sessionId: string, userId: string): Promise<boolean> {
-    const session = await this.aiRepository.findFirstAiChatSession({
-      where: { id: sessionId, userId },
-      select: { id: true },
-    });
-    return session !== null;
+    return this.aiRepository.checkSessionOwnership(sessionId, userId);
   }
 
   async listSessions(
     userId: string,
-    page: number = 1,
-    limit: number = 20,
-  ): Promise<{
-    sessions: {
-      id: string;
-      startedAt: Date;
-      endedAt: Date | null;
-      outcome: string;
-      totalTokens: number;
-      messageCount: number;
-      firstMessage: string | null;
-    }[];
-    total: number;
-  }> {
+    page = 1,
+    limit = 20,
+  ): Promise<ListSessionsResponse> {
     const skip = (page - 1) * limit;
 
     const [sessions, total] = await Promise.all([
-      this.aiRepository.findManyAiChatSession({
-        where: { userId },
-        orderBy: { startedAt: 'desc' },
-        skip,
-        take: limit,
-        select: {
-          id: true,
-          startedAt: true,
-          endedAt: true,
-          outcome: true,
-          totalTokens: true,
-          messages: {
-            where: { role: 'USER' },
-            orderBy: { createdAt: 'asc' },
-            take: 1,
-            select: { content: true },
-          },
-          _count: { select: { messages: true } },
-        },
-      }),
-      this.aiRepository.findManyAiChatSession({
-        where: { userId },
-        select: { id: true },
-      }),
+      this.aiRepository.findSessionsPaginated(userId, skip, limit),
+      this.aiRepository.countSessions(userId),
     ]);
 
-    return {
-      sessions: sessions.map((s) => {
-        const item = s as unknown as SessionListItem;
-        return {
-          id: item.id,
-          startedAt: item.startedAt,
-          endedAt: item.endedAt,
-          outcome: item.outcome,
-          totalTokens: item.totalTokens,
-          messageCount: item._count.messages,
-          firstMessage: item.messages[0]?.content ?? null,
-        };
+    const mappedSessions = (sessions as unknown as SessionListItem[]).map(
+      (session) => ({
+        id: session.id,
+        startedAt: session.startedAt,
+        endedAt: session.endedAt,
+        outcome: session.outcome,
+        totalTokens: session.totalTokens,
+        messageCount: session._count.messages,
+        firstMessage: session.messages[0]?.content ?? null,
       }),
-      total: total.length,
+    );
+
+    return {
+      sessions: mappedSessions,
+      total,
     };
   }
 
   async getSessionMessages(
     sessionId: string,
     userId: string,
-  ): Promise<{
-    session: {
-      id: string;
-      startedAt: Date;
-      endedAt: Date | null;
-      outcome: string;
-    };
-    messages: {
-      id: string;
-      role: string;
-      content: string;
-      toolName: string | null;
-      createdAt: Date;
-    }[];
-  } | null> {
-    const session = await this.aiRepository.findFirstAiChatSession({
-      where: { id: sessionId, userId },
-      select: {
-        id: true,
-        startedAt: true,
-        endedAt: true,
-        outcome: true,
-        messages: {
-          orderBy: { createdAt: 'asc' },
-          select: {
-            id: true,
-            role: true,
-            content: true,
-            toolName: true,
-            createdAt: true,
-          },
-        },
-      },
-    });
+  ): Promise<SessionMessagesResponse | null> {
+    const session = await this.aiRepository.findSessionDetails(
+      sessionId,
+      userId,
+    );
 
-    if (!session) return null;
+    if (!session) {
+      return null;
+    }
 
     const details = session as unknown as SessionDetails;
 

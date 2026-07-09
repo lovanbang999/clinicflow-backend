@@ -12,12 +12,7 @@ import {
   IBookingRepository,
 } from '../database/interfaces/booking.repository.interface';
 import { SmartSuggestionsQueryDto } from './dto/smart-suggestions-query.dto';
-import {
-  BookingStatus,
-  DayOfWeek,
-  DoctorWorkingHours,
-  DoctorBreakTime,
-} from '@prisma/client';
+import { DayOfWeek, DoctorWorkingHours, DoctorBreakTime } from '@prisma/client';
 
 export interface TimeSlot {
   date: string;
@@ -77,18 +72,8 @@ export class SuggestionsService {
 
     // Get doctor, service info
     const [doctor, service] = await Promise.all([
-      this.userRepository.findUnique({
-        where: { id: doctorId },
-      }),
-      this.catalogRepository.findUniqueService({
-        where: { id: serviceId },
-        select: {
-          id: true,
-          name: true,
-          durationMinutes: true,
-          maxSlotsPerHour: true,
-        },
-      }),
+      this.userRepository.findById(doctorId),
+      this.catalogRepository.findServiceById(serviceId),
     ]);
 
     if (!doctor) {
@@ -100,9 +85,8 @@ export class SuggestionsService {
     }
 
     // Get doctor's working hours
-    const workingHours = await this.userRepository.findManyDoctorWorkingHours({
-      where: { doctorId },
-    });
+    const workingHours =
+      await this.userRepository.findDoctorWorkingHours(doctorId);
 
     if (workingHours.length === 0) {
       return {
@@ -163,24 +147,16 @@ export class SuggestionsService {
 
     // Get break times and off days in range
     const [breakTimes, offDays] = await Promise.all([
-      this.userRepository.findManyDoctorBreakTime({
-        where: {
-          doctorId,
-          breakDate: {
-            gte: startDate,
-            lte: endDate,
-          },
-        },
-      }),
-      this.userRepository.findManyDoctorOffDay({
-        where: {
-          doctorId,
-          offDate: {
-            gte: startDate,
-            lte: endDate,
-          },
-        },
-      }),
+      this.userRepository.findDoctorBreakTimesInDateRange(
+        doctorId,
+        startDate,
+        endDate,
+      ),
+      this.userRepository.findDoctorOffDaysInDateRange(
+        doctorId,
+        startDate,
+        endDate,
+      ),
     ]);
 
     // Create maps for quick lookup
@@ -313,21 +289,12 @@ export class SuggestionsService {
       const reasons: string[] = [];
 
       // Check current bookings for this slot
-      const bookingCount = await this.bookingRepository.countBooking({
-        where: {
+      const bookingCount =
+        await this.bookingRepository.countActiveBookingsForDoctorInSlot(
           doctorId,
-          bookingDate: new Date(slot.date),
-          startTime: slot.time,
-          status: {
-            in: [
-              BookingStatus.PENDING,
-              BookingStatus.CONFIRMED,
-              BookingStatus.CHECKED_IN,
-              BookingStatus.IN_PROGRESS,
-            ],
-          },
-        },
-      });
+          new Date(slot.date),
+          slot.time,
+        );
 
       const availableSlots = service.maxSlotsPerHour - bookingCount;
 

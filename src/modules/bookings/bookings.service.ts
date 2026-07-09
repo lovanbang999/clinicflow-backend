@@ -4,16 +4,9 @@ import {
   BookingPriority,
   UserRole,
   Prisma,
-  InvoiceStatus,
   User,
   NotificationType,
-  VisitStep,
 } from '@prisma/client';
-import {
-  BookingInclude,
-  BookingWithRelations,
-} from '../database/types/prisma-payload.types';
-import { TransactionClient } from '../database/interfaces/clinical.repository.interface';
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { BookingValidatorService } from './services/booking-validator.service';
 import { BookingNotificationService } from './services/booking-notification.service';
@@ -49,17 +42,6 @@ import {
   I_CLINICAL_REPOSITORY,
 } from '../database/interfaces/clinical.repository.interface';
 import { RedisService } from '../database/services/redis.service';
-
-// Reusable select for patientProfile in booking includes
-const patientProfileSelect = {
-  id: true,
-  userId: true, // Needed for in-app notifications
-  fullName: true,
-  phone: true,
-  email: true,
-  isGuest: true,
-  patientCode: true,
-};
 
 @Injectable()
 export class BookingsService {
@@ -159,90 +141,21 @@ export class BookingsService {
 
     const bookingCode = await this.generateBookingCode(bookingDate);
 
-    const booking = await this.bookingRepository.transaction(async (tx) => {
-      // DB-level double check inside transaction
-      const confirmedBookings = await tx.booking.count({
-        where: {
-          doctorId,
-          bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
-          startTime,
-          status: {
-            in: [
-              BookingStatus.PENDING,
-              BookingStatus.CONFIRMED,
-              BookingStatus.CHECKED_IN,
-              BookingStatus.IN_PROGRESS,
-              BookingStatus.AWAITING_RESULTS,
-            ],
-          },
-        },
+    const booking =
+      await this.bookingRepository.createOnlinePreBookingTransaction({
+        patientProfileId,
+        doctorId,
+        serviceId,
+        bookingCode,
+        bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
+        startTime,
+        endTime,
+        source,
+        priority,
+        patientNotes,
+        createdById,
+        maxSlotsPerHour,
       });
-
-      if (confirmedBookings >= maxSlotsPerHour) {
-        throw new ApiException(
-          MessageCodes.BOOKING_INVALID_TIME,
-          'Time slot is no longer available (Race condition prevented)',
-          409,
-        );
-      }
-
-      const newBooking = await tx.booking.create({
-        data: {
-          patientProfileId,
-          doctorId,
-          serviceId: serviceId || undefined,
-          bookingCode,
-          bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
-          startTime,
-          endTime,
-          isPreBooked: true,
-          status: BookingStatus.PENDING,
-          source,
-          priority,
-          patientNotes,
-          bookedBy: null,
-          bookingMode: 'CONSULTATION_FIRST',
-        },
-        include: BookingInclude,
-      });
-
-      await tx.bookingStatusHistory.create({
-        data: {
-          bookingId: newBooking.id,
-          oldStatus: null,
-          newStatus: BookingStatus.PENDING,
-          changedById: createdById,
-          reason: 'Pre-booking created online',
-        },
-      });
-
-      // Release reservation if exists
-      if (source === BookingSource.ONLINE) {
-        await (
-          tx as TransactionClient & {
-            slotReservation: {
-              deleteMany: (args: {
-                where: {
-                  doctorId: string;
-                  bookingDate: Date;
-                  startTime: string;
-                  patientProfileId: string;
-                };
-              }) => Promise<Prisma.BatchPayload>;
-            };
-          }
-        ).slotReservation.deleteMany({
-          where: {
-            doctorId,
-            bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
-            startTime,
-            patientProfileId,
-          },
-        });
-      }
-
-      return newBooking;
-    });
 
     this.bookingNotification.sendBookingNotification(booking).catch((error) => {
       this.logger.error(
@@ -344,15 +257,11 @@ export class BookingsService {
         );
       }
     } else {
-      // Walk-in: verify queue capacity for this doctor+date
-      const walkInCount = await this.bookingRepository.countBookingsByFilters({
-        doctorId,
-        bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
-        isPreBooked: false,
-        status: {
-          notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW],
-        },
-      });
+      const walkInCount =
+        await this.bookingRepository.countActiveWalkInBookings(
+          doctorId,
+          new Date(`${bookingDate}T00:00:00.000Z`),
+        );
 
       const maxQueue = slot?.maxQueueSize ?? 10;
       if (walkInCount >= maxQueue) {
@@ -367,75 +276,24 @@ export class BookingsService {
 
     const bookingCode = await this.generateBookingCode(bookingDate);
 
-    const booking = (await this.bookingRepository.transaction(async (tx) => {
-      if (isPreBooked && startTime) {
-        // DB-level double check inside transaction
-        const confirmedBookings = await tx.booking.count({
-          where: {
-            doctorId,
-            bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
-            startTime,
-            status: {
-              in: [
-                BookingStatus.PENDING,
-                BookingStatus.CONFIRMED,
-                BookingStatus.CHECKED_IN,
-                BookingStatus.IN_PROGRESS,
-                BookingStatus.AWAITING_RESULTS,
-              ],
-            },
-          },
-        });
-
-        const maxSlotsPerHour =
-          service?.maxSlotsPerHour ?? slot?.maxPatients ?? 1;
-        if (confirmedBookings >= maxSlotsPerHour) {
-          throw new ApiException(
-            MessageCodes.BOOKING_INVALID_TIME,
-            'Time slot is no longer available (Race condition prevented)',
-            409,
-          );
-        }
-      }
-
-      const newBooking = await tx.booking.create({
-        data: {
-          patientProfileId,
-          doctorId,
-          serviceId: serviceId || undefined,
-          bookingCode,
-          bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
-          startTime: isPreBooked ? startTime : undefined,
-          endTime: isPreBooked ? endTime : undefined,
-          isPreBooked,
-          status: isPreBooked ? BookingStatus.PENDING : BookingStatus.CONFIRMED,
-          source,
-          priority,
-          patientNotes,
-          bookedBy: createdById,
-          confirmedAt: isPreBooked ? null : new Date(),
-          roomId: slot?.roomId || undefined,
-          bookingMode: 'CONSULTATION_FIRST',
-        },
-        include: BookingInclude,
+    const maxSlotsPerHour = service?.maxSlotsPerHour ?? slot?.maxPatients ?? 1;
+    const booking =
+      await this.bookingRepository.createReceptionistBookingTransaction({
+        patientProfileId,
+        doctorId,
+        serviceId,
+        bookingCode,
+        bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
+        startTime,
+        endTime,
+        isPreBooked,
+        source,
+        priority,
+        patientNotes,
+        createdById,
+        roomId: slot?.roomId || undefined,
+        maxSlotsPerHour,
       });
-
-      await tx.bookingStatusHistory.create({
-        data: {
-          bookingId: newBooking.id,
-          oldStatus: null,
-          newStatus: isPreBooked
-            ? BookingStatus.PENDING
-            : BookingStatus.CONFIRMED,
-          changedById: createdById,
-          reason: isPreBooked
-            ? 'Pre-booking created by receptionist, pending confirmation'
-            : 'Walk-in booking created by receptionist, auto-confirmed',
-        },
-      });
-
-      return newBooking;
-    })) as unknown as BookingWithRelations;
 
     this.bookingNotification.sendBookingNotification(booking).catch((error) => {
       this.logger.error(
@@ -505,18 +363,8 @@ export class BookingsService {
       );
     }
 
-    // Validate all services exist and are active
-    const services = await this.catalogRepository.findManyServices({
-      where: { id: { in: serviceIds }, isActive: true },
-      include: {
-        doctorServices: {
-          include: {
-            doctorProfile: { include: { user: { select: { id: true } } } },
-          },
-          take: 1,
-        },
-      },
-    });
+    const services =
+      await this.catalogRepository.findActiveServicesWithDoctors(serviceIds);
 
     if (services.length !== serviceIds.length) {
       throw new ApiException(
@@ -542,12 +390,11 @@ export class BookingsService {
     );
 
     if (!isPreBooked) {
-      const walkInCount = await this.bookingRepository.countBookingsByFilters({
-        doctorId,
-        bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
-        isPreBooked: false,
-        status: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] },
-      });
+      const walkInCount =
+        await this.bookingRepository.countActiveWalkInBookings(
+          doctorId,
+          new Date(`${bookingDate}T00:00:00.000Z`),
+        );
       const maxQueue = slot?.maxQueueSize ?? 10;
       if (walkInCount >= maxQueue) {
         throw new ApiException(
@@ -569,228 +416,42 @@ export class BookingsService {
       );
     }
 
-    const result = await this.bookingRepository.transaction(async (tx) => {
-      if (isPreBooked && startTime) {
-        // DB-level double check inside transaction
-        const confirmedBookings = await tx.booking.count({
-          where: {
-            doctorId,
-            bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
-            startTime,
-            status: {
-              in: [
-                BookingStatus.PENDING,
-                BookingStatus.CONFIRMED,
-                BookingStatus.CHECKED_IN,
-                BookingStatus.IN_PROGRESS,
-                BookingStatus.AWAITING_RESULTS,
-              ],
-            },
-          },
-        });
-
-        const maxSlotsPerHour =
-          primaryService.maxSlotsPerHour ?? slot?.maxPatients ?? 1;
-        if (confirmedBookings >= maxSlotsPerHour) {
-          throw new ApiException(
-            MessageCodes.BOOKING_INVALID_TIME,
-            'Time slot is no longer available (Race condition prevented)',
-            409,
-          );
-        }
-      }
-
-      // 1. Create Booking
-      const newBooking = await tx.booking.create({
-        data: {
-          patientProfileId,
-          doctorId,
-          serviceId: primaryService.id, // Primary service for booking record
-          bookingCode,
-          bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
-          startTime: isPreBooked ? startTime : undefined,
-          endTime: isPreBooked ? endTime : undefined,
-          isPreBooked,
-          status: BookingStatus.CONFIRMED,
-          source: BookingSource.WALK_IN,
-          priority,
-          patientNotes,
-          bookedBy: createdById,
-          confirmedAt: new Date(),
-          roomId: slot?.roomId ?? undefined,
-          bookingMode: 'DIRECT_SERVICE',
-        },
-        include: BookingInclude,
-      });
-
-      await tx.bookingStatusHistory.create({
-        data: {
-          bookingId: newBooking.id,
-          oldStatus: null,
-          newStatus: BookingStatus.CONFIRMED,
-          changedById: createdById,
-          reason:
-            'Mode B — Direct service walk-in: patient knows what service they need',
-        },
-      });
-
-      // 2. Create MedicalRecord rút gọn — bỏ qua SYMPTOMS_TAKEN
-      const medicalRecord = await tx.medicalRecord.create({
-        data: {
-          bookingId: newBooking.id,
-          patientProfileId,
-          doctorId,
-          visitStep: VisitStep.SERVICES_ORDERED,
-          orderedAt: new Date(),
-          version: 1,
-        },
-      });
-
-      // 3. Create LabOrder / VisitServiceOrder for each service and separate invoices
-      const labOrdersToInvoice: Array<{
-        service: (typeof services)[0];
-        orderId: string;
-      }> = [];
-      const visitOrdersToInvoice: Array<{
-        service: (typeof services)[0];
-        orderId: string;
-      }> = [];
-
-      for (const svc of services) {
-        if (svc.performerType === 'TECHNICIAN') {
-          const labOrder = await tx.labOrder.create({
-            data: {
-              medicalRecordId: medicalRecord.id,
-              serviceId: svc.id,
-              patientProfileId,
-              bookingId: newBooking.id,
-              doctorId,
-              testName: svc.name,
-              status: 'PENDING',
-            },
-          });
-          labOrdersToInvoice.push({ service: svc, orderId: labOrder.id });
-        } else {
-          // DOCTOR performer — use explicit assignment from DTO, fall back to doctorServices[0]
-          type ServiceWithDoctor = Prisma.ServiceGetPayload<{
-            include: {
-              doctorServices: {
-                include: {
-                  doctorProfile: {
-                    include: { user: { select: { id: true } } };
-                  };
-                };
-              };
-            };
-          }>;
-
-          const explicitAssignment = dto.serviceAssignments?.find(
-            (a) => a.serviceId === svc.id,
-          );
-          const fallbackUserId =
-            (svc as ServiceWithDoctor).doctorServices?.[0]?.doctorProfile?.user
-              ?.id ?? null;
-
-          const performingUserId =
-            explicitAssignment?.performingDoctorId ?? fallbackUserId ?? null;
-
-          const visitOrder = await tx.visitServiceOrder.create({
-            data: {
-              medicalRecordId: medicalRecord.id,
-              serviceId: svc.id,
-              patientProfileId,
-              bookingId: newBooking.id,
-              orderedBy: doctorId,
-              performedBy: performingUserId,
-              status: 'PENDING',
-            },
-          });
-          visitOrdersToInvoice.push({ service: svc, orderId: visitOrder.id });
-        }
-      }
-
-      // 4. Create Invoices (split by type: LAB and CONSULTATION)
-      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const prefix = `INV-${dateStr}-`;
-
-      // Create LAB invoice
-      if (labOrdersToInvoice.length > 0) {
-        const count = await this.sequenceService.generateNextSequence(prefix);
-        const invoiceNumber = `${prefix}${String(count).padStart(4, '0')}`;
-        const totalAmount = labOrdersToInvoice.reduce(
-          (sum, item) => sum + Number(item.service.price),
-          0,
-        );
-
-        await tx.invoice.create({
-          data: {
-            bookingId: newBooking.id,
-            patientProfileId,
-            invoiceType: 'SERVICE',
-            invoiceNumber,
-            subtotal: totalAmount,
-            discountAmount: 0,
-            vatRate: 0,
-            vatAmount: 0,
-            taxAmount: 0,
-            totalAmount,
-            status: 'DRAFT',
-            notes: 'Mode B — Thu tiền tại quầy lễ tân (Dịch vụ CLS).',
-            items: {
-              create: labOrdersToInvoice.map((item, idx) => ({
-                itemName: item.service.name,
-                unitPrice: Number(item.service.price),
-                quantity: 1,
-                totalPrice: Number(item.service.price),
-                sortOrder: idx,
-                labOrderId: item.orderId,
-                serviceId: item.service.id,
-              })),
-            },
-          },
-        });
-      }
-
-      // Create SERVICE (Specialist) invoice
-      if (visitOrdersToInvoice.length > 0) {
-        const count = await this.sequenceService.generateNextSequence(prefix);
-        const invoiceNumber = `${prefix}${String(count).padStart(4, '0')}`;
-        const totalAmount = visitOrdersToInvoice.reduce(
-          (sum, item) => sum + Number(item.service.price),
-          0,
-        );
-
-        await tx.invoice.create({
-          data: {
-            bookingId: newBooking.id,
-            patientProfileId,
-            invoiceType: 'SERVICE',
-            invoiceNumber,
-            subtotal: totalAmount,
-            discountAmount: 0,
-            vatRate: 0,
-            vatAmount: 0,
-            taxAmount: 0,
-            totalAmount,
-            status: 'DRAFT',
-            notes: 'Mode B — Thu tiền tại quầy lễ tân (Khám chuyên khoa).',
-            items: {
-              create: visitOrdersToInvoice.map((item, idx) => ({
-                itemName: item.service.name,
-                unitPrice: Number(item.service.price),
-                quantity: 1,
-                totalPrice: Number(item.service.price),
-                sortOrder: idx,
-                visitServiceOrderId: item.orderId,
-                serviceId: item.service.id,
-              })),
-            },
-          },
-        });
-      }
-
-      return newBooking;
+    const serviceAssignments = services.map((svc) => {
+      const explicitAssignment = dto.serviceAssignments?.find(
+        (a) => a.serviceId === svc.id,
+      );
+      const fallbackUserId =
+        svc.doctorServices?.[0]?.doctorProfile?.user?.id ?? null;
+      return {
+        serviceId: svc.id,
+        performingDoctorId:
+          explicitAssignment?.performingDoctorId ?? fallbackUserId ?? null,
+      };
     });
+
+    const result =
+      await this.bookingRepository.createDirectServiceBookingTransaction({
+        patientProfileId,
+        doctorId,
+        bookingCode,
+        bookingDate: new Date(`${bookingDate}T00:00:00.000Z`),
+        startTime,
+        endTime,
+        isPreBooked,
+        priority,
+        patientNotes,
+        createdById,
+        roomId: slot?.roomId ?? undefined,
+        maxSlotsPerHour:
+          primaryService.maxSlotsPerHour ?? slot?.maxPatients ?? 1,
+        services: services.map((s) => ({
+          id: s.id,
+          name: s.name,
+          price: Number(s.price),
+          performerType: s.performerType,
+        })),
+        serviceAssignments,
+      });
 
     // Notify receptionists of new direct service booking
     await this.notificationsService.notifyRole({
@@ -817,10 +478,8 @@ export class BookingsService {
     doctorId: string,
     newDoctorId?: string,
   ) {
-    const booking = await this.bookingRepository.findUniqueBooking({
-      where: { id: bookingId },
-      include: BookingInclude,
-    });
+    const booking =
+      await this.bookingRepository.findBookingWithRelations(bookingId);
     if (!booking) {
       throw new ApiException(
         MessageCodes.BOOKING_NOT_FOUND,
@@ -863,29 +522,14 @@ export class BookingsService {
     await this.queueService.removeFromQueue(bookingId);
 
     // 2. Update booking: assign service, maybe new doctor, and move back to CONFIRMED
-    const updated = await this.bookingRepository.update({
-      where: { id: bookingId },
-      data: {
+    const updated =
+      await this.bookingRepository.assignServiceAndMoveToConfirmedTransaction({
+        bookingId,
         serviceId,
         doctorId: newDoctorId ?? booking.doctorId,
-        status: BookingStatus.CONFIRMED,
-        checkedInAt: null, // Reset check-in timestamp so receptionist can check-in for the new service
-      },
-    });
-
-    // 3. Create status history tracking
-    await this.bookingRepository.transaction(async (tx) => {
-      await tx.bookingStatusHistory.create({
-        data: {
-          bookingId,
-          oldStatus: booking.status,
-          newStatus: BookingStatus.CONFIRMED,
-          changedById: doctorId,
-          reason:
-            'Service assigned by consultation doctor. Moved to payment stage.',
-        },
+        oldStatus: booking.status,
+        changedById: doctorId,
       });
-    });
 
     // 4. Auto-create specialization invoice
     try {
@@ -910,67 +554,9 @@ export class BookingsService {
   }
 
   async findAll(filterDto: FilterBookingDto) {
-    const {
-      patientProfileId,
-      doctorId,
-      serviceId,
-      status,
-      date,
-      search,
-      page = 1,
-      limit = 10,
-    } = filterDto;
-
-    const where: Prisma.BookingWhereInput = {};
-
-    if (patientProfileId) where.patientProfileId = patientProfileId;
-    if (doctorId) where.doctorId = doctorId;
-    if (serviceId) where.serviceId = serviceId;
-    if (status) where.status = status;
-    if (date) where.bookingDate = new Date(date);
-
-    if (search) {
-      where.OR = [
-        { bookingCode: { contains: search } },
-        {
-          patientProfile: {
-            fullName: { contains: search },
-          },
-        },
-        {
-          patientProfile: {
-            patientCode: { contains: search },
-          },
-        },
-        {
-          patientProfile: { phone: { contains: search } },
-        },
-      ];
-    }
-
-    const [bookings, total] = await Promise.all([
-      this.bookingRepository.findMany({
-        where,
-        include: {
-          ...BookingInclude,
-          queueRecord: true,
-          medicalRecord: {
-            include: {
-              prescription: {
-                include: {
-                  items: true,
-                },
-              },
-              labOrders: true,
-            },
-          },
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: [{ bookingDate: 'desc' }, { startTime: 'desc' }],
-      }),
-      this.bookingRepository.count({ where }),
-    ]);
+    const { page = 1, limit = 10 } = filterDto;
+    const [bookings, total] =
+      await this.bookingRepository.findBookingsPaginated(filterDto);
 
     return {
       bookings,
@@ -987,41 +573,7 @@ export class BookingsService {
    * Find one booking by ID with ownership validation
    */
   async findOne(id: string, currentUser?: Express.User) {
-    const booking = await this.bookingRepository.findUnique({
-      where: { id },
-      include: {
-        patientProfile: { select: { ...patientProfileSelect, userId: true } },
-        doctor: { select: { id: true, fullName: true, email: true } },
-        service: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            durationMinutes: true,
-            price: true,
-          },
-        },
-        queueRecord: true,
-        statusHistory: {
-          include: {
-            changedBy: {
-              select: { id: true, fullName: true, role: true },
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-        },
-        medicalRecord: {
-          include: {
-            prescription: {
-              include: {
-                items: true,
-              },
-            },
-            labOrders: true,
-          },
-        },
-      },
-    });
+    const booking = await this.bookingRepository.findBookingById(id);
 
     if (!booking) {
       throw new ApiException(
@@ -1056,14 +608,11 @@ export class BookingsService {
         // If not the main doctor, check if they are assigned to any PAID clinical service order for this booking
         let isSpecialistDoctor = false;
         if (!isAssignedDoctor) {
-          const vso = await this.clinicalRepository.findFirstVisitServiceOrder({
-            where: {
-              medicalRecord: { bookingId: booking.id },
-              performedBy: currentUser.id,
-              status: { in: ['PAID', 'IN_PROGRESS'] }, // Allow if paid or already started
-            },
-          });
-          isSpecialistDoctor = !!vso;
+          isSpecialistDoctor =
+            await this.clinicalRepository.hasAccessToVisitServiceOrder(
+              booking.id,
+              currentUser.id,
+            );
         }
 
         if (!isAssignedDoctor && !isSpecialistDoctor && !isStaff) {
@@ -1104,151 +653,60 @@ export class BookingsService {
 
     this.validator.validateStatusTransition(booking.status, status);
 
-    // Build extra timestamps for key transitions
-    const extraData: Prisma.BookingUpdateInput = {};
-    if (status === BookingStatus.CONFIRMED) extraData.confirmedAt = new Date();
-    if (status === BookingStatus.CHECKED_IN) extraData.checkedInAt = new Date();
+    const updatedBooking =
+      await this.bookingRepository.updateBookingStatusTransaction(
+        id,
+        status,
+        changedById!,
+        reason!,
+        doctorNotes,
+      );
 
-    const updatedBooking = await this.bookingRepository.transaction(
-      async (tx) => {
-        const updated = await tx.booking.update({
-          where: { id },
-          data: {
-            status,
-            doctorNotes: doctorNotes || booking.doctorNotes,
-            ...extraData,
-          },
-          include: BookingInclude,
-        });
+    if (
+      status === BookingStatus.CANCELLED ||
+      status === BookingStatus.COMPLETED ||
+      status === BookingStatus.NO_SHOW
+    ) {
+      await this.handleBookingCompletion({
+        id: booking.id,
+        doctorId: booking.doctor.id,
+        bookingDate: booking.bookingDate,
+        startTime: booking.startTime ?? '',
+      });
+    }
 
-        await tx.bookingStatusHistory.create({
-          data: {
-            bookingId: id,
-            oldStatus: booking.status,
-            newStatus: status,
-            changedById: changedById!,
-            reason: reason!,
-          },
-        });
+    if (
+      status === BookingStatus.IN_PROGRESS ||
+      status === BookingStatus.AWAITING_RESULTS
+    ) {
+      this.queueGateway.broadcastQueueUpdate(
+        updatedBooking.doctorId,
+        'UPDATE',
+        {
+          booking: updatedBooking,
+        },
+      );
+    }
 
-        if (
-          status === BookingStatus.CANCELLED ||
-          status === BookingStatus.COMPLETED ||
-          status === BookingStatus.NO_SHOW
-        ) {
-          await this.handleBookingCompletion({
-            id: booking.id,
-            doctorId: booking.doctor.id,
-            bookingDate: booking.bookingDate,
-            startTime: booking.startTime ?? '',
-          });
-
-          // Auto-update Invoice status if applicable
-          if (status === BookingStatus.COMPLETED) {
-            await tx.invoice.updateMany({
-              where: {
-                bookingId: id,
-                status: { in: [InvoiceStatus.DRAFT, InvoiceStatus.OPEN] },
-              },
-              data: { status: InvoiceStatus.ISSUED },
-            });
-          } else if (
-            status === BookingStatus.CANCELLED ||
-            status === BookingStatus.NO_SHOW
-          ) {
-            await tx.invoice.updateMany({
-              where: {
-                bookingId: id,
-                status: { in: [InvoiceStatus.DRAFT, InvoiceStatus.OPEN] },
-              },
-              data: { status: InvoiceStatus.CANCELLED },
-            });
-          }
-        }
-
-        // If examination starts, broadcast real-time update
-        if (
-          status === BookingStatus.IN_PROGRESS ||
-          status === BookingStatus.AWAITING_RESULTS
-        ) {
-          this.queueGateway.broadcastQueueUpdate(updated.doctorId, 'UPDATE', {
-            booking: updated,
-          });
-        }
-
-        // B2: When doctor calls patient (IN_PROGRESS), auto-create CONSULTATION invoice
-        // if doctor has a consultationFee > 0. Patient will pay at B3 (reception counter).
-        if (status === BookingStatus.IN_PROGRESS) {
-          const doctorUser = await tx.user.findUnique({
-            where: { id: updated.doctorId },
-            include: { doctorProfile: { select: { consultationFee: true } } },
-          });
-          const fee = Number(doctorUser?.doctorProfile?.consultationFee ?? 0);
-
-          if (fee > 0) {
-            const existingConsultation = await tx.invoice.findFirst({
-              where: {
-                bookingId: id,
-                invoiceType: 'CONSULTATION',
-                status: { notIn: ['CANCELLED'] },
-              },
-            });
-            if (!existingConsultation) {
-              const count = await tx.invoice.count();
-              const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
-              await tx.invoice.create({
-                data: {
-                  bookingId: id,
-                  patientProfileId: updated.patientProfileId,
-                  invoiceType: 'CONSULTATION',
-                  invoiceNumber,
-                  subtotal: fee,
-                  discountAmount: 0,
-                  vatRate: 0,
-                  vatAmount: 0,
-                  taxAmount: 0,
-                  totalAmount: fee,
-                  status: 'DRAFT',
-                  notes: 'Phí tư vấn — thu tại bước B3 khi BN ra quầy lễ tân',
-                  items: {
-                    create: {
-                      itemName: 'Phí khám tư vấn',
-                      unitPrice: fee,
-                      quantity: 1,
-                      totalPrice: fee,
-                      sortOrder: 0,
-                    },
-                  },
-                },
-              });
-            }
-          }
-        }
-
-        // B2: When doctor calls patient (IN_PROGRESS), notify patient
-        if (status === BookingStatus.IN_PROGRESS) {
-          const patientUserId = updated.patientProfile?.userId;
-          if (patientUserId) {
-            this.notificationsService
-              .createInAppNotification({
-                userId: patientUserId,
-                title: 'Đã đến lượt khám của bạn',
-                content: `Bác sĩ ${updated.doctor?.fullName ?? ''} đang chờ bạn. Vui lòng di chuyển vào phòng ${updated.roomId || 'khám'}.`,
-                type: NotificationType.SYSTEM,
-                metadata: { bookingId: updated.id, roomId: updated.roomId },
-              })
-              .catch((err) =>
-                this.logger.error(
-                  'Failed to notify patient of IN_PROGRESS',
-                  err,
-                ),
-              );
-          }
-        }
-
-        return updated;
-      },
-    );
+    if (status === BookingStatus.IN_PROGRESS) {
+      const patientUserId = updatedBooking.patientProfile?.userId;
+      if (patientUserId) {
+        this.notificationsService
+          .createInAppNotification({
+            userId: patientUserId,
+            title: 'Đã đến lượt khám của bạn',
+            content: `Bác sĩ ${updatedBooking.doctor?.fullName ?? ''} đang chờ bạn. Vui lòng di chuyển vào phòng ${updatedBooking.roomId || 'khám'}.`,
+            type: NotificationType.SYSTEM,
+            metadata: {
+              bookingId: updatedBooking.id,
+              roomId: updatedBooking.roomId,
+            },
+          })
+          .catch((err) =>
+            this.logger.error('Failed to notify patient of IN_PROGRESS', err),
+          );
+      }
+    }
 
     if (status === BookingStatus.CANCELLED) {
       this.bookingNotification
@@ -1360,13 +818,9 @@ export class BookingsService {
     }
 
     // Single Active Patient Rule: Check if doctor already has an active examination
-    const activeExam = await this.bookingRepository.findFirst({
-      where: {
-        doctorId: booking.doctorId,
-        status: BookingStatus.IN_PROGRESS,
-        medicalRecord: null, // Medical record block is only generated upon Save Draft or Complete
-      },
-    });
+    const activeExam = await this.bookingRepository.findActiveExamination(
+      booking.doctorId,
+    );
 
     if (activeExam) {
       throw new ApiException(
@@ -1442,10 +896,8 @@ export class BookingsService {
     const { status, page = 1, limit = 10 } = options;
 
     // Find the PatientProfile belonging to this user
-    const profile = await this.profileRepository.findFirstPatientProfile({
-      where: { userId },
-      select: { id: true },
-    });
+    const profile =
+      await this.profileRepository.findPatientProfileByUserId(userId);
 
     if (!profile) {
       return {
@@ -1454,51 +906,13 @@ export class BookingsService {
       };
     }
 
-    const where: Prisma.BookingWhereInput = {
-      patientProfileId: profile.id,
-    };
-
-    if (status) {
-      if (status === 'upcoming')
-        where.status = {
-          in: ['PENDING', 'CONFIRMED', 'CHECKED_IN', 'QUEUED', 'IN_PROGRESS'],
-        };
-      else if (status === 'completed') where.status = 'COMPLETED';
-      else if (status === 'cancelled')
-        where.status = { in: ['CANCELLED', 'NO_SHOW'] };
-      else if (status !== 'all')
-        where.status = status as import('@prisma/client').BookingStatus;
-    }
-
-    const [bookings, total] = await Promise.all([
-      this.bookingRepository.findMany({
-        where,
-        include: {
-          service: {
-            select: {
-              id: true,
-              name: true,
-              durationMinutes: true,
-              price: true,
-              iconUrl: true,
-            },
-          },
-          doctor: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true,
-              avatar: true,
-            },
-          },
-          queueRecord: true,
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: [{ bookingDate: 'desc' }, { startTime: 'desc' }],
-      }),
-      this.bookingRepository.count({ where }),
-    ]);
+    const [bookings, total] =
+      await this.bookingRepository.findPatientBookingsPaginated(
+        profile.id,
+        status,
+        page,
+        limit,
+      );
 
     return {
       bookings,
@@ -1519,10 +933,8 @@ export class BookingsService {
     today.setHours(0, 0, 0, 0);
 
     // Find the PatientProfile belonging to this user
-    const profile = await this.profileRepository.findFirstPatientProfile({
-      where: { userId },
-      select: { id: true },
-    });
+    const profile =
+      await this.profileRepository.findPatientProfileByUserId(userId);
 
     if (!profile) {
       return {
@@ -1536,52 +948,10 @@ export class BookingsService {
       };
     }
 
-    const patientProfileId = profile.id;
-
-    const [
-      upcomingBookings,
-      completedBookings,
-      waitingBookings,
-      totalBookings,
-    ] = await Promise.all([
-      this.bookingRepository.count({
-        where: {
-          patientProfileId,
-          status: BookingStatus.CONFIRMED,
-          bookingDate: { gte: today },
-        },
-      }),
-      this.bookingRepository.count({
-        where: { patientProfileId, status: BookingStatus.COMPLETED },
-      }),
-      this.bookingRepository.count({
-        where: { patientProfileId, status: BookingStatus.CHECKED_IN },
-      }),
-      this.bookingRepository.count({ where: { patientProfileId } }),
-    ]);
-
-    const nextBooking = await this.bookingRepository.findFirst({
-      where: {
-        patientProfileId,
-        status: BookingStatus.CONFIRMED,
-        bookingDate: { gte: today },
-      },
-      include: {
-        service: { select: { id: true, name: true } },
-        doctor: { select: { id: true, fullName: true, avatar: true } },
-      },
-      orderBy: [{ bookingDate: 'asc' }, { startTime: 'asc' }],
-    });
-
-    return {
-      stats: {
-        upcomingBookings,
-        completedBookings,
-        waitingBookings,
-        totalBookings,
-      },
-      nextBooking,
-    };
+    return this.bookingRepository.getPatientStatsAndNextBooking(
+      profile.id,
+      today,
+    );
   }
 
   /**
@@ -1599,93 +969,21 @@ export class BookingsService {
   ) {
     const { search, page = 1, limit = 10 } = options;
 
-    const patientWhere: Prisma.PatientProfileWhereInput = {};
-    if (search) {
-      patientWhere.OR = [
-        { fullName: { contains: search } },
-        { patientCode: { contains: search } },
-        { phone: { contains: search } },
-      ];
-    }
-
-    // Get distinct patientProfileIds that have at least one COMPLETED booking with this doctor
-    const completedPatientIds = await this.bookingRepository.findMany({
-      where: {
+    const { patients, total } =
+      await this.bookingRepository.findDoctorPatientsPaginated(
         doctorId,
-        status: BookingStatus.COMPLETED,
-        patientProfile: search ? patientWhere : undefined,
-      },
-      select: { patientProfileId: true },
-      distinct: ['patientProfileId'],
-      skip: (page - 1) * limit,
-      take: limit,
-      orderBy: { bookingDate: 'desc' },
-    });
-
-    const totalDistinct = await this.bookingRepository.findMany({
-      where: {
-        doctorId,
-        status: BookingStatus.COMPLETED,
-        patientProfile: search ? patientWhere : undefined,
-      },
-      select: { patientProfileId: true },
-      distinct: ['patientProfileId'],
-    });
-
-    const ids = completedPatientIds.map((b) => b.patientProfileId);
-
-    // For each patient, fetch profile + stats
-    const patients = await Promise.all(
-      ids.map(async (patientProfileId) => {
-        const profile = await this.profileRepository.findUniquePatientProfile({
-          where: { id: patientProfileId },
-          select: {
-            id: true,
-            patientCode: true,
-            fullName: true,
-            phone: true,
-            gender: true,
-            dateOfBirth: true,
-            bloodType: true,
-            allergies: true,
-          },
-        });
-
-        const [totalVisits, lastVisitRecord] = await Promise.all([
-          this.bookingRepository.count({
-            where: {
-              doctorId,
-              patientProfileId,
-              status: BookingStatus.COMPLETED,
-            },
-          }),
-          this.bookingRepository.findFirst({
-            where: {
-              doctorId,
-              patientProfileId,
-              status: BookingStatus.COMPLETED,
-            },
-            orderBy: { bookingDate: 'desc' },
-            select: { bookingDate: true, service: { select: { name: true } } },
-          }),
-        ]);
-
-        return {
-          ...profile,
-          totalVisits,
-          lastVisitDate: lastVisitRecord?.bookingDate ?? null,
-          lastServiceName: lastVisitRecord?.service?.name ?? null,
-        };
-      }),
-    );
+        search,
+        page,
+        limit,
+      );
 
     return {
       patients,
       pagination: {
-        total: totalDistinct.length,
+        total,
         page,
         limit,
-        totalPages: Math.ceil(totalDistinct.length / limit),
+        totalPages: Math.ceil(total / limit),
       },
     };
   }
@@ -1756,39 +1054,10 @@ export class BookingsService {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    interface DashboardStatResult {
-      status: BookingStatus;
-      _count: {
-        _all: number;
-      };
-    }
-
-    const stats = (await this.bookingRepository.groupByBooking({
-      by: ['status'],
-      where: {
-        bookingDate: {
-          gte: today,
-          lt: tomorrow,
-        },
-      },
-      _count: {
-        _all: true,
-      },
-    })) as DashboardStatResult[];
-
-    const result = {
-      pending: 0,
-      confirmed: 0,
-      completed: 0,
-      cancelled: 0,
-    };
-
-    stats.forEach((s) => {
-      const statusKey = s.status.toLowerCase();
-      if (statusKey in result) {
-        result[statusKey as keyof typeof result] = s._count._all;
-      }
-    });
+    const result = await this.bookingRepository.getReceptionistStats(
+      today,
+      tomorrow,
+    );
 
     return {
       pending: { value: result.pending, trend: 0, trendDir: 'neutral' },

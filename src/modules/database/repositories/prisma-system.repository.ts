@@ -58,6 +58,48 @@ export class PrismaSystemRepository implements ISystemRepository {
     return this.prisma.notification.deleteMany(args);
   }
 
+  async findUserInAppNotifications(
+    userId: string,
+    limit?: number,
+  ): Promise<Notification[]> {
+    return this.prisma.notification.findMany({
+      where: { userId, channel: 'IN_APP' },
+      orderBy: { createdAt: 'desc' },
+      ...(limit ? { take: limit } : {}),
+    });
+  }
+
+  async countUnreadInAppNotifications(userId: string): Promise<number> {
+    return this.prisma.notification.count({
+      where: { userId, channel: 'IN_APP', isRead: false },
+    });
+  }
+
+  async markNotificationAsRead(
+    id: string,
+    userId: string,
+  ): Promise<Notification> {
+    return this.prisma.notification.update({
+      where: { id, userId },
+      data: { isRead: true, readAt: new Date() },
+    });
+  }
+
+  async markAllNotificationsAsRead(
+    userId: string,
+  ): Promise<Prisma.BatchPayload> {
+    return this.prisma.notification.updateMany({
+      where: { userId, channel: 'IN_APP', isRead: false },
+      data: { isRead: true, readAt: new Date() },
+    });
+  }
+
+  async deleteNotificationsBefore(cutoff: Date): Promise<Prisma.BatchPayload> {
+    return this.prisma.notification.deleteMany({
+      where: { createdAt: { lt: cutoff } },
+    });
+  }
+
   countSystemConfig(args: Prisma.SystemConfigCountArgs): Promise<number> {
     return this.prisma.systemConfig.count(args);
   }
@@ -135,6 +177,35 @@ export class PrismaSystemRepository implements ISystemRepository {
   }
   deleteAuditLog(args: Prisma.AuditLogDeleteArgs): Promise<AuditLog> {
     return this.prisma.auditLog.delete(args);
+  }
+
+  async findConfigByCategory(category: string): Promise<SystemConfig[]> {
+    return this.prisma.systemConfig.findMany({
+      where: { category: category.toUpperCase() },
+    });
+  }
+
+  async upsertConfigValue(
+    key: string,
+    value: string,
+    category: string,
+    dataType: string,
+    userId: string,
+  ): Promise<SystemConfig> {
+    return this.prisma.systemConfig.upsert({
+      where: { key },
+      update: {
+        value,
+        updatedBy: userId,
+      },
+      create: {
+        key,
+        value,
+        category: category.toUpperCase(),
+        dataType,
+        updatedBy: userId,
+      },
+    });
   }
 
   transaction<T>(fn: (tx: TransactionClient) => Promise<T>): Promise<T> {

@@ -7,7 +7,6 @@ import {
   IBookingRepository,
 } from '../database/interfaces/booking.repository.interface';
 import { Inject } from '@nestjs/common';
-import { BookingStatus } from '@prisma/client';
 
 @Injectable()
 export class BookingsCronService {
@@ -43,26 +42,10 @@ export class BookingsCronService {
 
     // Find pre-bookings that are PENDING/CONFIRMED today, where
     // their startTime was more than 15 minutes ago and patient hasn't checked in.
-    const overdueBookings = await this.bookingRepository.findManyBooking({
-      where: {
-        isPreBooked: true,
-        status: {
-          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
-        },
-        bookingDate: new Date(today),
-        startTime: {
-          // startTime <= cutoffTimeStr means appointment was 15+ min ago
-          lte: cutoffTimeStr,
-        },
-        checkedInAt: null,
-      },
-      select: {
-        id: true,
-        bookingCode: true,
-        doctorId: true,
-        bookingDate: true,
-      },
-    });
+    const overdueBookings = await this.bookingRepository.findOverduePreBookings(
+      new Date(today),
+      cutoffTimeStr,
+    );
 
     if (overdueBookings.length === 0) {
       return;

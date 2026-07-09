@@ -3,6 +3,8 @@ import { UploadService } from '../upload/upload.service';
 import {
   ICatalogRepository,
   I_CATALOG_REPOSITORY,
+  ServiceDetailResult,
+  ServiceWithFiltersResult,
 } from '../database/interfaces/catalog.repository.interface';
 import {
   IBookingRepository,
@@ -10,7 +12,6 @@ import {
 } from '../database/interfaces/booking.repository.interface';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
-import { Prisma } from '@prisma/client';
 
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
@@ -110,82 +111,21 @@ export class ServicesService {
     category?: string;
     categoryType?: 'EXAMINATION' | 'LAB';
     performedBy?: 'TECHNICIAN' | 'DOCTOR';
-  }) {
+  }): Promise<ServiceWithFiltersResult[]> {
     const cacheKey = `cache:services:list:${JSON.stringify(filters || {})}`;
 
     // Try to get from Redis cache first
     if (this.redisService.isReady()) {
-      const cached = await this.redisService.getJson<
-        Prisma.ServiceGetPayload<{
-          include: {
-            category: true;
-            doctorServices: {
-              include: {
-                doctorProfile: {
-                  include: { user: { select: { id: true; fullName: true } } };
-                };
-              };
-            };
-          };
-        }>[]
-      >(cacheKey);
+      const cached =
+        await this.redisService.getJson<ServiceWithFiltersResult[]>(cacheKey);
       if (cached) {
         return cached;
       }
     }
 
-    const where: Prisma.ServiceWhereInput = {};
-
-    if (filters?.category && filters.category !== 'all') {
-      where.categoryId = filters.category;
-    }
-
-    if (filters?.categoryType) {
-      where.category = {
-        ...(where.category
-          ? (where.category as Prisma.CategoryWhereInput)
-          : {}),
-        type: filters.categoryType,
-      };
-    }
-
-    if (filters?.performedBy) {
-      where.performerType = filters.performedBy;
-    }
-
-    if (filters?.isActive !== undefined) {
-      where.isActive = filters.isActive;
-    }
-
-    if (filters?.search) {
-      where.OR = [
-        {
-          name: {
-            contains: filters.search,
-          },
-        },
-        {
-          description: {
-            contains: filters.search,
-          },
-        },
-      ];
-    }
-
-    const services = await this.catalogRepository.findManyServices({
-      where,
-      include: {
-        category: true,
-        doctorServices: {
-          include: {
-            doctorProfile: {
-              include: { user: { select: { id: true, fullName: true } } },
-            },
-          },
-        },
-      },
-      orderBy: { name: 'asc' },
-    });
+    const services = await this.catalogRepository.findServicesWithFilters(
+      filters || {},
+    );
 
     // Save to Redis cache (TTL: 12 hours = 43200 seconds)
     if (this.redisService.isReady()) {
@@ -198,29 +138,8 @@ export class ServicesService {
   /**
    * Get service by ID
    */
-  async findOne(id: string) {
-    const service = await this.catalogRepository.findUnique({
-      where: { id },
-      include: {
-        category: true,
-        doctorServices: {
-          include: {
-            doctorProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    fullName: true,
-                    avatar: true,
-                    email: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+  async findOne(id: string): Promise<ServiceDetailResult> {
+    const service = await this.catalogRepository.findServiceDetailById(id);
 
     if (!service) {
       throw new ApiException(

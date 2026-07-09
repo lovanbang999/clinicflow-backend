@@ -15,6 +15,11 @@ import {
 import {
   IFinanceRepository,
   I_FINANCE_REPOSITORY,
+  InvoiceDetailResult,
+  InvoiceWithBooking,
+  InvoiceDetailForPaymentResult,
+  InvoiceDetailPostPaymentResult,
+  InvoiceDetailForFinalizeResult,
 } from '../database/interfaces/finance.repository.interface';
 import {
   IBookingRepository,
@@ -32,13 +37,11 @@ import {
 import {
   InvoiceStatus,
   InvoiceType,
-  LabOrderStatus,
   BookingStatus,
   VisitStep,
-  Prisma,
-  ServiceOrderStatus,
   BookingPriority,
   User,
+  Invoice,
 } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { LabOrdersGateway } from '../lab-orders/lab-orders.gateway';
@@ -76,103 +79,6 @@ export class BillingService {
   }
 
   /**
-   * Calculates the suggested order for a patient to visit clinical rooms
-   * based on preparation requirements (e.g. fasting), current queue size,
-   * and physical location (grouping by room/category).
-   */
-  private async assignSmartQueueOrder(
-    tx: Prisma.TransactionClient,
-    invoiceId: string,
-  ) {
-    // 1. Fetch all items with their services and categories
-    const items = await tx.invoiceItem.findMany({
-      where: { invoiceId },
-      include: {
-        labOrder: {
-          include: {
-            service: {
-              include: {
-                category: true,
-              },
-            },
-          },
-        },
-        visitServiceOrder: {
-          include: {
-            service: {
-              include: {
-                category: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    // 2. Extract and combine orders
-    const orders = items
-      .map((item) => ({
-        id: item.labOrder?.id || item.visitServiceOrderId,
-        type: item.labOrder ? 'LAB' : 'VSO',
-        queueNumber:
-          item.labOrder?.queueNumber || item.visitServiceOrder?.queueNumber,
-        service: item.labOrder?.service || item.visitServiceOrder?.service,
-      }))
-      .filter((o) => o.id && o.service);
-
-    if (orders.length === 0) return;
-
-    // 3. Sorting logic (Level 2: Optimized Suggestion)
-    // Priority: Fasting/Preparation -> Lower Queue Number -> Shorter Duration
-    const sortedOrders = [...orders].sort((a, b) => {
-      // Priority 1: Preparation notes (e.g., "Fasting" / "Nhịn ăn")
-      const aHasPrep = a.service?.preparationNotes ? 1 : 0;
-      const bHasPrep = b.service?.preparationNotes ? 1 : 0;
-      if (aHasPrep !== bHasPrep) return bHasPrep - aHasPrep;
-
-      // Priority 2: Queue Number (lower is better, less wait)
-      const aQN = a.queueNumber ?? 9999;
-      const bQN = b.queueNumber ?? 9999;
-      if (aQN !== bQN) return aQN - bQN;
-
-      // Priority 3: Shorter duration first
-      const aDur = a.service?.durationMinutes ?? 0;
-      const bDur = b.service?.durationMinutes ?? 0;
-      return aDur - bDur;
-    });
-
-    // 4. Update suggestedOrder and groupKey in DB
-    for (let i = 0; i < sortedOrders.length; i++) {
-      const order = sortedOrders[i];
-      const suggestedOrder = i + 1;
-
-      // Determine groupKey: Group by Category Code + PerformerType
-      const groupKey = `${order.service?.performerType}-${order.service?.categoryId || 'none'}`;
-
-      if (order.type === 'LAB') {
-        await tx.labOrder.update({
-          where: { id: order.id as string },
-          data: { suggestedOrder, groupKey } as Prisma.LabOrderUpdateInput & {
-            suggestedOrder: number;
-            groupKey: string;
-          },
-        });
-      } else {
-        await tx.visitServiceOrder.update({
-          where: { id: order.id as string },
-          data: {
-            suggestedOrder,
-            groupKey,
-          } as Prisma.VisitServiceOrderUpdateInput & {
-            suggestedOrder: number;
-            groupKey: string;
-          },
-        });
-      }
-    }
-  }
-
-  /**
    * Verified if the requester has access to the invoice details.
    */
   private async validateInvoiceAccess(
@@ -185,9 +91,9 @@ export class BillingService {
       return;
 
     if (currentUser.role === 'PATIENT') {
-      const profile = await this.profileRepository.findFirstPatientProfile({
-        where: { userId: currentUser.id },
-      });
+      const profile = await this.profileRepository.findPatientProfileByUserId(
+        currentUser.id,
+      );
       if (!profile || profile.id !== patientProfileId) {
         throw new ApiException(
           MessageCodes.BOOKING_ACCESS_FORBIDDEN,
@@ -200,12 +106,11 @@ export class BillingService {
 
     if (currentUser.role === 'DOCTOR') {
       // Check for a treatment relationship
-      const treatmentRelation = await this.bookingRepository.findFirst({
-        where: {
-          doctorId: currentUser.id,
+      const treatmentRelation =
+        await this.bookingRepository.findTreatmentRelationship(
+          currentUser.id,
           patientProfileId,
-        },
-      });
+        );
 
       if (!treatmentRelation) {
         throw new ApiException(
@@ -231,7 +136,10 @@ export class BillingService {
    * A booking can have multiple invoices (Consultation / Lab / Pharmacy).
    * Auto-seeds a first line item from the booking's service (for CONSULTATION type).
    */
-  async createInvoice(dto: CreateInvoiceDto, currentUser?: Express.User) {
+  async createInvoice(
+    dto: CreateInvoiceDto,
+    currentUser?: Express.User,
+  ): Promise<Invoice> {
     if (
       currentUser &&
       currentUser.role !== 'ADMIN' &&
@@ -243,13 +151,9 @@ export class BillingService {
         HttpStatus.FORBIDDEN,
       );
     }
-    const booking = await this.bookingRepository.findUniqueBooking({
-      where: { id: dto.bookingId },
-      include: {
-        service: true,
-        patientProfile: { select: { id: true, fullName: true } },
-      },
-    });
+    const booking = await this.bookingRepository.findBookingForInvoiceCreation(
+      dto.bookingId,
+    );
 
     if (!booking) {
       throw new ApiException(
@@ -304,148 +208,19 @@ export class BillingService {
     const count = await this.sequenceService.generateNextSequence(prefix);
     const invoiceNumber = `${prefix}${String(count).padStart(4, '0')}`;
 
-    const result = await this.financeRepository.transaction(async (tx) => {
-      const seedSubtotal =
-        invoiceType === InvoiceType.CONSULTATION ? Number(servicePrice) : 0;
-
-      const inv = await tx.invoice.create({
-        data: {
-          bookingId: dto.bookingId,
-          patientProfileId: booking.patientProfileId,
-          invoiceType,
-          invoiceNumber,
-          subtotal: seedSubtotal,
-          discountAmount: 0,
-          vatRate: 0,
-          vatAmount: 0,
-          taxAmount: 0,
-          totalAmount: seedSubtotal,
-          status: InvoiceStatus.DRAFT,
-          notes: dto.notes,
-        },
-      });
-
-      // For CONSULTATION: seed first item from booking service (only if service is known)
-      if (invoiceType === InvoiceType.CONSULTATION && booking.service) {
-        await tx.invoiceItem.create({
-          data: {
-            invoiceId: inv.id,
-            serviceId: booking.serviceId,
-            itemName: booking.service.name,
-            unitPrice: servicePrice,
-            quantity: 1,
-            totalPrice: servicePrice,
-            sortOrder: 0,
-          } as Prisma.InvoiceItemUncheckedCreateInput & {
-            visitServiceOrderId?: string | null;
-          },
-        });
-      }
-
-      let totalToUpdate = seedSubtotal;
-
-      if (invoiceType === InvoiceType.SERVICE) {
-        const labOrderWhere: Prisma.LabOrderWhereInput = {
-          bookingId: dto.bookingId,
-          status: LabOrderStatus.PENDING,
-          invoiceItem: null,
-        };
-        if (dto.labOrderIds && dto.labOrderIds.length > 0) {
-          labOrderWhere.id = { in: dto.labOrderIds };
-        }
-
-        const pendingLabs = await tx.labOrder.findMany({
-          where: labOrderWhere,
-          orderBy: { createdAt: 'asc' },
-          include: { service: { select: { price: true } } },
-        });
-
-        const vsoWhere = {
-          bookingId: dto.bookingId,
-          status: ServiceOrderStatus.PENDING,
-          invoiceItem: null,
-        } as Prisma.VisitServiceOrderWhereInput & { invoiceItem?: null };
-        if (dto.visitServiceOrderIds && dto.visitServiceOrderIds.length > 0) {
-          vsoWhere.id = { in: dto.visitServiceOrderIds };
-        }
-
-        const pendingVsos = await tx.visitServiceOrder.findMany({
-          where: vsoWhere,
-          orderBy: { createdAt: 'asc' },
-          include: { service: { select: { price: true, name: true } } },
-        });
-
-        let sortOrderValue = 0;
-
-        for (const order of pendingLabs) {
-          const price = order.service?.price ? Number(order.service.price) : 0;
-          const item = await tx.invoiceItem.create({
-            data: {
-              invoiceId: inv.id,
-              labOrderId: order.id,
-              itemName: order.testName ?? 'Lab test',
-              unitPrice: price,
-              quantity: 1,
-              totalPrice: price,
-              sortOrder: sortOrderValue++,
-            } as Prisma.InvoiceItemUncheckedCreateInput & {
-              visitServiceOrderId?: string | null;
-            },
-          });
-          totalToUpdate += Number(item.totalPrice);
-        }
-
-        for (const vso of pendingVsos) {
-          const price = vso.service?.price ? Number(vso.service.price) : 0;
-          const item = await tx.invoiceItem.create({
-            data: {
-              invoiceId: inv.id,
-              visitServiceOrderId: vso.id,
-              itemName: vso.service?.name ?? 'Clinical service',
-              unitPrice: price,
-              quantity: 1,
-              totalPrice: price,
-              sortOrder: sortOrderValue++,
-            } as Prisma.InvoiceItemUncheckedCreateInput & {
-              visitServiceOrderId?: string | null;
-            },
-          });
-          totalToUpdate += Number(item.totalPrice);
-        }
-      }
-
-      if (dto.items && dto.items.length > 0) {
-        for (let i = 0; i < dto.items.length; i++) {
-          const mItem = dto.items[i];
-          const qty = mItem.quantity ?? 1;
-          const tPrice = Number(mItem.unitPrice) * qty;
-
-          const item = await tx.invoiceItem.create({
-            data: {
-              invoiceId: inv.id,
-              serviceId: mItem.serviceId,
-              itemName: mItem.itemName,
-              unitPrice: mItem.unitPrice,
-              quantity: qty,
-              totalPrice: tPrice,
-              sortOrder: mItem.sortOrder ?? 0,
-            } as Prisma.InvoiceItemUncheckedCreateInput & {
-              visitServiceOrderId?: string | null;
-            },
-          });
-          totalToUpdate += Number(item.totalPrice);
-        }
-      }
-
-      const updatedInv = await tx.invoice.update({
-        where: { id: inv.id },
-        data: {
-          subtotal: totalToUpdate,
-          totalAmount: totalToUpdate,
-        },
-      });
-
-      return updatedInv;
+    const result = await this.financeRepository.createInvoiceTransaction({
+      bookingId: dto.bookingId,
+      patientProfileId: booking.patientProfileId,
+      invoiceType,
+      invoiceNumber,
+      notes: dto.notes,
+      servicePrice: Number(servicePrice),
+      bookingService: booking.service
+        ? { id: booking.service.id, name: booking.service.name }
+        : null,
+      labOrderIds: dto.labOrderIds,
+      visitServiceOrderIds: dto.visitServiceOrderIds,
+      items: dto.items,
     });
 
     return result;
@@ -463,9 +238,7 @@ export class BillingService {
         HttpStatus.FORBIDDEN,
       );
     }
-    const invoice = await this.financeRepository.findUniqueInvoice({
-      where: { id },
-    });
+    const invoice = await this.financeRepository.findInvoiceById(id);
     if (!invoice) {
       throw new ApiException(
         MessageCodes.INVOICE_NOT_FOUND,
@@ -481,36 +254,23 @@ export class BillingService {
       );
     }
 
-    await this.financeRepository.deleteInvoice({ where: { id } });
+    await this.financeRepository.deleteInvoiceById(id);
     return null;
   }
 
-  async syncLabInvoice(bookingId: string) {
-    const invoice = await this.financeRepository.findFirstInvoice({
-      where: {
-        bookingId,
-        invoiceType: InvoiceType.SERVICE,
-        status: InvoiceStatus.DRAFT,
-      },
-    });
-
-    const pendingLabs = await this.clinicalRepository.findManyLabOrder({
-      where: {
-        bookingId,
-        status: LabOrderStatus.PENDING,
-      },
-      include: { service: { select: { price: true } } },
-    });
-
-    const pendingVsos = await this.clinicalRepository.findManyVisitServiceOrder(
-      {
-        where: {
-          bookingId,
-          status: ServiceOrderStatus.PENDING,
-        },
-        include: { service: { select: { price: true, name: true } } },
-      },
+  async syncLabInvoice(
+    bookingId: string,
+  ): Promise<InvoiceDetailResult | Invoice | null> {
+    const invoice = await this.financeRepository.findDraftInvoiceByType(
+      bookingId,
+      InvoiceType.SERVICE,
     );
+
+    const pendingLabs =
+      await this.clinicalRepository.findPendingLabsForSync(bookingId);
+
+    const pendingVsos =
+      await this.clinicalRepository.findPendingVsosForSync(bookingId);
 
     if (pendingLabs.length === 0 && pendingVsos.length === 0 && !invoice) {
       return null;
@@ -525,120 +285,24 @@ export class BillingService {
       return result;
     }
 
-    await this.financeRepository.transaction(async (tx) => {
-      const existingItems = await tx.invoiceItem.findMany({
-        where: { invoiceId: invoice.id },
-      });
-      const existingLabOrderIds = existingItems
-        .filter((it) => it.labOrderId)
-        .map((it) => it.labOrderId);
-      const existingVsoIds = existingItems
-        .filter(
-          (it) =>
-            (it as typeof it & { visitServiceOrderId?: string | null })
-              .visitServiceOrderId,
-        )
-        .map(
-          (it) =>
-            (it as typeof it & { visitServiceOrderId?: string | null })
-              .visitServiceOrderId,
-        )
-        .filter(Boolean) as string[];
-
-      for (const order of pendingLabs) {
-        if (!existingLabOrderIds.includes(order.id)) {
-          const price = order.service?.price ? Number(order.service.price) : 0;
-          await tx.invoiceItem.create({
-            data: {
-              invoiceId: invoice.id,
-              labOrderId: order.id,
-              itemName: order.testName ?? 'Lab test',
-              unitPrice: price,
-              quantity: 1,
-              totalPrice: price,
-              sortOrder: 0,
-            } as Prisma.InvoiceItemUncheckedCreateInput & {
-              visitServiceOrderId?: string | null;
-            },
-          });
-        }
-      }
-
-      for (const vso of pendingVsos) {
-        if (!existingVsoIds.includes(vso.id)) {
-          const price = vso.service?.price ? Number(vso.service.price) : 0;
-          await tx.invoiceItem.create({
-            data: {
-              invoiceId: invoice.id,
-              visitServiceOrderId: vso.id,
-              itemName: vso.service?.name ?? 'Clinical service',
-              unitPrice: price,
-              quantity: 1,
-              totalPrice: price,
-              sortOrder: 0,
-            } as Prisma.InvoiceItemUncheckedCreateInput & {
-              visitServiceOrderId?: string | null;
-            },
-          });
-        }
-      }
-
-      const currentPendingLabIds = pendingLabs.map((o) => o.id);
-      const currentPendingVsoIds = pendingVsos.map((o) => o.id);
-
-      for (const item of existingItems) {
-        if (
-          item.labOrderId &&
-          !currentPendingLabIds.includes(item.labOrderId)
-        ) {
-          await tx.invoiceItem.delete({ where: { id: item.id } });
-        } else if (
-          (item as { visitServiceOrderId?: string | null })
-            .visitServiceOrderId &&
-          !currentPendingVsoIds.includes(
-            (item as { visitServiceOrderId?: string | null })
-              .visitServiceOrderId!,
-          )
-        ) {
-          await tx.invoiceItem.delete({ where: { id: item.id } });
-        }
-      }
-
-      const allItems = await tx.invoiceItem.findMany({
-        where: { invoiceId: invoice.id },
-      });
-
-      const newTotal = allItems.reduce(
-        (sum, item) => sum + Number(item.totalPrice),
-        0,
-      );
-
-      await tx.invoice.update({
-        where: { id: invoice.id },
-        data: {
-          subtotal: newTotal,
-          totalAmount: newTotal,
-        },
-      });
+    const { deleted } = await this.financeRepository.syncLabInvoiceTransaction({
+      invoiceId: invoice.id,
+      pendingLabs: pendingLabs.map((order) => ({
+        id: order.id,
+        testName: order.testName,
+        service: order.service ? { price: order.service.price } : null,
+      })),
+      pendingVsos: pendingVsos.map((vso) => ({
+        id: vso.id,
+        service: vso.service
+          ? { price: vso.service.price, name: vso.service.name }
+          : null,
+      })),
     });
 
-    // 4. POST-SYNC CHECK: If invoice is now empty (0 items) and it's still a draft, delete it
-    const finalItems = await this.financeRepository.findManyInvoiceItem({
-      where: { invoiceId: invoice.id },
-    });
-
-    if (finalItems.length === 0) {
-      // Re-fetch invoice status to be absolutely safe before deleting
-      const finalInvoice = await this.financeRepository.findUniqueInvoice({
-        where: { id: invoice.id },
-      });
-      if (finalInvoice && finalInvoice.status === InvoiceStatus.DRAFT) {
-        await this.deleteInvoice(invoice.id);
-        this.labOrdersGateway.server.emit('billing_list_refresh', {
-          bookingId,
-        });
-        return null;
-      }
+    if (deleted) {
+      this.labOrdersGateway.server.emit('billing_list_refresh', { bookingId });
+      return null;
     }
 
     this.labOrdersGateway.server.emit('billing_list_refresh', { bookingId });
@@ -648,11 +312,12 @@ export class BillingService {
   /**
    * List all invoices for a booking (multiple invoices per booking).
    */
-  async listInvoicesByBooking(bookingId: string, currentUser?: Express.User) {
-    const booking = await this.bookingRepository.findUniqueBooking({
-      where: { id: bookingId },
-      select: { id: true, patientProfileId: true },
-    });
+  async listInvoicesByBooking(
+    bookingId: string,
+    currentUser?: Express.User,
+  ): Promise<InvoiceWithBooking[]> {
+    const booking =
+      await this.bookingRepository.findBookingPatientProfileId(bookingId);
     if (!booking) {
       throw new ApiException(
         MessageCodes.BOOKING_NOT_FOUND,
@@ -663,99 +328,19 @@ export class BillingService {
 
     await this.validateInvoiceAccess(booking.patientProfileId, currentUser);
 
-    const invoices = await this.financeRepository.findManyInvoice({
-      where: { bookingId },
-      include: {
-        items: {
-          orderBy: { sortOrder: 'asc' },
-          include: {
-            labOrder: {
-              include: {
-                service: {
-                  include: { category: true },
-                },
-              },
-            },
-            visitServiceOrder: {
-              include: {
-                performer: { select: { id: true, fullName: true } },
-                service: {
-                  include: { category: true },
-                },
-              },
-            },
-          },
-        },
-        payments: { orderBy: { paidAt: 'desc' } },
-        booking: {
-          include: {
-            doctor: { select: { id: true, fullName: true } },
-            patientProfile: {
-              select: {
-                id: true,
-                fullName: true,
-                patientCode: true,
-                phone: true,
-                insuranceNumber: true,
-                dateOfBirth: true,
-                gender: true,
-              },
-            },
-            service: { select: { id: true, name: true } },
-            queueRecord: true,
-            medicalRecord: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+    const invoices: InvoiceWithBooking[] =
+      await this.financeRepository.findInvoicesByBookingId(bookingId);
 
     return invoices;
   }
 
   // Get invoice by invoice ID.
-  async getInvoiceById(id: string, currentUser?: Express.User) {
-    const invoice = await this.financeRepository.findUniqueInvoice({
-      where: { id },
-      include: {
-        items: {
-          orderBy: { sortOrder: 'asc' },
-          include: {
-            labOrder: {
-              include: {
-                service: {
-                  include: { category: true },
-                },
-              },
-            },
-            visitServiceOrder: {
-              include: {
-                performer: true,
-                service: {
-                  include: { category: true },
-                },
-              },
-            },
-          },
-        },
-        payments: { orderBy: { paidAt: 'desc' } },
-        booking: {
-          include: {
-            doctor: { select: { id: true, fullName: true } },
-            patientProfile: {
-              select: {
-                id: true,
-                fullName: true,
-                patientCode: true,
-                phone: true,
-              },
-            },
-            service: { select: { id: true, name: true } },
-            medicalRecord: true,
-          },
-        },
-      },
-    });
+  async getInvoiceById(
+    id: string,
+    currentUser?: Express.User,
+  ): Promise<InvoiceDetailResult> {
+    const invoice: InvoiceDetailResult | null =
+      await this.financeRepository.findInvoiceDetailById(id);
 
     if (!invoice) {
       throw new ApiException(
@@ -783,7 +368,12 @@ export class BillingService {
     page?: number;
     limit?: number;
     currentUser?: Express.User;
-  }) {
+  }): Promise<{
+    items: InvoiceWithBooking[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
     if (
       params.currentUser &&
       params.currentUser.role !== 'ADMIN' &&
@@ -807,78 +397,20 @@ export class BillingService {
     } = params;
     const skip = (page - 1) * limit;
 
-    const where: Prisma.InvoiceWhereInput = {};
-    if (status) where.status = status;
-    if (patientProfileId) where.patientProfileId = patientProfileId;
-    if (invoiceType) where.invoiceType = invoiceType;
-    if (search) {
-      where.OR = [
-        { invoiceNumber: { contains: search } },
-        {
-          booking: {
-            patientProfile: {
-              fullName: { contains: search },
-            },
-          },
-        },
-        {
-          booking: {
-            patientProfile: {
-              patientCode: { contains: search },
-            },
-          },
-        },
-      ];
-    }
-    if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate)
-        (where.createdAt as Prisma.DateTimeFilter).gte = new Date(startDate);
-      if (endDate)
-        (where.createdAt as Prisma.DateTimeFilter).lte = new Date(endDate);
-    }
-
-    const [invoices, total] = await Promise.all([
-      this.financeRepository.findManyInvoice({
-        where,
-        include: {
-          items: {
-            take: 1,
-            orderBy: { sortOrder: 'asc' },
-            include: {
-              labOrder: {
-                include: {
-                  service: {
-                    include: { category: true },
-                  },
-                },
-              },
-              visitServiceOrder: {
-                include: {
-                  performer: { select: { id: true, fullName: true } },
-                  service: {
-                    include: { category: true },
-                  },
-                },
-              },
-            },
-          },
-          booking: {
-            include: {
-              patientProfile: { select: { fullName: true, patientCode: true } },
-              doctor: { select: { fullName: true } },
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
+    const { items, total }: { items: InvoiceWithBooking[]; total: number } =
+      await this.financeRepository.findInvoicesPaginated({
+        status,
+        patientProfileId,
+        invoiceType,
+        startDate: startDate ? new Date(startDate) : undefined,
+        endDate: endDate ? new Date(endDate) : undefined,
+        search,
         skip,
         take: limit,
-      }),
-      this.financeRepository.countInvoice({ where }),
-    ]);
+      });
 
     return {
-      items: invoices,
+      items,
       total,
       page,
       limit,
@@ -914,53 +446,15 @@ export class BillingService {
       search,
     } = params;
 
-    const where: Prisma.InvoiceWhereInput = {};
-    if (status) where.status = status;
-    if (patientProfileId) where.patientProfileId = patientProfileId;
-    if (invoiceType) where.invoiceType = invoiceType;
-    if (search) {
-      where.OR = [
-        { invoiceNumber: { contains: search } },
-        {
-          booking: {
-            patientProfile: {
-              fullName: { contains: search },
-            },
-          },
-        },
-        {
-          booking: {
-            patientProfile: {
-              patientCode: { contains: search },
-            },
-          },
-        },
-      ];
-    }
-    if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate)
-        (where.createdAt as Prisma.DateTimeFilter).gte = new Date(startDate);
-      if (endDate)
-        (where.createdAt as Prisma.DateTimeFilter).lte = new Date(endDate);
-    }
-
-    const invoices = await this.financeRepository.findManyInvoice({
-      where,
-      include: {
-        booking: {
-          include: {
-            patientProfile: { select: { fullName: true, patientCode: true } },
-          },
-        },
-        payments: {
-          select: {
-            amountPaid: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const invoices: InvoiceWithBooking[] =
+      await this.financeRepository.findInvoicesForExport({
+        status,
+        patientProfileId,
+        invoiceType,
+        startDate: startDate ? new Date(startDate) : undefined,
+        endDate: endDate ? new Date(endDate) : undefined,
+        search,
+      });
 
     const escapeCsv = (
       val:
@@ -1065,14 +559,8 @@ export class BillingService {
    * Used by receptionist to know if they need to create a LAB invoice.
    */
   async getPendingLabOrdersForBilling(bookingId: string) {
-    const orders = await this.clinicalRepository.findManyLabOrder({
-      where: {
-        bookingId,
-        status: LabOrderStatus.PENDING,
-        invoiceItem: null, // not yet added to any invoice
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+    const orders =
+      await this.clinicalRepository.findPendingLabOrdersForBilling(bookingId);
 
     return orders;
   }
@@ -1098,9 +586,7 @@ export class BillingService {
         HttpStatus.FORBIDDEN,
       );
     }
-    const invoice = await this.financeRepository.findUniqueInvoice({
-      where: { id: invoiceId },
-    });
+    const invoice = await this.financeRepository.findInvoiceById(invoiceId);
     if (!invoice) {
       throw new ApiException(
         MessageCodes.INVOICE_NOT_FOUND,
@@ -1122,27 +608,11 @@ export class BillingService {
     const quantity = dto.quantity ?? 1;
     const totalPrice = dto.unitPrice * quantity;
 
-    const item = await this.financeRepository.transaction(async (tx) => {
-      const newItem = await tx.invoiceItem.create({
-        data: {
-          invoiceId,
-          serviceId: dto.serviceId,
-          itemName: dto.itemName,
-          unitPrice: dto.unitPrice,
-          quantity,
-          totalPrice,
-          sortOrder: dto.sortOrder ?? 0,
-          labOrderId: dto.labOrderId,
-          visitServiceOrderId: dto.visitServiceOrderId,
-        } as Prisma.InvoiceItemUncheckedCreateInput & {
-          visitServiceOrderId?: string | null;
-        },
-      });
-
-      // Recalculate totals
-      await this.recalculateTotals(tx, invoiceId);
-
-      return newItem;
+    const item = await this.financeRepository.addInvoiceItemTransaction({
+      invoiceId,
+      item: dto,
+      quantity,
+      totalPrice,
     });
 
     return item;
@@ -1167,9 +637,7 @@ export class BillingService {
         HttpStatus.FORBIDDEN,
       );
     }
-    const invoice = await this.financeRepository.findUniqueInvoice({
-      where: { id: invoiceId },
-    });
+    const invoice = await this.financeRepository.findInvoiceById(invoiceId);
     if (!invoice) {
       throw new ApiException(
         MessageCodes.INVOICE_NOT_FOUND,
@@ -1188,10 +656,10 @@ export class BillingService {
       );
     }
 
-    await this.financeRepository.transaction(async (tx) => {
-      await tx.invoiceItem.delete({ where: { id: itemId } });
-      await this.recalculateTotals(tx, invoiceId);
-    });
+    await this.financeRepository.removeInvoiceItemTransaction(
+      invoiceId,
+      itemId,
+    );
 
     return null;
   }
@@ -1209,7 +677,7 @@ export class BillingService {
     dto: ConfirmPaymentDto,
     confirmedByUserId: string,
     currentUser?: Express.User,
-  ) {
+  ): Promise<InvoiceDetailPostPaymentResult | null> {
     if (
       currentUser &&
       currentUser.role !== 'ADMIN' &&
@@ -1221,18 +689,8 @@ export class BillingService {
         HttpStatus.FORBIDDEN,
       );
     }
-    const invoice = await this.financeRepository.findUniqueInvoice({
-      where: { id: invoiceId },
-      include: {
-        payments: true,
-        booking: {
-          include: {
-            patientProfile: { select: { fullName: true, userId: true } },
-            medicalRecord: true,
-          },
-        },
-      },
-    });
+    const invoice: InvoiceDetailForPaymentResult | null =
+      await this.financeRepository.findInvoiceDetailForPayment(invoiceId);
 
     if (!invoice) {
       throw new ApiException(
@@ -1264,11 +722,7 @@ export class BillingService {
     if (invoice.invoiceType === InvoiceType.CONSULTATION) {
       const isAwaitingResults = invoice.booking?.status === 'AWAITING_RESULTS';
       const isCompleted = invoice.booking?.status === 'COMPLETED';
-      const visitStep = (
-        invoice.booking as typeof invoice.booking & {
-          medicalRecord?: { visitStep: VisitStep };
-        }
-      )?.medicalRecord?.visitStep;
+      const visitStep = invoice.booking?.medicalRecord?.visitStep;
 
       const allowedSteps: VisitStep[] = [
         VisitStep.SERVICES_ORDERED,
@@ -1313,306 +767,37 @@ export class BillingService {
     const invoiceTotal = Number(invoice.totalAmount);
     const shouldAutoFinalize = newTotalPaid >= invoiceTotal;
 
-    let broadcastPayload: {
-      labOrderIds: string[];
-      patientName: string;
-      invoiceId: string;
-    } | null = null;
+    const technicians = await this.bookingRepository.findTechnicians();
 
-    // Track VSO IDs paid in this transaction for post-commit broadcast
-    let paidVsoIds: string[] = [];
-
-    await this.financeRepository.transaction(async (tx) => {
-      await tx.payment.create({
-        data: {
-          invoiceId,
-          amountPaid: dto.amountPaid,
-          insuranceCovered,
-          patientPaid: patientPaid < 0 ? 0 : patientPaid,
-          paymentMethod: dto.paymentMethod,
-          insuranceNumber: dto.insuranceNumber,
-          transactionRef: dto.transactionRef,
-          confirmedBy: confirmedByUserId,
-          notes: dto.notes,
-          paidAt: new Date(),
+    const { paidVsoIds, broadcastPayload } =
+      await this.financeRepository.addPaymentTransaction({
+        invoiceId,
+        input: dto,
+        confirmedByUserId,
+        previouslyPaid,
+        invoiceTotal,
+        shouldAutoFinalize,
+        patientPaid,
+        insuranceCovered,
+        invoiceType: invoice.invoiceType,
+        invoiceBookingId: invoice.bookingId,
+        currentBookingStatus: invoice.booking?.status,
+        invoicePatientProfileUserId: invoice.booking?.patientProfile?.userId,
+        invoicePatientProfileFullName:
+          invoice.booking?.patientProfile?.fullName,
+        technicians,
+        generateQueueNumber: async (prefix: string) => {
+          return this.sequenceService.generateNextSequence(prefix);
         },
-      });
-
-      if (shouldAutoFinalize) {
-        // Auto-finalize: PAID ngay khi đủ tiền
-        const totalInsurance =
-          invoice.payments.reduce(
-            (sum, p) => sum + Number(p.insuranceCovered),
-            0,
-          ) + insuranceCovered;
-        const totalPatient =
-          invoice.payments.reduce((sum, p) => sum + Number(p.patientPaid), 0) +
-          (patientPaid < 0 ? 0 : patientPaid);
-
-        await tx.invoice.update({
-          where: { id: invoiceId },
-          data: {
-            status: InvoiceStatus.PAID,
-            paidAt: new Date(),
-            insuranceClaimed: totalInsurance > 0,
-            insuranceAmount: totalInsurance,
-            patientCoPayment: totalPatient,
-          },
-        });
-
-        // If LAB invoice: mark ALL linked lab orders and visit service orders as PAID
-        if (invoice.invoiceType === InvoiceType.SERVICE) {
-          const paidItems = await tx.invoiceItem.findMany({
-            where: { invoiceId },
-          });
-
-          const labOrderIds = paidItems
-            .filter((i) => i.labOrderId)
-            .map((i) => i.labOrderId as string);
-
-          const vsoIds = paidItems
-            .filter(
-              (i) =>
-                (i as typeof i & { visitServiceOrderId?: string | null })
-                  .visitServiceOrderId,
-            )
-            .map(
-              (i) =>
-                (i as typeof i & { visitServiceOrderId?: string | null })
-                  .visitServiceOrderId as string,
-            );
-
-          // Save VSO ids outside transaction scope for post-commit broadcast
-          paidVsoIds = vsoIds;
-
-          if (labOrderIds.length > 0 || vsoIds.length > 0) {
-            if (labOrderIds.length > 0) {
-              await tx.labOrder.updateMany({
-                where: { id: { in: labOrderIds } },
-                data: {
-                  status: LabOrderStatus.PAID,
-                },
-              });
-            }
-
-            if (vsoIds.length > 0) {
-              // Assign queue numbers for specialist services
-              const startOfDay = new Date();
-              startOfDay.setHours(0, 0, 0, 0);
-
-              const dateStr = startOfDay
-                .toISOString()
-                .slice(0, 10)
-                .replace(/-/g, '');
-              for (const vsoId of vsoIds) {
-                const nextQueueNumber: number =
-                  await this.sequenceService.generateNextSequence(
-                    `QUEUE_VSO_${dateStr}`,
-                  );
-
-                await tx.visitServiceOrder.update({
-                  where: { id: vsoId },
-                  data: {
-                    status: ServiceOrderStatus.PAID,
-                    paidAt: new Date(),
-                    queueNumber: nextQueueNumber,
-                  },
-                });
-              }
-            }
-
-            // Assign daily queue numbers to each paid lab order
-            const startOfDay = new Date();
-            startOfDay.setHours(0, 0, 0, 0);
-
-            const dateStrLab = startOfDay
-              .toISOString()
-              .slice(0, 10)
-              .replace(/-/g, '');
-            for (const labOrderId of labOrderIds) {
-              const nextQueueNumber: number =
-                await this.sequenceService.generateNextSequence(
-                  `QUEUE_LAB_${dateStrLab}`,
-                );
-
-              await tx.labOrder.update({
-                where: { id: labOrderId },
-                data: {
-                  queueNumber: nextQueueNumber,
-                },
-              });
-            }
-
-            // Calculate Smart Queue Suggested Order
-            await this.assignSmartQueueOrder(tx, invoice.id);
-
-            const patientName =
-              invoice.booking?.patientProfile?.fullName || 'Khách';
-
-            // Capture data for post-commit broadcast
-            broadcastPayload = {
-              labOrderIds,
-              patientName,
-              invoiceId: invoice.id,
-            };
-
-            // Step3 → After LAB payment: transition booking to AWAITING_RESULTS
-            // Only applies when the booking has already entered the examination phase
-            // (IN_PROGRESS or CHECKED_IN). Walk-in direct-service bookings that are
-            // still CONFIRMED have not gone through check-in yet, so we must NOT
-            // transition them — doing so would prevent addToQueue() from running
-            // when the CONSULTATION invoice is paid afterward.
-            const currentBookingStatus = invoice.booking?.status;
-            const canTransitionToAwaiting =
-              currentBookingStatus === BookingStatus.IN_PROGRESS ||
-              currentBookingStatus === BookingStatus.CHECKED_IN;
-
-            if (canTransitionToAwaiting) {
-              await tx.booking.update({
-                where: { id: invoice.bookingId },
-                data: {
-                  status: 'AWAITING_RESULTS' as BookingStatus,
-                },
-              });
-              await tx.bookingStatusHistory.create({
-                data: {
-                  bookingId: invoice.bookingId,
-                  oldStatus: currentBookingStatus as BookingStatus,
-                  newStatus: 'AWAITING_RESULTS' as BookingStatus,
-                  changedById: confirmedByUserId,
-                  reason:
-                    'LAB invoice paid — patient heading to procedure/lab room',
-                },
-              });
-
-              // Also update MedicalRecord visitStep to AWAITING_RESULTS
-              await tx.medicalRecord.updateMany({
-                where: { bookingId: invoice.bookingId },
-                data: {
-                  visitStep: 'AWAITING_RESULTS' as VisitStep,
-                },
-              });
-            }
-
-            // Notify technicians that new lab orders are ready to be performed
-            const technicians = await tx.user.findMany({
-              where: { role: 'TECHNICIAN' },
-              select: { id: true },
-            });
-
-            for (const tech of technicians) {
-              await this.notificationsService.createInAppNotification({
-                userId: tech.id,
-                title: 'Phiếu xét nghiệm mới',
-                content: `Bệnh nhân ${patientName} đã thanh toán. Vui lòng thực hiện các chỉ định xét nghiệm.`,
-                type: 'SYSTEM',
-                metadata: {
-                  invoiceId: invoice.id,
-                  bookingId: invoice.bookingId,
-                } as Prisma.InputJsonValue,
-              });
-            }
-
-            // Notify Patient
-            if (invoice.booking?.patientProfile?.userId) {
-              await this.notificationsService.createInAppNotification({
-                userId: invoice.booking.patientProfile.userId,
-                title: 'Thanh toán xét nghiệm thành công',
-                content: `Thanh toán cho các chỉ định xét nghiệm đã được xác nhận. Vui lòng di chuyển đến khu vực cận lâm sàng.`,
-                type: 'SYSTEM',
-                metadata: { bookingId: invoice.bookingId },
-              });
-            }
-          }
-        }
-
-        // If CONSULTATION invoice: two sub-cases based on invoice content
-        //
-        // Sub-case A — Direct Service mode (Mode B walk-in):
-        //   The receptionist booked specialist services directly. Invoice items
-        //   carry visitServiceOrderId. We must mark each VSO as PAID, assign a
-        //   daily queue number, and broadcast to the specialist's queue.
-        //   addToQueue is NOT called here — the specialist sees patients through
-        //   the VSO mix-in already built into queue.service.ts findAll().
-        //
-        // Sub-case B — Normal consultation referral (Mode A):
-        //   A doctor finished a consultation and referred the patient to a
-        //   specialist service. There are no VSO items in this invoice.
-        //   We call addToQueue so the patient enters the new specialist's
-        //   BookingQueue (CONFIRMED → CHECKED_IN).
-        if (invoice.invoiceType === InvoiceType.CONSULTATION) {
-          const consultItems = await tx.invoiceItem.findMany({
-            where: { invoiceId },
-          });
-
-          const directVsoIds = consultItems
-            .filter(
-              (i) =>
-                (i as typeof i & { visitServiceOrderId?: string | null })
-                  .visitServiceOrderId,
-            )
-            .map(
-              (i) =>
-                (i as typeof i & { visitServiceOrderId?: string | null })
-                  .visitServiceOrderId as string,
-            );
-
-          if (directVsoIds.length > 0) {
-            // Sub-case A: Direct Service — mark VSOs PAID + assign queue numbers
-            const startOfDayVso = new Date();
-            startOfDayVso.setHours(0, 0, 0, 0);
-
-            const dateStrVso = startOfDayVso
-              .toISOString()
-              .slice(0, 10)
-              .replace(/-/g, '');
-            for (const vsoId of directVsoIds) {
-              const nextVsoQueueNumber =
-                await this.sequenceService.generateNextSequence(
-                  `QUEUE_VSO_${dateStrVso}`,
-                );
-
-              await tx.visitServiceOrder.update({
-                where: { id: vsoId },
-                data: {
-                  status: ServiceOrderStatus.PAID,
-                  paidAt: new Date(),
-                  queueNumber: nextVsoQueueNumber,
-                },
-              });
-            }
-
-            // Accumulate for post-commit WebSocket broadcast to specialist doctors
-            paidVsoIds = [...paidVsoIds, ...directVsoIds];
-          } else if (invoice.booking?.serviceId && invoice.booking?.doctorId) {
-            // Sub-case B: Normal consultation referral — add to primary doctor's queue
-            // addToQueue transitions booking CONFIRMED → CHECKED_IN and creates queue record
+        onQueueAdd: async () => {
+          if (invoice.booking?.serviceId && invoice.booking?.doctorId) {
             await this.queueService.addToQueue(
               invoice.bookingId,
               confirmedByUserId,
             );
           }
-        }
-      } else if (invoice.status === InvoiceStatus.DRAFT) {
-        // First payment: DRAFT → OPEN
-        await tx.invoice.update({
-          where: { id: invoiceId },
-          data: {
-            status: InvoiceStatus.OPEN,
-          },
-        });
-      }
-
-      // If tied to a specific lab order (single payment for 1 lab order), mark that one too
-      if (dto.labOrderId) {
-        await tx.labOrder.update({
-          where: { id: dto.labOrderId },
-          data: {
-            status: LabOrderStatus.PAID,
-          },
-        });
-      }
-    });
+        },
+      });
 
     // Broadcast WebSocket event AFTER transaction successfully commits
     if (broadcastPayload) {
@@ -1621,18 +806,8 @@ export class BillingService {
 
     // Broadcast queue updates to each specialist doctor who has a PAID VSO
     if (paidVsoIds.length > 0) {
-      const paidVsos = await this.clinicalRepository.findManyVisitServiceOrder({
-        where: { id: { in: paidVsoIds }, performedBy: { not: null } },
-        select: { performedBy: true },
-      });
-
-      const uniqueDoctorIds = [
-        ...new Set(
-          paidVsos
-            .map((v) => v.performedBy)
-            .filter((id): id is string => id !== null),
-        ),
-      ];
+      const uniqueDoctorIds =
+        await this.clinicalRepository.findPaidVsoPerformers(paidVsoIds);
 
       for (const docId of uniqueDoctorIds) {
         this.queueGateway.broadcastQueueUpdate(docId, 'CHECK_IN', {
@@ -1642,32 +817,8 @@ export class BillingService {
       }
     }
 
-    const updated = await this.financeRepository.findUniqueInvoice({
-      where: { id: invoiceId },
-      include: {
-        items: {
-          include: {
-            labOrder: true,
-            visitServiceOrder: {
-              include: { performer: true, service: true },
-            },
-          },
-        },
-        payments: true,
-        booking: {
-          include: {
-            patientProfile: {
-              select: {
-                id: true,
-                userId: true,
-                fullName: true,
-                user: { select: { email: true } },
-              },
-            },
-          },
-        },
-      },
-    });
+    const updated: InvoiceDetailPostPaymentResult | null =
+      await this.financeRepository.findInvoiceDetailPostPayment(invoiceId);
 
     // Send invoice email if finalized
     if (shouldAutoFinalize && updated?.booking?.patientProfile?.user?.email) {
@@ -1697,25 +848,11 @@ export class BillingService {
    * Manually finalize the invoice (ISSUED/OPEN → PAID).
    * Normally called automatically by addPayment when total is met.
    */
-  async finalizeInvoice(invoiceId: string) {
-    const invoice = await this.financeRepository.findUniqueInvoice({
-      where: { id: invoiceId },
-      include: {
-        items: {
-          include: {
-            labOrder: true,
-          },
-        },
-        payments: true,
-        booking: {
-          include: {
-            patientProfile: true,
-            doctor: true,
-            room: true,
-          },
-        },
-      },
-    });
+  async finalizeInvoice(
+    invoiceId: string,
+  ): Promise<InvoiceDetailPostPaymentResult> {
+    const invoice: InvoiceDetailForFinalizeResult | null =
+      await this.financeRepository.findInvoiceDetailForFinalize(invoiceId);
 
     if (!invoice) {
       throw new ApiException(
@@ -1743,32 +880,12 @@ export class BillingService {
       0,
     );
 
-    const updatedInvoice = await this.financeRepository.updateInvoice({
-      where: { id: invoiceId },
-      data: {
-        status: InvoiceStatus.PAID,
-        paidAt: new Date(),
-        insuranceClaimed: totalInsurance > 0,
-        insuranceAmount: totalInsurance,
-        patientCoPayment: totalPatient,
-      },
-      include: {
-        items: true,
-        payments: true,
-        booking: {
-          include: {
-            patientProfile: {
-              select: {
-                id: true,
-                userId: true,
-                fullName: true,
-                user: { select: { email: true } },
-              },
-            },
-          },
-        },
-      },
-    });
+    const updatedInvoice: InvoiceDetailPostPaymentResult =
+      await this.financeRepository.finalizeInvoiceStatus(
+        invoiceId,
+        totalInsurance,
+        totalPatient,
+      );
 
     // Send invoice email
     if (updatedInvoice?.booking?.patientProfile?.user?.email) {
@@ -1804,7 +921,7 @@ export class BillingService {
       metadata: {
         invoiceId: updatedInvoice.id,
         amount: Number(updatedInvoice.totalAmount),
-      } as Prisma.InputJsonValue,
+      },
     });
 
     return updatedInvoice;
@@ -1822,10 +939,7 @@ export class BillingService {
     },
   ) {
     const patientProfile =
-      await this.profileRepository.findUniquePatientProfile({
-        where: { userId },
-        select: { id: true },
-      });
+      await this.profileRepository.findPatientProfileByUserId(userId);
 
     if (!patientProfile) {
       // If user has no patient profile, return empty list
@@ -1846,44 +960,9 @@ export class BillingService {
     });
   }
 
-  // Private Helpers
-
-  private async recalculateTotals(
-    tx: Prisma.TransactionClient,
-    invoiceId: string,
-  ) {
-    const items = await tx.invoiceItem.findMany({ where: { invoiceId } });
-    const subtotal = items.reduce(
-      (sum, item) => sum + Number(item.unitPrice) * item.quantity,
-      0,
-    );
-
-    const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
-    const vatRate = Number(invoice?.vatRate ?? 0);
-    const discountAmount = Number(invoice?.discountAmount ?? 0);
-
-    const vatAmount = (subtotal - discountAmount) * (vatRate / 100);
-    const totalAmount = subtotal - discountAmount + vatAmount;
-
-    await tx.invoice.update({
-      where: { id: invoiceId },
-      data: {
-        subtotal,
-        vatAmount,
-        taxAmount: vatAmount,
-        totalAmount: totalAmount < 0 ? 0 : totalAmount,
-      },
-    });
-  }
-
   // Workspace Endpoints
 
   async getWorkspaceQueue(params: { search?: string }) {
-    // bookingDates are stored as UTC midnight of the Vietnam local date
-    // (e.g. April 25 Vietnam → 2026-04-25T00:00:00.000Z). The server runs in
-    // UTC (Docker), so using now.getUTCDate() gives the UTC calendar day which
-    // may lag Vietnam by one day (e.g. 19:45 UTC Apr 24 = 02:45 Vietnam Apr 25).
-    // We must offset by +7 h to find Vietnam's "today" before computing boundaries.
     const VN_OFFSET_MS = 7 * 60 * 60 * 1000; // UTC+7
     const now = new Date();
     const nowVN = new Date(now.getTime() + VN_OFFSET_MS);
@@ -1893,66 +972,11 @@ export class BillingService {
     const tomorrowStart = new Date(todayStart.getTime() + 86400_000);
     const thirtyDaysAgo = new Date(todayStart.getTime() - 30 * 86400_000);
 
-    // Date window: today's bookings OR past-30-day in-flight bookings (Option A)
-    const dateFilter: Prisma.BookingWhereInput = {
-      OR: [
-        // Branch 1: Today — all statuses visible (gives receptionist full-day picture)
-        { bookingDate: { gte: todayStart, lt: tomorrowStart } },
-        // Branch 2: Past 30 days — only bookings still in-flight (not finished)
-        {
-          bookingDate: { gte: thirtyDaysAgo, lt: todayStart },
-          status: {
-            notIn: [
-              BookingStatus.CANCELLED,
-              BookingStatus.NO_SHOW,
-              BookingStatus.COMPLETED,
-            ],
-          },
-        },
-      ],
-    };
-
-    // Search filter (optional)
-    const searchFilter: Prisma.BookingWhereInput | undefined = params.search
-      ? {
-          OR: [
-            { bookingCode: { contains: params.search } },
-            {
-              patientProfile: {
-                OR: [
-                  { fullName: { contains: params.search } },
-                  { phone: { contains: params.search } },
-                  { patientCode: { contains: params.search } },
-                ],
-              },
-            },
-          ],
-        }
-      : undefined;
-
-    // Compose final where clause
-    const where: Prisma.BookingWhereInput = {
-      AND: [
-        // Global exclusions
-        { status: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] } },
-        // Date + in-flight filter
-        dateFilter,
-        // Search (only when provided)
-        ...(searchFilter ? [searchFilter] : []),
-      ],
-    };
-
-    const bookings = await this.bookingRepository.findMany({
-      where,
-      include: {
-        patientProfile: true,
-        doctor: { select: { fullName: true } },
-        medicalRecord: true,
-        invoices: {
-          include: { items: true },
-        },
-      },
-      orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
+    const bookings = await this.bookingRepository.findWorkspaceQueueBookings({
+      todayStart,
+      tomorrowStart,
+      thirtyDaysAgo,
+      search: params.search,
     });
 
     const queueItems = bookings.map((booking) => {
@@ -2028,30 +1052,17 @@ export class BillingService {
     );
     const tomorrow = new Date(today.getTime() + 86400_000);
 
-    const invoices = await this.financeRepository.findManyInvoice({
-      where: {
-        createdAt: {
-          gte: today,
-          lt: tomorrow,
-        },
-      },
-    });
+    const invoices = await this.financeRepository.findInvoicesInDateRange(
+      today,
+      tomorrow,
+    );
 
     // We also need to count bookings that have pending invoices
-    const bookingsWithInvoices = await this.bookingRepository.findMany({
-      where: {
-        bookingDate: {
-          gte: today,
-          lt: tomorrow,
-        },
-        status: {
-          notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW],
-        },
-      },
-      include: {
-        invoices: true,
-      },
-    });
+    const bookingsWithInvoices =
+      await this.bookingRepository.findBookingsWithInvoicesInDateRange(
+        today,
+        tomorrow,
+      );
 
     const awaitingPaymentCount = bookingsWithInvoices.filter((b) =>
       b.invoices.some((inv) => inv.status !== InvoiceStatus.PAID),

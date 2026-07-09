@@ -1,10 +1,10 @@
+import { UserRole } from '@prisma/client';
 import { Injectable, Inject } from '@nestjs/common';
 import {
   IUserRepository,
   I_USER_REPOSITORY,
 } from '../../database/interfaces/user.repository.interface';
 import { UsersService } from '../../users/users.service';
-import { Prisma, UserRole, BookingStatus } from '@prisma/client';
 import { ApiException } from '../../../common/exceptions/api.exception';
 import { MessageCodes } from '../../../common/constants/message-codes.const';
 import { FilterDoctorDto } from './dto/filter-doctor.dto';
@@ -23,41 +23,16 @@ export class AdminDoctorsService {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const [totalDoctors, activeDoctors, newThisMonth, profilesWithSpecialties] =
-      await Promise.all([
-        this.userRepository.count({ where: { role: UserRole.DOCTOR } }),
-        this.userRepository.count({
-          where: { role: UserRole.DOCTOR, isActive: true },
-        }),
-        this.userRepository.count({
-          where: {
-            role: UserRole.DOCTOR,
-            createdAt: { gte: startOfMonth },
-          },
-        }),
-        this.userRepository.findManyDoctorProfile({
-          select: { specialties: true },
-          where: { user: { isActive: true } },
-        }),
-      ]);
-
-    // Aggregate specialty counts
-    const bySpecialty: Record<string, number> = {};
-    for (const p of profilesWithSpecialties) {
-      if (Array.isArray(p.specialties)) {
-        for (const sp of p.specialties as string[]) {
-          bySpecialty[sp] = (bySpecialty[sp] ?? 0) + 1;
-        }
-      }
-    }
+    const stats =
+      await this.userRepository.getDoctorDashboardStats(startOfMonth);
 
     return {
-      totalDoctors,
-      activeDoctors,
-      inactiveDoctors: totalDoctors - activeDoctors,
+      totalDoctors: stats.totalDoctors,
+      activeDoctors: stats.activeDoctors,
+      inactiveDoctors: stats.totalDoctors - stats.activeDoctors,
       onLeaveDoctors: 0,
-      newThisMonth,
-      bySpecialty,
+      newThisMonth: stats.newThisMonth,
+      bySpecialty: stats.bySpecialty,
     };
   }
 
@@ -68,65 +43,11 @@ export class AdminDoctorsService {
   async findAllDoctors(filterDto: FilterDoctorDto) {
     const { specialty, isActive, search, page = 1, limit = 10 } = filterDto;
 
-    const where: Prisma.UserWhereInput = {
-      role: UserRole.DOCTOR,
-    };
-
-    if (typeof isActive === 'boolean') {
-      where.isActive = isActive;
-    }
-
-    if (search) {
-      where.OR = [
-        { fullName: { contains: search } },
-        { email: { contains: search } },
-      ];
-    }
-
-    if (specialty) {
-      where.doctorProfile = {
-        specialties: { string_contains: specialty },
-      };
-    }
-
-    const [doctors, total] = await Promise.all([
-      this.userRepository.findMany({
-        where,
-        select: {
-          id: true,
-          email: true,
-          fullName: true,
-          phone: true,
-          avatar: true,
-          isActive: true,
-          createdAt: true,
-          updatedAt: true,
-          doctorProfile: {
-            select: {
-              id: true,
-              specialties: true,
-              qualifications: true,
-              yearsOfExperience: true,
-              bio: true,
-              rating: true,
-              reviewCount: true,
-              consultationFee: true,
-              roomId: true,
-              room: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-            },
-          },
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.userRepository.count({ where }),
-    ]);
+    const [doctors, total] = await this.userRepository.findAdminDoctorsPage(
+      { specialty, isActive, search },
+      page,
+      limit,
+    );
 
     return {
       doctors,
@@ -144,57 +65,7 @@ export class AdminDoctorsService {
    * Full detail of a single doctor including bookings stats.
    */
   async findOneDoctor(id: string) {
-    const doctor = await this.userRepository.findFirst({
-      where: { id, role: UserRole.DOCTOR },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        avatar: true,
-        gender: true,
-        address: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-        doctorProfile: {
-          select: {
-            id: true,
-            specialties: true,
-            qualifications: true,
-            yearsOfExperience: true,
-            bio: true,
-            rating: true,
-            reviewCount: true,
-            consultationFee: true,
-            roomId: true,
-            room: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-            services: {
-              select: {
-                service: {
-                  select: {
-                    id: true,
-                    name: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        _count: {
-          select: {
-            bookingsAsDoctor: {
-              where: { status: BookingStatus.COMPLETED },
-            },
-          },
-        },
-      },
-    });
+    const doctor = await this.userRepository.findAdminDoctorDetailById(id);
 
     if (!doctor) {
       throw new ApiException(
@@ -215,9 +86,7 @@ export class AdminDoctorsService {
    */
   async updateDoctorProfile(id: string, dto: AdminUpdateDoctorProfileDto) {
     // Verify the user exists and is a DOCTOR
-    const user = await this.userRepository.findFirst({
-      where: { id, role: UserRole.DOCTOR },
-    });
+    const user = await this.userRepository.findDoctorById(id);
 
     if (!user) {
       throw new ApiException(
@@ -228,53 +97,10 @@ export class AdminDoctorsService {
       );
     }
 
-    const profile = await this.userRepository.upsertDoctorProfile({
-      where: { userId: id },
-      create: {
-        userId: id,
-        specialties: dto.specialties ?? [],
-        qualifications: dto.qualifications ?? [],
-        yearsOfExperience: dto.yearsOfExperience ?? 0,
-        bio: dto.bio ?? null,
-        rating: dto.rating ?? 0,
-        consultationFee: dto.consultationFee ?? 0,
-        roomId: dto.roomId ?? null,
-      },
-      update: {
-        ...(dto.specialties !== undefined && { specialties: dto.specialties }),
-        ...(dto.qualifications !== undefined && {
-          qualifications: dto.qualifications,
-        }),
-        ...(dto.yearsOfExperience !== undefined && {
-          yearsOfExperience: dto.yearsOfExperience,
-        }),
-        ...(dto.bio !== undefined && { bio: dto.bio }),
-        ...(dto.rating !== undefined && { rating: dto.rating }),
-        ...(dto.consultationFee !== undefined && {
-          consultationFee: dto.consultationFee,
-        }),
-        ...(dto.roomId !== undefined && { roomId: dto.roomId }),
-      },
-      select: {
-        id: true,
-        userId: true,
-        specialties: true,
-        qualifications: true,
-        yearsOfExperience: true,
-        bio: true,
-        rating: true,
-        reviewCount: true,
-        consultationFee: true,
-        roomId: true,
-        room: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        updatedAt: true,
-      },
-    });
+    const profile = await this.userRepository.upsertDoctorProfileByUserId(
+      id,
+      dto,
+    );
 
     // If serviceIds is provided, sync DoctorService relations
     if (dto.serviceIds !== undefined) {
@@ -289,9 +115,7 @@ export class AdminDoctorsService {
    * Suspend (isActive=false) or reinstate (isActive=true) a doctor account.
    */
   async toggleDoctorActive(id: string, dto: AdminSuspendUserDto) {
-    const doctor = await this.userRepository.findFirst({
-      where: { id, role: UserRole.DOCTOR },
-    });
+    const doctor = await this.userRepository.findDoctorById(id);
 
     if (!doctor) {
       throw new ApiException(

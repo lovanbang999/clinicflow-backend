@@ -12,20 +12,8 @@ import { Server, Socket } from 'socket.io';
 import { Injectable, Logger } from '@nestjs/common';
 import { appendFileSync } from 'fs';
 import { AuthService } from '../auth/auth.service';
-import { UserRole } from '@prisma/client';
 
-interface AuthenticatedUser {
-  id: string;
-  email: string;
-  fullName: string;
-  phone: string | null;
-  role: UserRole;
-  avatar: string | null;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-  patientProfile?: { id: string; patientCode: string } | null;
-}
+import { UserWithProfile as AuthenticatedUser } from '../database/interfaces/user.repository.interface';
 
 interface AuthenticatedSocket extends Socket {
   data: {

@@ -11,7 +11,7 @@ import {
   I_PROFILE_REPOSITORY,
   IProfileRepository,
 } from '../../database/interfaces/profile.repository.interface';
-import { BookingStatus, InvoiceStatus } from '@prisma/client';
+import { InvoiceStatus, Prisma } from '@prisma/client';
 
 import { DateRangeQueryDto } from '../../admin/analytics/dto/date-range.query.dto';
 
@@ -39,58 +39,36 @@ export class ReceptionistAnalyticsService {
     const filterLte = to ? new Date(to) : undefined;
 
     const [
-      totalRevenueRaw,
+      totalRevenue,
       checkIns,
       newPatients,
       pendingInvoices,
       revenueByCategoryRaw,
-    ] = await Promise.all([
+    ] = (await Promise.all([
       // Total Paid Revenue in period
-      this.financeRepository.aggregateInvoice({
-        where: {
-          status: InvoiceStatus.PAID,
-          paidAt: { gte: filterGte, lte: filterLte },
-        },
-        _sum: { totalAmount: true },
-      }),
+      this.financeRepository.getTotalPaidRevenue(filterGte, filterLte),
       // Successful Check-ins
-      this.bookingRepository.countBooking({
-        where: {
-          status: {
-            in: [
-              BookingStatus.CHECKED_IN,
-              BookingStatus.IN_PROGRESS,
-              BookingStatus.COMPLETED,
-            ],
-          },
-          checkedInAt: { gte: filterGte, lte: filterLte },
-        },
-      }),
+      this.bookingRepository.countCheckInsForDateRange(filterGte, filterLte),
       // New Patients registered
-      this.profileRepository.countPatientProfile({
-        where: {
-          createdAt: { gte: filterGte, lte: filterLte },
-        },
-      }),
+      this.profileRepository.countPatientsByDateRange(filterGte, filterLte),
       // Pending/Draft Invoices
-      this.financeRepository.countInvoice({
-        where: {
-          status: {
-            in: [InvoiceStatus.DRAFT, InvoiceStatus.OPEN, InvoiceStatus.ISSUED],
-          },
-          createdAt: { gte: filterGte, lte: filterLte },
-        },
-      }),
+      this.financeRepository.countInvoicesByStatusAndDateRange(
+        [InvoiceStatus.DRAFT, InvoiceStatus.OPEN, InvoiceStatus.ISSUED],
+        filterGte,
+        filterLte,
+      ),
       // Revenue by category
-      this.financeRepository.groupByInvoice({
-        by: ['invoiceType'],
-        where: {
-          status: InvoiceStatus.PAID,
-          paidAt: { gte: filterGte, lte: filterLte },
-        },
-        _sum: { totalAmount: true },
+      this.financeRepository.getRevenueByInvoiceType({
+        gte: filterGte,
+        lte: filterLte,
       }),
-    ]);
+    ])) as [
+      number,
+      number,
+      number,
+      number,
+      Array<{ invoiceType: string; _sum: { totalAmount: number | null } }>,
+    ];
 
     const revenueByCategory = {
       CONSULTATION: 0,
@@ -99,12 +77,7 @@ export class ReceptionistAnalyticsService {
     };
 
     if (Array.isArray(revenueByCategoryRaw)) {
-      (
-        revenueByCategoryRaw as {
-          invoiceType: string;
-          _sum: { totalAmount: number | null };
-        }[]
-      ).forEach((row) => {
+      revenueByCategoryRaw.forEach((row) => {
         if (row && row.invoiceType && row._sum?.totalAmount) {
           const type = row.invoiceType as keyof typeof revenueByCategory;
           if (type in revenueByCategory) {
@@ -115,7 +88,7 @@ export class ReceptionistAnalyticsService {
     }
 
     return {
-      totalRevenue: Number(totalRevenueRaw._sum?.totalAmount ?? 0),
+      totalRevenue,
       checkIns,
       newPatients,
       pendingInvoices,
@@ -133,16 +106,11 @@ export class ReceptionistAnalyticsService {
     const filterGte = from ? new Date(from) : weekAgo;
     const filterLte = to ? new Date(to) : undefined;
 
-    const paidInvoices = await this.financeRepository.findManyInvoice({
-      where: {
-        status: InvoiceStatus.PAID,
-        paidAt: { gte: filterGte, lte: filterLte },
-      },
-      select: {
-        totalAmount: true,
-        paidAt: true,
-      },
-    });
+    const paidInvoices =
+      await this.financeRepository.findPaidInvoicesForAnalytics({
+        gte: filterGte,
+        lte: filterLte,
+      });
 
     // Group by date
     const revenueByDate = new Map<string, number>();
@@ -199,57 +167,34 @@ export class ReceptionistAnalyticsService {
       appointmentStatuses,
       paymentMethods,
       topServicesRaw,
-    ] = await Promise.all([
+    ] = (await Promise.all([
       // Booking Sources
-      this.bookingRepository.groupByBooking({
-        by: ['source'],
-        where: { createdAt: { gte: filterGte, lte: filterLte } },
-        _count: { _all: true },
-      }),
+      this.bookingRepository.getBookingCountBySource(filterGte, filterLte),
       // Appointment Statuses
-      this.bookingRepository.groupByBooking({
-        by: ['status'],
-        where: { createdAt: { gte: filterGte, lte: filterLte } },
-        _count: { _all: true },
-      }),
+      this.bookingRepository.getBookingCountByStatus(filterGte, filterLte),
       // Payment Methods
-      this.financeRepository.groupByPayment({
-        by: ['paymentMethod'],
-        where: { createdAt: { gte: filterGte, lte: filterLte } },
-        _sum: { amountPaid: true },
-        _count: { _all: true },
-      }),
+      this.financeRepository.groupByPaymentMethod(filterGte, filterLte),
       // Top Services (Revenue Based)
-      this.financeRepository.findManyInvoice({
-        where: {
-          status: InvoiceStatus.PAID,
-          paidAt: { gte: filterGte, lte: filterLte },
-        },
-        include: {
-          booking: {
-            select: {
-              serviceId: true,
-              service: { select: { name: true } },
-            },
-          },
-        },
+      this.financeRepository.findPaidInvoicesWithServiceInfo({
+        gte: filterGte,
+        lte: filterLte,
       }),
-    ]);
-
-    type BookingGroupByRow = {
-      source?: string;
-      status?: string;
-      _count?: { _all?: number };
-    };
-    type PaymentGroupByRow = {
-      paymentMethod?: string;
-      _sum?: { amountPaid?: number | null };
-      _count?: { _all?: number };
-    };
-
-    const bookingSourcesTyped = bookingSources as BookingGroupByRow[];
-    const appointmentStatusesTyped = appointmentStatuses as BookingGroupByRow[];
-    const paymentMethodsTyped = paymentMethods as PaymentGroupByRow[];
+    ])) as [
+      Array<{ source: string; count: number }>,
+      Array<{ status: string; count: number }>,
+      Array<{
+        paymentMethod: string;
+        _sum: { amountPaid: number };
+        _count: { _all: number };
+      }>,
+      Array<{
+        totalAmount: Prisma.Decimal | number;
+        booking: {
+          serviceId: string | null;
+          service: { name: string } | null;
+        } | null;
+      }>,
+    ];
 
     const serviceRevenueMap = new Map<
       string,
@@ -286,18 +231,18 @@ export class ReceptionistAnalyticsService {
       .slice(0, 5);
 
     return {
-      bookingSources: bookingSourcesTyped.map((s) => ({
+      bookingSources: bookingSources.map((s) => ({
         label: s.source,
-        value: s._count?._all ?? 0,
+        value: s.count,
       })),
-      appointmentStatuses: appointmentStatusesTyped.map((s) => ({
+      appointmentStatuses: appointmentStatuses.map((s) => ({
         label: s.status,
-        value: s._count?._all ?? 0,
+        value: s.count,
       })),
-      paymentMethods: paymentMethodsTyped.map((p) => ({
+      paymentMethods: paymentMethods.map((p) => ({
         label: p.paymentMethod,
-        value: Number(p._sum?.amountPaid ?? 0),
-        count: p._count?._all ?? 0,
+        value: p._sum.amountPaid,
+        count: p._count._all,
       })),
       topServices,
     };

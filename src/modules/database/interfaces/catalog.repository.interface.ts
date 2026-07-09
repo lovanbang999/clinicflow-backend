@@ -1,10 +1,32 @@
-import { Category, Service, Room, Prisma } from '@prisma/client';
+import { Category, Service, Room, Prisma, PerformerType } from '@prisma/client';
+import {
+  ServiceDetailResult,
+  ServiceWithFiltersResult,
+} from '../types/prisma-payload.types';
+
+export { ServiceDetailResult, ServiceWithFiltersResult };
 
 export const I_CATALOG_REPOSITORY = 'ICatalogRepository';
 
 export interface FindCategoriesResult {
   total: number;
   items: Category[];
+}
+
+export interface ActiveServiceWithDoctorsResult {
+  id: string;
+  name: string;
+  price: Prisma.Decimal | number;
+  durationMinutes: number;
+  maxSlotsPerHour: number | null;
+  performerType: PerformerType;
+  doctorServices: Array<{
+    doctorProfile: {
+      user: {
+        id: string;
+      };
+    } | null;
+  }>;
 }
 
 export interface ICatalogRepository {
@@ -56,6 +78,17 @@ export interface ICatalogRepository {
   findUniqueService<T extends Prisma.ServiceFindUniqueArgs>(
     args: Prisma.SelectSubset<T, Prisma.ServiceFindUniqueArgs>,
   ): Promise<Prisma.ServiceGetPayload<T> | null>;
+  findActiveServicesWithDoctors(
+    serviceIds: string[],
+  ): Promise<ActiveServiceWithDoctorsResult[]>;
+
+  findServicesWithFilters(filters: {
+    isActive?: boolean;
+    search?: string;
+    category?: string;
+    categoryType?: 'EXAMINATION' | 'LAB';
+    performedBy?: 'TECHNICIAN' | 'DOCTOR';
+  }): Promise<ServiceWithFiltersResult[]>;
 
   // Room methods
   findUniqueRoom<T extends Prisma.RoomFindUniqueArgs>(
@@ -70,4 +103,43 @@ export interface ICatalogRepository {
   createRoom(data: Prisma.RoomUncheckedCreateInput): Promise<Room>;
   updateRoom(id: string, data: Prisma.RoomUncheckedUpdateInput): Promise<Room>;
   countRooms(args?: Prisma.RoomCountArgs): Promise<number>;
+  findAdminRoomsPage(
+    filters: { search?: string; isActive?: boolean },
+    page?: number,
+    limit?: number,
+  ): Promise<
+    [
+      Prisma.RoomGetPayload<{
+        include: {
+          _count: { select: { scheduleSlots: true; doctorProfiles: true } };
+        };
+      }>[],
+      number,
+    ]
+  >;
+  findAdminRoomDetailById(id: string): Promise<Prisma.RoomGetPayload<{
+    include: {
+      _count: { select: { scheduleSlots: true; doctorProfiles: true } };
+    };
+  }> | null>;
+  getServiceDashboardStats(startOfMonth: Date): Promise<{
+    totalServices: number;
+    activeServices: number;
+    newThisMonth: number;
+  }>;
+  findAdminServicesPage(
+    filters: { isActive?: boolean; search?: string; category?: string },
+    page?: number,
+    limit?: number,
+  ): Promise<
+    [Prisma.ServiceGetPayload<{ include: { category: true } }>[], number]
+  >;
+  findServiceDetailById(id: string): Promise<ServiceDetailResult | null>;
+  findServiceByName(name: string, excludeId?: string): Promise<Service | null>;
+  findActiveRooms(): Promise<
+    Prisma.RoomGetPayload<{
+      select: { id: true; name: true; type: true };
+    }>[]
+  >;
+  findRoomByName(name: string): Promise<Room | null>;
 }

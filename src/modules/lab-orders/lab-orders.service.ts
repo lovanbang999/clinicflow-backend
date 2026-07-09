@@ -24,15 +24,12 @@ import {
   InvoiceStatus,
   User,
   LabResult,
-  Prisma,
   LabOrder,
   UserRole,
-  LabFormType,
 } from '@prisma/client';
 import { LabOrdersGateway } from './lab-orders.gateway';
 import { BillingService } from '../billing/billing.service';
 import { forwardRef } from '@nestjs/common';
-import { LabOrderDeleteInclude } from '../database/types/prisma-payload.types';
 import { Gender } from '@prisma/client';
 import { MedicalRecordsService } from '../medical-records/medical-records.service';
 
@@ -166,9 +163,9 @@ export class LabOrdersService {
       return;
 
     if (currentUser.role === 'PATIENT') {
-      const profile = await this.profileRepository.findFirstPatientProfile({
-        where: { userId: currentUser.id },
-      });
+      const profile = await this.profileRepository.findPatientProfileByUserId(
+        currentUser.id,
+      );
       if (!profile || profile.id !== patientProfileId) {
         throw new ApiException(
           MessageCodes.BOOKING_ACCESS_FORBIDDEN,
@@ -183,21 +180,11 @@ export class LabOrdersService {
       // Check if they are the assigned doctor OR have a treatment relationship
       if (doctorId === currentUser.id) return;
 
-      const treatmentRelation = await this.bookingRepository.findFirst({
-        where: {
-          doctorId: currentUser.id,
+      const treatmentRelation =
+        await this.bookingRepository.hasTreatmentRelationship(
+          currentUser.id,
           patientProfileId,
-          status: {
-            in: [
-              'CONFIRMED',
-              'CHECKED_IN',
-              'IN_PROGRESS',
-              'COMPLETED',
-              'PENDING',
-            ],
-          },
-        },
-      });
+        );
 
       if (!treatmentRelation) {
         throw new ApiException(
@@ -229,9 +216,7 @@ export class LabOrdersService {
     dto: CreateLabOrderDto,
     currentUser?: Express.User,
   ) {
-    const booking = await this.bookingRepository.findUnique({
-      where: { id: dto.bookingId },
-    });
+    const booking = await this.bookingRepository.findBookingById(dto.bookingId);
 
     if (!booking) {
       throw new ApiException(
@@ -253,54 +238,29 @@ export class LabOrdersService {
     }
 
     // Ensure medical record exists
-    let medicalRecord = await this.clinicalRepository.findUniqueMedicalRecord({
-      where: { bookingId: dto.bookingId },
-    });
+    let medicalRecord =
+      await this.clinicalRepository.findMedicalRecordByBookingId(dto.bookingId);
 
     if (!medicalRecord) {
       this.logger.log(
         `Medical record not found for booking: ${dto.bookingId}. Creating new one.`,
       );
-      medicalRecord = await this.clinicalRepository.createMedicalRecord({
-        data: {
-          bookingId: dto.bookingId,
-          patientProfileId: booking.patientProfileId,
-          doctorId: booking.doctorId,
-          isFinalized: false,
-        },
-      });
+      medicalRecord =
+        await this.clinicalRepository.createMedicalRecordForBooking(
+          dto.bookingId,
+          booking.patientProfileId,
+          booking.doctorId,
+        );
     }
 
-    const labOrder = await this.clinicalRepository.transaction(async (tx) => {
-      // Advance step to SERVICES_ORDERED if it's currently at SYMPTOMS_TAKEN or less
-      const currentStep = medicalRecord?.visitStep;
-      if (currentStep === 'SYMPTOMS_TAKEN') {
-        this.logger.log(
-          `Advancing medical record step to SERVICES_ORDERED for record: ${medicalRecord?.id}`,
-        );
-        await tx.medicalRecord.update({
-          where: { id: medicalRecord?.id },
-          data: {
-            visitStep: 'SERVICES_ORDERED',
-            orderedAt: new Date(),
-          },
-        });
-      }
-
-      return tx.labOrder.create({
-        data: {
-          bookingId: dto.bookingId,
-          medicalRecordId: medicalRecord.id,
-          patientProfileId: booking.patientProfileId,
-          doctorId: booking.doctorId,
-          testName: dto.testName,
-          testDescription: dto.testDescription,
-          serviceId: dto.serviceId,
-          assignedTechnicianId: dto.assignedTechnicianId ?? null,
-          status: LabOrderStatus.PENDING,
-        },
-      });
-    });
+    const labOrder = await this.clinicalRepository.createLabOrderTransaction(
+      dto.bookingId,
+      booking.patientProfileId,
+      booking.doctorId,
+      medicalRecord.id,
+      medicalRecord.visitStep ?? null,
+      dto,
+    );
 
     this.logger.log(
       `Lab order created successfully: ${labOrder.id} for booking: ${dto.bookingId}`,
@@ -323,9 +283,7 @@ export class LabOrdersService {
   }
 
   async getOrdersByBooking(bookingId: string, currentUser?: Express.User) {
-    const booking = await this.bookingRepository.findUnique({
-      where: { id: bookingId },
-    });
+    const booking = await this.bookingRepository.findBookingById(bookingId);
     if (!booking) {
       throw new ApiException(
         MessageCodes.BOOKING_NOT_FOUND,
@@ -339,27 +297,9 @@ export class LabOrdersService {
       booking.doctorId,
       currentUser,
     );
-    const orders = (await this.clinicalRepository.findManyLabOrder({
-      where: { bookingId },
-      include: {
-        result: true,
-        service: {
-          select: {
-            id: true,
-            name: true,
-            labFormType: true,
-          } as unknown as Prisma.ServiceSelect,
-        },
-        invoiceItem: {
-          include: {
-            invoice: {
-              select: { id: true, invoiceNumber: true, status: true },
-            },
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    })) as unknown as InternalLabOrder[];
+    const orders = (await this.clinicalRepository.findLabOrdersByBookingId(
+      bookingId,
+    )) as unknown as InternalLabOrder[];
 
     return orders;
   }
@@ -372,9 +312,7 @@ export class LabOrdersService {
     bookingId: string,
     currentUser?: Express.User,
   ) {
-    const booking = await this.bookingRepository.findUnique({
-      where: { id: bookingId },
-    });
+    const booking = await this.bookingRepository.findBookingById(bookingId);
     if (booking) {
       await this.validateLabOrderAccess(
         booking.patientProfileId,
@@ -382,44 +320,14 @@ export class LabOrdersService {
         currentUser,
       );
     }
-    const orders = await this.clinicalRepository.findManyLabOrder({
-      where: {
-        bookingId,
-        status: LabOrderStatus.PENDING,
-        invoiceItem: null, // not yet added to any invoice
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+    const orders =
+      await this.clinicalRepository.findPendingLabOrdersForBilling(bookingId);
     return orders;
   }
 
   async getPendingOrders() {
-    const rawOrders = (await this.clinicalRepository.findManyLabOrder({
-      where: {
-        status: {
-          in: [LabOrderStatus.PENDING, LabOrderStatus.IN_PROGRESS],
-        },
-      },
-      include: {
-        booking: {
-          select: {
-            bookingCode: true,
-            doctor: {
-              select: { fullName: true },
-            },
-            patientProfile: {
-              select: {
-                fullName: true,
-                patientCode: true,
-                gender: true,
-                dateOfBirth: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    })) as unknown as InternalLabOrder[];
+    const rawOrders =
+      (await this.clinicalRepository.findPendingLabOrders()) as unknown as InternalLabOrder[];
 
     const orders = rawOrders.map((order) => {
       const { booking, ...rest } = order;
@@ -438,57 +346,9 @@ export class LabOrdersService {
   }
 
   async getOrderById(id: string, currentUser?: Express.User) {
-    const rawOrder = (await this.clinicalRepository.findUniqueLabOrder({
-      where: { id },
-      include: {
-        result: true,
-        medicalRecord: {
-          select: {
-            bloodPressure: true,
-            heartRate: true,
-            temperature: true,
-            spO2: true,
-            weightKg: true,
-            heightCm: true,
-            bmi: true,
-            chiefComplaint: true,
-            clinicalFindings: true,
-            doctorNotes: true,
-            allergies: true,
-            diagnosisName: true,
-          },
-        },
-        service: {
-          select: {
-            id: true,
-            name: true,
-            labFormType: true,
-          } as unknown as Prisma.ServiceSelect,
-        },
-        booking: {
-          select: {
-            id: true,
-            bookingCode: true,
-            doctorId: true,
-            patientProfileId: true,
-            doctor: {
-              select: {
-                fullName: true,
-                doctorProfile: { select: { specialties: true } },
-              },
-            },
-            patientProfile: {
-              select: {
-                fullName: true,
-                patientCode: true,
-                gender: true,
-                dateOfBirth: true,
-              },
-            },
-          },
-        },
-      },
-    })) as unknown as RawOrderWithRelations;
+    const rawOrder = (await this.clinicalRepository.findLabOrderWithRelations(
+      id,
+    )) as unknown as RawOrderWithRelations;
 
     if (!rawOrder) {
       throw new ApiException(
@@ -508,23 +368,13 @@ export class LabOrdersService {
     }
 
     // Query recent 3 completed lab orders of same patient and test/service type
-    const recentResults = await this.clinicalRepository.findManyLabOrder({
-      where: {
-        patientProfileId: rawOrder.patientProfileId,
-        id: { not: rawOrder.id },
-        status: LabOrderStatus.COMPLETED,
-        OR: [
-          ...(rawOrder.serviceId ? [{ serviceId: rawOrder.serviceId }] : []),
-          { testName: rawOrder.testName },
-        ],
-      },
-      include: {
-        result: true,
-        assignedTechnician: { select: { fullName: true } },
-      },
-      orderBy: { updatedAt: 'desc' },
-      take: 3,
-    });
+    const recentResults =
+      await this.clinicalRepository.findRecentCompletedLabOrders(
+        rawOrder.patientProfileId,
+        rawOrder.id,
+        rawOrder.testName,
+        rawOrder.serviceId,
+      );
 
     const { booking, ...rest } = rawOrder;
     const order = {
@@ -565,79 +415,18 @@ export class LabOrdersService {
       hasSpecializations = technicianCategoryIds.length > 0;
     }
 
-    // Step 2: Build where clause
-    // ADMIN sees all ready orders (no filter)
-    let whereClause: Record<string, unknown>;
-
-    if (
+    const isAdminOrReceptionist =
       !currentUser ||
       currentUser.role === 'ADMIN' ||
-      currentUser.role === 'RECEPTIONIST'
-    ) {
-      whereClause = {
-        status: { in: [LabOrderStatus.PAID, LabOrderStatus.IN_PROGRESS] },
-      };
-    } else if (!hasSpecializations) {
-      // Fallback: KTV has no specializations → see all unassigned orders + own assigned orders
-      whereClause = {
-        status: { in: [LabOrderStatus.PAID, LabOrderStatus.IN_PROGRESS] },
-        OR: [
-          { assignedTechnicianId: null },
-          { assignedTechnicianId: currentUser.id },
-        ],
-      };
-    } else {
-      // KTV has specializations → filter by assignment or category match
-      whereClause = {
-        status: { in: [LabOrderStatus.PAID, LabOrderStatus.IN_PROGRESS] },
-        OR: [
-          // Hard assigned to this technician
-          { assignedTechnicianId: currentUser.id },
-          // Auto-route: unassigned + service category matches specialization
-          {
-            assignedTechnicianId: null,
-            service: { categoryId: { in: technicianCategoryIds } },
-          },
-          // Unassigned orders with no service (no category) → visible to all
-          {
-            assignedTechnicianId: null,
-            serviceId: null,
-          },
-        ],
-      };
-    }
+      currentUser.role === 'RECEPTIONIST';
 
-    const rawOrders = (await this.clinicalRepository.findManyLabOrder({
-      where: whereClause,
-      include: {
-        service: {
-          select: {
-            id: true,
-            name: true,
-            labFormType: true,
-            categoryId: true,
-          } as unknown as Prisma.ServiceSelect,
-        },
-        booking: {
-          select: {
-            bookingCode: true,
-            doctor: { select: { fullName: true } },
-            patientProfile: {
-              select: {
-                fullName: true,
-                patientCode: true,
-                gender: true,
-                dateOfBirth: true,
-              },
-            },
-          },
-        },
-        assignedTechnician: {
-          select: { id: true, fullName: true, avatar: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    })) as unknown as InternalLabOrder[];
+    const rawOrders =
+      (await this.clinicalRepository.findReadyToPerformLabOrders(
+        currentUser?.id,
+        technicianCategoryIds,
+        hasSpecializations,
+        isAdminOrReceptionist,
+      )) as unknown as InternalLabOrder[];
 
     const orders = rawOrders.map((order) => {
       const { booking, ...rest } = order;
@@ -659,25 +448,7 @@ export class LabOrdersService {
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
 
-    const [pending, inProgress, completedToday] = await Promise.all([
-      this.clinicalRepository.countLabOrder({
-        where: { status: LabOrderStatus.PAID },
-      }),
-      this.clinicalRepository.countLabOrder({
-        where: { status: LabOrderStatus.IN_PROGRESS },
-      }),
-      this.clinicalRepository.countLabOrder({
-        where: {
-          status: LabOrderStatus.COMPLETED,
-          updatedAt: {
-            gte: startOfDay,
-            lte: endOfDay,
-          },
-        },
-      }),
-    ]);
-
-    return { pending, inProgress, completedToday };
+    return this.clinicalRepository.getTechnicianStats(startOfDay, endOfDay);
   }
 
   async getTechnicianHistory(
@@ -696,100 +467,28 @@ export class LabOrdersService {
     const limit = query.limit || 20;
     const skip = (page - 1) * limit;
 
-    const where: Prisma.LabOrderWhereInput = {
-      status: LabOrderStatus.COMPLETED,
-    };
-
-    // 1. Role filter: only show assigned to this technician if role is TECHNICIAN
-    if (user.role === UserRole.TECHNICIAN) {
-      where.OR = [
-        { assignedTechnicianId: user.id },
-        { result: { recordedBy: user.id } },
-      ];
+    let startDate: Date | undefined;
+    if (query.startDate) {
+      startDate = new Date(query.startDate);
+    }
+    let endDate: Date | undefined;
+    if (query.endDate) {
+      endDate = new Date(query.endDate);
+      endDate.setHours(23, 59, 59, 999);
     }
 
-    // 2. Date range filter (using updatedAt for completion time)
-    if (query.startDate || query.endDate) {
-      where.updatedAt = {};
-      if (query.startDate) {
-        where.updatedAt.gte = new Date(query.startDate);
-      }
-      if (query.endDate) {
-        const end = new Date(query.endDate);
-        end.setHours(23, 59, 59, 999);
-        where.updatedAt.lte = end;
-      }
-    }
-
-    // 3. Category / labFormType filter
-    if (query.categoryId || query.labFormType) {
-      where.service = {};
-      if (query.categoryId) {
-        where.service.categoryId = query.categoryId;
-      }
-      if (query.labFormType) {
-        where.service.labFormType = query.labFormType as LabFormType;
-      }
-    }
-
-    // 4. Search patient name, code, booking code
-    if (query.search) {
-      where.booking = {
-        OR: [
-          { bookingCode: { contains: query.search } },
-          {
-            patientProfile: {
-              OR: [
-                { fullName: { contains: query.search } },
-                {
-                  patientCode: { contains: query.search },
-                },
-              ],
-            },
-          },
-        ],
-      };
-    }
-
-    const [total, rawOrders] = await Promise.all([
-      this.clinicalRepository.countLabOrder({ where }),
-      this.clinicalRepository.findManyLabOrder({
-        where,
-        include: {
-          result: true,
-          service: {
-            select: {
-              id: true,
-              name: true,
-              labFormType: true,
-              categoryId: true,
-            },
-          },
-          booking: {
-            select: {
-              bookingCode: true,
-              doctor: {
-                select: {
-                  fullName: true,
-                  doctorProfile: { select: { specialties: true } },
-                },
-              },
-              patientProfile: {
-                select: {
-                  fullName: true,
-                  patientCode: true,
-                  gender: true,
-                  dateOfBirth: true,
-                },
-              },
-            },
-          },
-        },
-        orderBy: { updatedAt: 'desc' },
+    const [rawOrders, total] =
+      await this.clinicalRepository.findTechnicianHistoryPaginated({
+        userId: user.id,
+        isTechnician: user.role === UserRole.TECHNICIAN,
+        startDate,
+        endDate,
+        categoryId: query.categoryId,
+        labFormType: query.labFormType,
+        search: query.search,
         skip,
         take: limit,
-      }),
-    ]);
+      });
 
     const items = rawOrders.map((order) => {
       const { booking, ...rest } = order;
@@ -829,9 +528,8 @@ export class LabOrdersService {
         HttpStatus.FORBIDDEN,
       );
     }
-    const order = await this.clinicalRepository.findUniqueLabOrder({
-      where: { id: labOrderId },
-    });
+    const order =
+      await this.clinicalRepository.findLabOrderWithRelations(labOrderId);
 
     if (!order) {
       throw new ApiException(
@@ -841,38 +539,12 @@ export class LabOrdersService {
       );
     }
 
-    const updatedOrder = await this.clinicalRepository.transaction(
-      async (tx) => {
-        // Upsert lab result
-        await tx.labResult.upsert({
-          where: { labOrderId },
-          create: {
-            labOrderId,
-            resultText: dto.resultText,
-            resultFileUrl: dto.resultFileUrl,
-            isAbnormal: dto.isAbnormal,
-            abnormalNote: dto.abnormalNote,
-            recordedBy: resultAuthorId,
-            resultDate: new Date(),
-          },
-          update: {
-            resultText: dto.resultText,
-            resultFileUrl: dto.resultFileUrl,
-            isAbnormal: dto.isAbnormal,
-            abnormalNote: dto.abnormalNote,
-            recordedBy: resultAuthorId,
-            resultDate: new Date(),
-          },
-        });
-
-        // Update order status → COMPLETED
-        return tx.labOrder.update({
-          where: { id: labOrderId },
-          data: { status: LabOrderStatus.COMPLETED },
-          include: { result: true },
-        });
-      },
-    );
+    const updatedOrder =
+      await this.clinicalRepository.uploadLabResultTransaction(
+        labOrderId,
+        resultAuthorId,
+        dto,
+      );
 
     this.logger.log(
       `Result added for lab order: ${labOrderId} by user: ${resultAuthorId}`,
@@ -921,9 +593,8 @@ export class LabOrdersService {
         HttpStatus.FORBIDDEN,
       );
     }
-    const order = await this.clinicalRepository.findUniqueLabOrder({
-      where: { id: labOrderId },
-    });
+    const order =
+      await this.clinicalRepository.findLabOrderWithRelations(labOrderId);
 
     if (!order) {
       throw new ApiException(
@@ -945,10 +616,10 @@ export class LabOrdersService {
       );
     }
 
-    const updatedOrder = await this.clinicalRepository.updateLabOrder({
-      where: { id: labOrderId },
-      data: { status },
-    });
+    const updatedOrder = await this.clinicalRepository.updateLabOrderStatus(
+      labOrderId,
+      status,
+    );
 
     this.logger.log(
       `Lab order ${labOrderId} status updated from ${order.status} to ${status}`,
@@ -975,10 +646,8 @@ export class LabOrdersService {
     labOrderId: string,
     currentUser?: Express.User,
   ) {
-    const order = await this.clinicalRepository.findUniqueLabOrder({
-      where: { id: labOrderId },
-      include: LabOrderDeleteInclude,
-    });
+    const order =
+      await this.clinicalRepository.findLabOrderForDeletion(labOrderId);
 
     if (!order) {
       throw new ApiException(
@@ -1036,9 +705,7 @@ export class LabOrdersService {
       }
     }
 
-    await this.clinicalRepository.deleteLabOrder({
-      where: { id: labOrderId },
-    });
+    await this.clinicalRepository.deleteLabOrderById(labOrderId);
 
     this.logger.log(
       `Lab order deleted successfully: ${labOrderId} associated with booking: ${order.bookingId}`,

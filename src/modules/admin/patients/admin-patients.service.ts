@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { Prisma, Gender, UserRole } from '@prisma/client';
 import { Workbook } from 'exceljs';
 import {
   IUserRepository,
@@ -15,17 +16,16 @@ import {
 import { AdminCreatePatientDto } from './dto/create-patient.dto';
 import { AdminUpdatePatientDto } from './dto/update-patient.dto';
 import { PatientSearchQueryDto } from './dto/patient-query.dto';
-import { BookingStatus, Gender, Prisma, UserRole } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
-import { MessageCodes } from 'src/common/constants/message-codes.const';
 import { ApiException } from 'src/common/exceptions/api.exception';
+import { MessageCodes } from 'src/common/constants/message-codes.const';
+import * as bcrypt from 'bcrypt';
 
 // Sequential counter helper — in production this should use DB sequence or redis
 // Here we just count existing profiles to generate the next code
 async function generatePatientCode(
   profileRepository: IProfileRepository,
 ): Promise<string> {
-  const count = await profileRepository.countPatientProfile({});
+  const count = await profileRepository.countTotalPatients();
   return `BN-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
 }
 
@@ -64,7 +64,7 @@ export class AdminPatientsService {
           phone: normalizedPhone,
           email,
           dateOfBirth: dateOfBirth?.trim() ? new Date(dateOfBirth) : null,
-          gender,
+          gender: gender as Gender,
           address: address?.trim() || null,
           patientCode,
           isGuest: true,
@@ -78,21 +78,17 @@ export class AdminPatientsService {
           allergies: profileData.allergies?.trim() || null,
           chronicConditions: profileData.chronicConditions?.trim() || null,
           familyHistory: profileData.familyHistory?.trim() || null,
-        },
+        } as Prisma.PatientProfileCreateInput,
       });
 
       return { profile };
     }
 
     // Check unique email / phone on User table
-    const queryOr: any[] = [{ email }];
-    if (normalizedPhone) {
-      queryOr.push({ phone: normalizedPhone });
-    }
-
-    const existingUser = await this.userRepository.findFirst({
-      where: { OR: queryOr },
-    });
+    const existingUser = await this.userRepository.findByEmailOrPhone(
+      email,
+      normalizedPhone,
+    );
 
     if (existingUser) {
       throw new ApiException(
@@ -111,7 +107,7 @@ export class AdminPatientsService {
         email,
         fullName,
         phone: normalizedPhone,
-        gender,
+        gender: gender as Gender,
         dateOfBirth: dateOfBirth?.trim() ? new Date(dateOfBirth) : null,
         address: address?.trim() || null,
         password: hashedPassword,
@@ -124,7 +120,7 @@ export class AdminPatientsService {
         phone: normalizedPhone,
         email,
         dateOfBirth: dateOfBirth?.trim() ? new Date(dateOfBirth) : null,
-        gender,
+        gender: gender as Gender,
         address: address?.trim() || null,
         patientCode,
         isGuest: false,
@@ -172,7 +168,7 @@ export class AdminPatientsService {
         patientCode,
         isGuest: true,
         bloodType: dto.bloodType?.trim() || null,
-      },
+      } as Prisma.PatientProfileCreateInput,
     });
 
     return profile;
@@ -183,9 +179,8 @@ export class AdminPatientsService {
     patientProfileId: string,
     dto: { email: string; password?: string },
   ) {
-    const profile = await this.profileRepository.findUniquePatientProfile({
-      where: { id: patientProfileId },
-    });
+    const profile =
+      await this.profileRepository.findPatientProfileById(patientProfileId);
 
     if (!profile) {
       throw new ApiException(
@@ -214,7 +209,7 @@ export class AdminPatientsService {
           email: dto.email,
           fullName: profile.fullName,
           phone: profile.phone,
-          gender: profile.gender,
+          gender: profile.gender as Gender,
           dateOfBirth: profile.dateOfBirth,
           address: profile.address,
           password: hashedPassword,
@@ -248,80 +243,13 @@ export class AdminPatientsService {
       patientCode,
       isGuest,
     } = query;
-    const skip = (page - 1) * limit;
 
-    // Build PatientProfile where clause
-    const where: Prisma.PatientProfileWhereInput = {};
-
-    if (isGuest !== undefined) {
-      where.isGuest = isGuest;
-    }
-
-    if (patientCode) {
-      where.patientCode = { contains: patientCode };
-    }
-
-    if (search) {
-      where.OR = [
-        { fullName: { contains: search } },
-        { email: { contains: search } },
-        { phone: { contains: search } },
-        { patientCode: { contains: search } },
-        { insuranceNumber: { contains: search } },
-        { nationalId: { contains: search } },
-      ];
-    }
-
-    if (gender) {
-      const genders = gender.split(',').map((g) => g.trim() as Gender);
-      where.gender = { in: genders };
-    }
-
-    if (bloodType) {
-      const bloodTypes = bloodType.split(',').map((bt) => bt.trim());
-      where.bloodType = { in: bloodTypes };
-    }
-
-    // Status filter — only applies to registered patients (who have User records)
-    if (status) {
-      const statuses = status.split(',').map((s) => s.trim());
-      const hasActive = statuses.includes('active');
-      const hasInactive = statuses.includes('inactive');
-      if (hasActive && !hasInactive) {
-        where.user = { isActive: true };
-      } else if (hasInactive && !hasActive) {
-        where.user = { isActive: false };
-      }
-    }
-
-    const [total, profiles] = await Promise.all([
-      this.profileRepository.countPatientProfile({ where }),
-      this.profileRepository.findManyPatientProfile({
-        where,
-        select: {
-          id: true,
-          fullName: true,
-          email: true,
-          phone: true,
-          gender: true,
-          dateOfBirth: true,
-          patientCode: true,
-          isGuest: true,
-          bloodType: true,
-          userId: true,
-          user: {
-            select: {
-              id: true,
-              avatar: true,
-              isActive: true,
-            },
-          },
-        },
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-      }),
-    ]);
+    const [profiles, total] =
+      await this.profileRepository.findAdminPatientsPage(
+        { search, gender, status, bloodType, patientCode, isGuest },
+        page,
+        limit,
+      );
 
     // Enrich with last visit & next appointment
     const profileIds = profiles.map((p) => p.id);
@@ -329,43 +257,10 @@ export class AdminPatientsService {
     today.setUTCHours(0, 0, 0, 0);
 
     const [lastVisitRecords, nextApptRecords] =
-      profileIds.length === 0
-        ? [[], []]
-        : await Promise.all([
-            this.bookingRepository.findManyBooking({
-              where: {
-                patientProfileId: { in: profileIds },
-                status: BookingStatus.COMPLETED,
-              },
-              orderBy: { bookingDate: 'desc' },
-              distinct: ['patientProfileId'],
-              select: {
-                patientProfileId: true,
-                bookingDate: true,
-                doctor: { select: { fullName: true } },
-              },
-            }),
-            this.bookingRepository.findManyBooking({
-              where: {
-                patientProfileId: { in: profileIds },
-                status: {
-                  in: [
-                    BookingStatus.PENDING,
-                    BookingStatus.CONFIRMED,
-                    BookingStatus.CHECKED_IN,
-                  ],
-                },
-                bookingDate: { gte: today },
-              },
-              orderBy: { bookingDate: 'asc' },
-              distinct: ['patientProfileId'],
-              select: {
-                patientProfileId: true,
-                bookingDate: true,
-                doctor: { select: { fullName: true } },
-              },
-            }),
-          ]);
+      await this.bookingRepository.findPatientLastAndNextBookings(
+        profileIds,
+        today,
+      );
 
     const lastVisitMap = new Map(
       lastVisitRecords.map((b) => [b.patientProfileId, b]),
@@ -408,60 +303,11 @@ export class AdminPatientsService {
   async exportToExcel(query: PatientSearchQueryDto) {
     const { search, gender, status, bloodType, patientCode, isGuest } = query;
 
-    // Build PatientProfile where clause
-    const where: Prisma.PatientProfileWhereInput = {};
-
-    if (isGuest !== undefined) {
-      where.isGuest = isGuest;
-    }
-
-    if (patientCode) {
-      where.patientCode = { contains: patientCode };
-    }
-
-    if (search) {
-      where.OR = [
-        { fullName: { contains: search } },
-        { email: { contains: search } },
-        { phone: { contains: search } },
-        { patientCode: { contains: search } },
-        { insuranceNumber: { contains: search } },
-        { nationalId: { contains: search } },
-      ];
-    }
-
-    if (gender) {
-      const genders = gender.split(',').map((g) => g.trim() as Gender);
-      where.gender = { in: genders };
-    }
-
-    if (bloodType) {
-      const bloodTypes = bloodType.split(',').map((bt) => bt.trim());
-      where.bloodType = { in: bloodTypes };
-    }
-
-    if (status) {
-      const statuses = status.split(',').map((s) => s.trim());
-      const hasActive = statuses.includes('active');
-      const hasInactive = statuses.includes('inactive');
-      if (hasActive && !hasInactive) {
-        where.user = { isActive: true };
-      } else if (hasInactive && !hasActive) {
-        where.user = { isActive: false };
-      }
-    }
-
-    const profiles = await this.profileRepository.findManyPatientProfile({
-      where,
-      include: {
-        user: {
-          select: {
-            isActive: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const [profiles] = await this.profileRepository.findAdminPatientsPage(
+      { search, gender, status, bloodType, patientCode, isGuest },
+      1,
+      100000, // retrieve all for export
+    );
 
     const workbook = new Workbook();
     const worksheet = workbook.addWorksheet('Patients');
@@ -533,78 +379,38 @@ export class AdminPatientsService {
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1),
     );
 
-    const notCancelledOrNoShow = {
-      notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW],
-    };
-    const activeStatuses = {
-      notIn: [
-        BookingStatus.CANCELLED,
-        BookingStatus.NO_SHOW,
-        BookingStatus.COMPLETED,
-        BookingStatus.QUEUED,
-      ],
-    };
+    const [patientStats, bookingStats] = await Promise.all([
+      this.profileRepository.getPatientDashboardStats({
+        startOfToday,
+        startOfTomorrow,
+        startOfSameLastWeek,
+        startOfDayAfterLastWeek,
+        startOfMonth,
+        startOfLastMonth,
+      }),
+      this.bookingRepository.getBookingDashboardStats({
+        startOfToday,
+        startOfTomorrow,
+        startOfSameLastWeek,
+        startOfDayAfterLastWeek,
+        startOfMonth,
+        startOfLastMonth,
+      }),
+    ]);
 
-    const [
+    const {
       totalPatients,
       totalPatientsLastMonthEnd,
       newThisMonth,
       newLastMonth,
+    } = patientStats;
+
+    const {
       patientsTodayCount,
       patientsLastWeekDayCount,
       activeAppointments,
       activeAppointmentsLastMonth,
-    ] = await Promise.all([
-      // KPI 1 — total patient profiles (registered + guest)
-      this.profileRepository.countPatientProfile({}),
-      this.profileRepository.countPatientProfile({
-        where: { createdAt: { lt: startOfMonth } },
-      }),
-      // KPI 2 — new profiles this month
-      this.profileRepository.countPatientProfile({
-        where: { createdAt: { gte: startOfMonth } },
-      }),
-      this.profileRepository.countPatientProfile({
-        where: { createdAt: { gte: startOfLastMonth, lt: startOfMonth } },
-      }),
-      // KPI 3 — unique profiles with bookings today
-      this.bookingRepository
-        .findManyBooking({
-          where: {
-            bookingDate: { gte: startOfToday, lt: startOfTomorrow },
-            status: notCancelledOrNoShow,
-          },
-          distinct: ['patientProfileId'],
-          select: { patientProfileId: true },
-        })
-        .then((r: any[]) => r.length),
-      this.bookingRepository
-        .findManyBooking({
-          where: {
-            bookingDate: {
-              gte: startOfSameLastWeek,
-              lt: startOfDayAfterLastWeek,
-            },
-            status: notCancelledOrNoShow,
-          },
-          distinct: ['patientProfileId'],
-          select: { patientProfileId: true },
-        })
-        .then((r: any[]) => r.length),
-      // KPI 4 — active bookings this month
-      this.bookingRepository.countBooking({
-        where: {
-          bookingDate: { gte: startOfMonth },
-          status: activeStatuses,
-        },
-      }),
-      this.bookingRepository.countBooking({
-        where: {
-          bookingDate: { gte: startOfLastMonth, lt: startOfMonth },
-          status: activeStatuses,
-        },
-      }),
-    ]);
+    } = bookingStats;
 
     const trendPct = (current: number, prev: number): number | null =>
       prev === 0 ? null : Math.round(((current - prev) / prev) * 100);
@@ -725,23 +531,7 @@ export class AdminPatientsService {
 
   // HEALTH PROFILE
   async getHealthProfile(id: string) {
-    const profile = await this.profileRepository.findUniquePatientProfile({
-      where: { id },
-      select: {
-        id: true,
-        fullName: true,
-        patientCode: true,
-        isGuest: true,
-        allergies: true,
-        chronicConditions: true,
-        familyHistory: true,
-        bloodType: true,
-        heightCm: true,
-        weightKg: true,
-        occupation: true,
-        ethnicity: true,
-      },
-    });
+    const profile = await this.profileRepository.findHealthProfile(id);
 
     if (!profile) {
       throw new ApiException(
@@ -757,21 +547,7 @@ export class AdminPatientsService {
 
   // INTERNAL HELPERS
   private async findById(id: string) {
-    const profile = await this.profileRepository.findUniquePatientProfile({
-      where: { id },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            isActive: true,
-            isVerified: true,
-            avatar: true,
-            role: true,
-          },
-        },
-      },
-    });
+    const profile = await this.profileRepository.findAdminPatientDetailById(id);
 
     if (!profile) {
       throw new ApiException(

@@ -16,15 +16,72 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PromoteQueueDto } from './dto/promote-queue.dto';
 import { QueueFilterDto } from './dto/queue-filter.dto';
 import { QueueGateway } from './queue.gateway';
-import { BookingStatus, Prisma, ServiceOrderStatus } from '@prisma/client';
+import { BookingStatus, ServiceOrderStatus, Prisma } from '@prisma/client';
 import {
-  BookingInclude,
-  BookingWithRelations,
   QueueRecordWithRelations,
+  BookingWithRelations,
 } from '../database/types/prisma-payload.types';
 import { MessageCodes } from '../../common/constants/message-codes.const';
 import { ApiException } from '../../common/exceptions/api.exception';
 import { startOfDay, endOfDay, parseISO } from 'date-fns';
+
+export interface QueueRecordMixed {
+  id: string;
+  bookingId: string;
+  doctorId: string;
+  queueDate: Date;
+  queuePosition: number;
+  estimatedWaitMinutes: number;
+  isPreBooked: boolean;
+  scheduledTime: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  calledAt: Date | null;
+  completedAt: Date | null;
+  booking: {
+    id: string;
+    bookingCode: string | null;
+    bookingDate: Date;
+    startTime: string | null;
+    endTime: string | null;
+    status: BookingStatus;
+    patientProfile: {
+      id: string;
+      userId: string | null;
+      fullName: string;
+      phone: string | null;
+      email: string | null;
+      isGuest: boolean;
+      patientCode: string | null;
+    } | null;
+    doctor: {
+      id: string;
+      email: string;
+      fullName: string;
+    } | null;
+    service: {
+      id: string;
+      name: string;
+      durationMinutes?: number;
+      price?: Prisma.Decimal | number;
+      maxSlotsPerHour?: number;
+    } | null;
+    medicalRecord?: {
+      id: string;
+      isFinalized: boolean;
+      chiefComplaint: string | null;
+      clinicalFindings: string | null;
+      diagnosisCode: string | null;
+      diagnosisName: string | null;
+      treatmentPlan: string | null;
+      doctorNotes: string | null;
+      followUpDate: Date | null;
+      followUpNote: string | null;
+    } | null;
+  };
+  isVisitServiceOrder?: boolean;
+  visitServiceOrderId?: string;
+}
 
 @Injectable()
 export class QueueService {
@@ -44,13 +101,7 @@ export class QueueService {
    * This logic is extracted from BookingsService to allow shared use.
    */
   async addToQueue(bookingId: string, userId: string) {
-    const booking = await this.bookingRepository.findUnique({
-      where: { id: bookingId },
-      include: {
-        service: true,
-        patientProfile: true,
-      },
-    });
+    const booking = await this.bookingRepository.findBookingForQueue(bookingId);
 
     if (!booking) {
       throw new ApiException(
@@ -71,9 +122,8 @@ export class QueueService {
     }
 
     // Check if it already has a queue record
-    const existingQueue = await this.bookingRepository.findQueueUnique({
-      where: { bookingId },
-    });
+    const existingQueue =
+      await this.bookingRepository.findQueueByBookingId(bookingId);
 
     if (existingQueue) {
       throw new ApiException(
@@ -85,68 +135,31 @@ export class QueueService {
     }
 
     // Find the latest queue position for the doctor on that date
-    const latestQueue = await this.bookingRepository.findQueueFirst({
-      where: {
-        doctorId: booking.doctorId,
-        queueDate: booking.bookingDate,
-      },
-      orderBy: {
-        queuePosition: 'desc',
-      },
-      select: {
-        queuePosition: true,
-      },
-    });
+    const latestPosition = await this.bookingRepository.findLatestQueuePosition(
+      booking.doctorId,
+      booking.bookingDate,
+    );
 
-    const currentPosition = latestQueue ? latestQueue.queuePosition + 1 : 1;
+    const currentPosition = latestPosition + 1;
 
     // Estimate wait time (naive estimate: active queue size * 30 min)
-    const checkedInCount = await this.bookingRepository.countQueue({
-      where: {
-        doctorId: booking.doctorId,
-        queueDate: booking.bookingDate,
-        booking: { status: BookingStatus.CHECKED_IN },
-      },
-    });
+    const checkedInCount = await this.bookingRepository.countCheckedInQueue(
+      booking.doctorId,
+      booking.bookingDate,
+    );
 
     const estWaitMinutes = checkedInCount * 30;
 
-    const result = await this.bookingRepository.transaction(async (tx) => {
-      // 1. Update Booking status
-      const updatedBooking = await tx.booking.update({
-        where: { id: bookingId },
-        data: {
-          status: BookingStatus.CHECKED_IN,
-          checkedInAt: new Date(),
-        },
-        include: BookingInclude,
-      });
-
-      // 2. Create history
-      await tx.bookingStatusHistory.create({
-        data: {
-          bookingId,
-          oldStatus: BookingStatus.CONFIRMED,
-          newStatus: BookingStatus.CHECKED_IN,
-          changedById: userId,
-          reason: 'Patient added to queue (Auto or Manual Check-in)',
-        },
-      });
-
-      // 3. Create Queue Record
-      const queueRecord = await tx.bookingQueue.create({
-        data: {
-          bookingId,
-          doctorId: booking.doctorId,
-          queueDate: booking.bookingDate,
-          queuePosition: currentPosition,
-          estimatedWaitMinutes: estWaitMinutes,
-          isPreBooked: booking.isPreBooked,
-          scheduledTime: booking.startTime ?? null,
-        },
-      });
-      return { booking: updatedBooking, queue: queueRecord };
-    });
+    const result = await this.bookingRepository.checkInTransaction(
+      bookingId,
+      booking.doctorId,
+      booking.bookingDate,
+      booking.isPreBooked,
+      booking.startTime ?? null,
+      userId,
+      estWaitMinutes,
+      currentPosition,
+    );
 
     this.logger.log(
       `Patient checked-in and added to queue successfully: Booking: ${bookingId}, STT: ${currentPosition}, Doctor: ${booking.doctorId}`,
@@ -190,7 +203,7 @@ export class QueueService {
       try {
         await this.notificationsService.notifyAdmins({
           title: 'Cập nhật lịch hẹn',
-          content: `Lịch hẹn của ${booking.patientProfile.fullName} đã vào hàng đợi (STT: ${currentPosition}).`,
+          content: `Lịch hẹn của ${booking.patientProfile?.fullName ?? 'Bệnh nhân'} đã vào hàng đợi (STT: ${currentPosition}).`,
           metadata: { bookingId: booking.id, status: BookingStatus.CHECKED_IN },
         });
       } catch (err) {
@@ -204,7 +217,7 @@ export class QueueService {
         await this.notificationsService.createInAppNotification({
           userId: booking.doctorId,
           title: 'Bệnh nhân mới vào hàng đợi',
-          content: `Bệnh nhân ${booking.patientProfile.fullName} (STT: ${currentPosition}) đã check-in và đang đợi khám.`,
+          content: `Bệnh nhân ${booking.patientProfile?.fullName ?? 'Bệnh nhân'} (STT: ${currentPosition}) đã check-in và đang đợi khám.`,
           type: 'SYSTEM',
           metadata: { bookingId: booking.id, status: BookingStatus.CHECKED_IN },
         });
@@ -225,66 +238,14 @@ export class QueueService {
   async findAll(filterDto: QueueFilterDto) {
     const { doctorId, date, timeSlot, page = 1, limit = 10 } = filterDto;
 
-    // Build booking where clause properly
-    const bookingWhere: Prisma.BookingWhereInput = {
-      status: {
-        in: [
-          BookingStatus.CHECKED_IN,
-          BookingStatus.IN_PROGRESS,
-          BookingStatus.COMPLETED,
-        ],
-      },
-    };
-
-    if (doctorId) {
-      bookingWhere.doctorId = doctorId;
-    }
-
-    if (date) {
-      bookingWhere.bookingDate = new Date(date);
-    }
-
-    if (timeSlot) {
-      bookingWhere.startTime = timeSlot;
-    }
-
-    const where: Prisma.BookingQueueWhereInput = {
-      booking: bookingWhere,
-    };
-
-    const [queueRecords, total] = await Promise.all([
-      this.bookingRepository.findQueueMany({
-        where,
-        include: {
-          booking: {
-            include: {
-              ...BookingInclude,
-              medicalRecord: {
-                select: {
-                  id: true,
-                  isFinalized: true,
-                  chiefComplaint: true,
-                  clinicalFindings: true,
-                  diagnosisCode: true,
-                  diagnosisName: true,
-                  treatmentPlan: true,
-                  doctorNotes: true,
-                  followUpDate: true,
-                  followUpNote: true,
-                },
-              },
-            },
-          },
-        },
-        orderBy: [
-          { booking: { bookingDate: 'asc' } },
-          { queuePosition: 'asc' },
-        ],
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.bookingRepository.countQueue({ where }),
-    ]);
+    const [queueRecords, total] =
+      await this.bookingRepository.findQueueRecordsPaginated(
+        doctorId,
+        date,
+        timeSlot,
+        page,
+        limit,
+      );
 
     // ──────────────────────────────────────────────────────────────────
     // MIX IN: VisitServiceOrders assigned to this doctor (Nhóm 2)
@@ -292,101 +253,63 @@ export class QueueService {
     // queueNumber is assigned. These should surface in the doctor's queue
     // alongside their own CHECKED_IN / IN_PROGRESS bookings.
     // ──────────────────────────────────────────────────────────────────
-    type QueueRecordMixed = (typeof queueRecords)[0] & {
-      isVisitServiceOrder?: boolean;
-      visitServiceOrderId?: string;
-    };
-
-    let mixedRecords: QueueRecordMixed[] = [...queueRecords];
+    // ──────────────────────────────────────────────────────────────────
+    // MIX IN: VisitServiceOrders assigned to this doctor (Nhóm 2)
+    // When a receptionist pays the LAB invoice, VSO.status → PAID and
+    // queueNumber is assigned. These should surface in the doctor's queue
+    // alongside their own CHECKED_IN / IN_PROGRESS bookings.
+    // ──────────────────────────────────────────────────────────────────
+    const mixedRecords: QueueRecordMixed[] = [...queueRecords];
 
     if (doctorId) {
-      const vsoStatusFilter = ['PAID', 'IN_PROGRESS'];
-      const vsoOrders = await this.clinicalRepository.findManyVisitServiceOrder(
-        {
-          where: {
-            performedBy: doctorId,
-            status: { in: vsoStatusFilter as ('PAID' | 'IN_PROGRESS')[] },
-            ...(date
-              ? {
-                  createdAt: {
-                    gte: startOfDay(parseISO(date)),
-                    lte: endOfDay(parseISO(date)),
-                  },
-                }
-              : {}),
-          },
-          include: {
-            service: { select: { id: true, name: true } },
-            medicalRecord: {
-              include: {
-                booking: {
-                  include: {
-                    ...BookingInclude,
-                    medicalRecord: {
-                      select: {
-                        id: true,
-                        isFinalized: true,
-                        chiefComplaint: true,
-                        clinicalFindings: true,
-                        diagnosisCode: true,
-                        diagnosisName: true,
-                        treatmentPlan: true,
-                        doctorNotes: true,
-                        followUpDate: true,
-                        followUpNote: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-          orderBy: { queueNumber: 'asc' },
-        },
+      const startDate = date ? startOfDay(parseISO(date)) : undefined;
+      const endDate = date ? endOfDay(parseISO(date)) : undefined;
+
+      const vsoOrders = await this.clinicalRepository.findDoctorSpecialistQueue(
+        doctorId,
+        startDate,
+        endDate,
       );
 
       // Map each VSO into the same shape as a QueueRecord
-      const vsoAsQueueRecords: QueueRecordMixed[] = vsoOrders
-        .filter((vso) => !!vso.medicalRecord?.booking)
-        .map((vso) => {
-          const booking = vso.medicalRecord.booking;
+      for (const vso of vsoOrders) {
+        if (!vso.medicalRecord?.booking) continue;
+        const booking = vso.medicalRecord.booking;
 
-          // Override booking status for specialist view to match VSO lifecycle
-          let overriddenStatus: BookingStatus = booking.status;
-          const status = vso.status as string;
-          if (status === ServiceOrderStatus.PAID) {
-            overriddenStatus = BookingStatus.CHECKED_IN;
-          } else if (status === ServiceOrderStatus.IN_PROGRESS) {
-            overriddenStatus = BookingStatus.IN_PROGRESS;
-          } else if (status === ServiceOrderStatus.COMPLETED) {
-            overriddenStatus = BookingStatus.COMPLETED;
-          }
+        // Override booking status for specialist view to match VSO lifecycle
+        let overriddenStatus: BookingStatus = booking.status;
+        const status = vso.status;
+        if (status === ServiceOrderStatus.PAID) {
+          overriddenStatus = BookingStatus.CHECKED_IN;
+        } else if (status === ServiceOrderStatus.IN_PROGRESS) {
+          overriddenStatus = BookingStatus.IN_PROGRESS;
+        } else if (status === ServiceOrderStatus.COMPLETED) {
+          overriddenStatus = BookingStatus.COMPLETED;
+        }
 
-          return {
-            id: `vso-${vso.id}`, // synthetic id
-            bookingId: booking.id,
-            doctorId: doctorId,
-            queueDate: booking.bookingDate, // keep as Date to satisfy Prisma type
-            queuePosition: vso.queueNumber ?? 99999,
-            estimatedWaitMinutes: 0,
-            isPreBooked: false,
-            scheduledTime: null,
-            createdAt: vso.createdAt,
-            updatedAt: vso.updatedAt,
-            calledAt: null,
-            completedAt: null, // required by BookingQueue Prisma type
-            booking: {
-              ...booking,
-              status: overriddenStatus,
-              service: vso.service, // Use the specific specialist service
-            },
-            // Custom flags for Frontend routing
-            isVisitServiceOrder: true,
-            visitServiceOrderId: vso.id,
-          } as unknown as QueueRecordMixed;
+        mixedRecords.push({
+          id: `vso-${vso.id}`, // synthetic id
+          bookingId: booking.id,
+          doctorId: doctorId,
+          queueDate: booking.bookingDate,
+          queuePosition: vso.queueNumber ?? 99999,
+          estimatedWaitMinutes: 0,
+          isPreBooked: false,
+          scheduledTime: null,
+          createdAt: vso.createdAt,
+          updatedAt: vso.updatedAt,
+          calledAt: null,
+          completedAt: null,
+          booking: {
+            ...booking,
+            status: overriddenStatus,
+            service: vso.service,
+          },
+          // Custom flags for Frontend routing
+          isVisitServiceOrder: true,
+          visitServiceOrderId: vso.id,
         });
-
-      mixedRecords = [...queueRecords, ...vsoAsQueueRecords];
+      }
     }
 
     // Priority sort (application layer):
@@ -427,22 +350,14 @@ export class QueueService {
    * Get queue by booking ID
    */
   async findByBookingId(bookingId: string): Promise<QueueRecordWithRelations> {
-    const queueRecord = await this.bookingRepository.findQueueUnique({
-      where: { bookingId },
-      include: {
-        booking: {
-          include: BookingInclude,
-        },
-      },
-    });
+    const queueRecord =
+      await this.bookingRepository.findQueueByBookingId(bookingId);
 
     if (!queueRecord) {
       // Fallback: If no BookingQueue record exists (e.g. for direct-service walk-ins that bypassed checkIn),
       // we can construct a synthetic QueueRecord if the booking exists.
-      const booking = await this.bookingRepository.findUnique({
-        where: { id: bookingId },
-        include: BookingInclude,
-      });
+      const booking =
+        await this.bookingRepository.findBookingWithRelations(bookingId);
 
       if (!booking) {
         throw new ApiException(
@@ -468,7 +383,7 @@ export class QueueService {
         calledAt: null,
         completedAt: null,
         booking,
-      } as unknown as QueueRecordWithRelations;
+      };
     }
 
     return queueRecord;
@@ -478,48 +393,15 @@ export class QueueService {
    * Get queue statistics
    */
   async getStatistics(doctorId?: string, date?: string) {
-    // Build booking where clause properly
-    const bookingWhere: Prisma.BookingWhereInput = {
-      status: { in: [BookingStatus.CHECKED_IN, BookingStatus.IN_PROGRESS] },
-    };
-
-    if (doctorId) {
-      bookingWhere.doctorId = doctorId;
-    }
-
-    if (date) {
-      bookingWhere.bookingDate = new Date(date);
-    }
-
-    const where: Prisma.BookingQueueWhereInput = {
-      booking: bookingWhere,
-    };
-
-    const [totalQueued, avgWaitTime, longestQueue] = await Promise.all([
-      this.bookingRepository.countQueue({ where }),
-      this.bookingRepository.aggregateQueue({
-        where,
-        _avg: {
-          estimatedWaitMinutes: true,
-        },
-      }),
-      this.bookingRepository.findQueueFirst({
-        where,
-        orderBy: {
-          queuePosition: 'desc',
-        },
-        select: {
-          queuePosition: true,
-        },
-      }),
-    ]);
+    const stats = await this.bookingRepository.getQueueStatistics(
+      doctorId,
+      date ? new Date(date) : undefined,
+    );
 
     return {
-      totalQueued,
-      averageWaitTimeMinutes: Math.round(
-        avgWaitTime._avg?.estimatedWaitMinutes ?? 0,
-      ),
-      longestQueuePosition: longestQueue?.queuePosition || 0,
+      totalQueued: stats.totalQueued,
+      averageWaitTimeMinutes: Math.round(stats.avgWaitTime ?? 0),
+      longestQueuePosition: stats.longestQueue || 0,
     };
   }
 
@@ -547,12 +429,14 @@ export class QueueService {
     }
 
     // Check if slot is now available
-    const isSlotAvailable = await this.checkSlotAvailability(
-      queueRecord.booking.doctorId,
-      queueRecord.booking.bookingDate.toISOString().split('T')[0],
-      queueRecord.booking.startTime ?? '',
-      queueRecord.booking.service?.maxSlotsPerHour ?? 1,
-    );
+    const confirmedCount =
+      await this.bookingRepository.countConfirmedBookingsForSlot(
+        queueRecord.booking.doctorId,
+        new Date(queueRecord.booking.bookingDate),
+        queueRecord.booking.startTime ?? '',
+      );
+    const maxSlotsPerHour = queueRecord.booking.service?.maxSlotsPerHour ?? 1;
+    const isSlotAvailable = confirmedCount < maxSlotsPerHour;
 
     if (!isSlotAvailable) {
       throw new ApiException(
@@ -564,11 +448,20 @@ export class QueueService {
     }
 
     // Promote booking
-    const result = await this.promoteBooking(
+    const resultBooking = await this.bookingRepository.promoteQueueTransaction(
       bookingId,
       promotedBy,
       reason || 'Manual promotion by staff',
     );
+
+    if (!resultBooking) {
+      throw new ApiException(
+        MessageCodes.QUEUE_NOT_FOUND,
+        'Queue record not found',
+        404,
+        'Queue promotion failed',
+      );
+    }
 
     this.logger.log(
       `Successfully promoted booking ${bookingId} manually by user ${promotedBy}`,
@@ -579,7 +472,7 @@ export class QueueService {
       this.queueGateway.broadcastQueueUpdate(
         queueRecord.booking.doctorId,
         'PROMOTED',
-        result.booking,
+        resultBooking,
       );
     } catch (error) {
       this.logger.error(
@@ -588,7 +481,7 @@ export class QueueService {
       );
     }
 
-    return result.booking;
+    return resultBooking;
   }
 
   /**
@@ -600,53 +493,32 @@ export class QueueService {
     timeSlot: string,
   ): Promise<boolean> {
     // Find first booking in queue for this slot
-    const firstInQueue = await this.bookingRepository.findQueueFirst({
-      where: {
-        booking: {
-          doctorId,
-          bookingDate: new Date(bookingDate),
-          startTime: timeSlot,
-          status: BookingStatus.CHECKED_IN,
-        },
-      },
-      orderBy: {
-        queuePosition: 'asc',
-      },
-      include: {
-        booking: {
-          include: {
-            service: {
-              select: {
-                id: true,
-                name: true,
-                durationMinutes: true,
-                price: true,
-                maxSlotsPerHour: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    const firstInQueue = await this.bookingRepository.findFirstInQueue(
+      doctorId,
+      new Date(bookingDate),
+      timeSlot,
+    );
 
     if (!firstInQueue) {
       return false; // No one in queue
     }
 
     // Check if slot is available
-    const isAvailable = await this.checkSlotAvailability(
-      doctorId,
-      bookingDate,
-      timeSlot,
-      firstInQueue.booking.service?.maxSlotsPerHour ?? 1,
-    );
+    const confirmedCount =
+      await this.bookingRepository.countConfirmedBookingsForSlot(
+        doctorId,
+        new Date(bookingDate),
+        timeSlot,
+      );
+    const maxSlotsPerHour = firstInQueue.booking.service?.maxSlotsPerHour ?? 1;
+    const isAvailable = confirmedCount < maxSlotsPerHour;
 
     if (!isAvailable) {
       return false; // Slot still full
     }
 
     // Promote the first booking in queue
-    const result = await this.promoteBooking(
+    const resultBooking = await this.bookingRepository.promoteQueueTransaction(
       firstInQueue.bookingId,
       'system',
       'Auto-promoted from queue',
@@ -661,7 +533,7 @@ export class QueueService {
       this.queueGateway.broadcastQueueUpdate(
         doctorId,
         'PROMOTED',
-        result.booking,
+        resultBooking,
       );
     } catch (error) {
       this.logger.error(
@@ -677,42 +549,22 @@ export class QueueService {
    * Remove from queue (when booking is cancelled)
    */
   async removeFromQueue(bookingId: string) {
-    const queueRecord = await this.bookingRepository.findQueueUnique({
-      where: { bookingId },
-      include: {
-        booking: true,
-      },
-    });
+    const queueRecord =
+      await this.bookingRepository.findQueueByBookingId(bookingId);
 
     if (!queueRecord) {
       return; // Not in queue, nothing to do
     }
 
-    await this.bookingRepository.transaction(async (tx) => {
-      // Delete queue record
-      await tx.bookingQueue.delete({
-        where: { bookingId },
-      });
-
-      // Shift remaining queue positions
-      await this.shiftQueuePositions(
-        tx,
-        queueRecord.booking.doctorId,
-        queueRecord.booking.bookingDate.toISOString().split('T')[0],
-        queueRecord.booking.startTime ?? '',
-        queueRecord.queuePosition,
-      );
-    });
+    await this.bookingRepository.removeFromQueueAndShiftTransaction(bookingId);
 
     this.logger.log(`Successfully removed booking ${bookingId} from queue`);
 
     // Broadcast queue update since positions shifted (non-blocking)
     try {
-      this.queueGateway.broadcastQueueUpdate(
-        queueRecord.booking.doctorId,
-        'UPDATE',
-        { bookingId },
-      );
+      this.queueGateway.broadcastQueueUpdate(queueRecord.doctorId, 'UPDATE', {
+        bookingId,
+      });
     } catch (error) {
       this.logger.error(
         `Failed to broadcast queue update after removing booking ${bookingId}:`,
@@ -726,163 +578,20 @@ export class QueueService {
   // ============================================
 
   /**
-   * Promote a booking from queue to confirmed
-   */
-  private async promoteBooking(
-    bookingId: string,
-    promotedBy: string,
-    reason: string,
-  ): Promise<{ booking: BookingWithRelations }> {
-    const result = await this.bookingRepository.transaction(async (tx) => {
-      // Get queue record
-      const queueRecord = await tx.bookingQueue.findUnique({
-        where: { bookingId },
-        include: {
-          booking: {
-            include: BookingInclude,
-          },
-        },
-      });
-
-      if (!queueRecord) {
-        throw new ApiException(
-          MessageCodes.QUEUE_NOT_FOUND,
-          'Queue record not found',
-          404,
-          'Queue promotion failed',
-        );
-      }
-
-      // Update booking status to CONFIRMED
-      const updatedBooking = await tx.booking.update({
-        where: { id: bookingId },
-        data: {
-          status: BookingStatus.CONFIRMED,
-        },
-        include: BookingInclude,
-      });
-
-      // Create status history
-      await tx.bookingStatusHistory.create({
-        data: {
-          bookingId,
-          oldStatus: BookingStatus.CHECKED_IN,
-          newStatus: BookingStatus.CONFIRMED,
-          changedById: promotedBy,
-          reason,
-        },
-      });
-
-      // Delete queue record
-      await tx.bookingQueue.delete({
-        where: { bookingId },
-      });
-
-      // Shift remaining queue positions
-      await this.shiftQueuePositions(
-        tx,
-        queueRecord.booking.doctorId,
-        queueRecord.booking.bookingDate.toISOString().split('T')[0],
-        queueRecord.booking.startTime ?? '',
-        queueRecord.queuePosition,
-      );
-
-      return {
-        booking: updatedBooking,
-      };
-    });
-
-    // Send queue promotion notification (non-blocking)
-    this.sendQueuePromotionNotification(result.booking).catch((error) => {
-      this.logger.error(
-        'Failed to send queue promotion notification:',
-        error instanceof Error ? error.stack : String(error),
-      );
-    });
-
-    return result;
-  }
-
-  /**
-   * Shift queue positions after removal
-   */
-  private async shiftQueuePositions(
-    tx: Prisma.TransactionClient,
-    doctorId: string,
-    bookingDate: string,
-    timeSlot: string,
-    removedPosition: number,
-  ) {
-    // Get all bookings after the removed position
-    const affectedQueues = await tx.bookingQueue.findMany({
-      where: {
-        booking: {
-          doctorId,
-          bookingDate: new Date(bookingDate),
-          startTime: timeSlot,
-          status: BookingStatus.CHECKED_IN,
-        },
-        queuePosition: {
-          gt: removedPosition,
-        },
-      },
-    });
-
-    // Update each queue position
-    for (const queue of affectedQueues) {
-      await tx.bookingQueue.update({
-        where: { id: queue.id },
-        data: {
-          queuePosition: queue.queuePosition - 1,
-          estimatedWaitMinutes: queue.estimatedWaitMinutes - 30, // Assume 30 min reduction
-        },
-      });
-    }
-  }
-
-  /**
-   * Check if slot is available
-   */
-  private async checkSlotAvailability(
-    doctorId: string,
-    bookingDate: string,
-    timeSlot: string,
-    maxSlotsPerHour: number,
-  ): Promise<boolean> {
-    const confirmedBookings = await this.bookingRepository.count({
-      where: {
-        doctorId,
-        bookingDate: new Date(bookingDate),
-        startTime: timeSlot,
-        status: {
-          in: [
-            BookingStatus.PENDING,
-            BookingStatus.CONFIRMED,
-            BookingStatus.CHECKED_IN,
-            BookingStatus.IN_PROGRESS,
-          ],
-        },
-      },
-    });
-
-    return confirmedBookings < maxSlotsPerHour;
-  }
-
-  /**
    * Send queue promotion notification email
    */
   private async sendQueuePromotionNotification(
     booking: BookingWithRelations,
   ): Promise<void> {
     try {
-      const email = booking.patientProfile.email;
+      const email = booking.patientProfile?.email;
       if (!email) return;
       await this.notificationsService.sendQueuePromotion({
         bookingId: booking.id,
-        patientId: booking.patientProfile.userId ?? undefined,
-        patientName: booking.patientProfile.fullName,
+        patientId: booking.patientProfile?.userId ?? undefined,
+        patientName: booking.patientProfile?.fullName ?? 'Bệnh nhân',
         patientEmail: email,
-        doctorName: booking.doctor.fullName,
+        doctorName: booking.doctor?.fullName ?? 'Bác sĩ',
         serviceName: booking.service?.name ?? 'Tư vấn (Chưa xác định)',
         bookingDate: this.formatDate(booking.bookingDate),
         startTime: booking.startTime ?? '',
@@ -909,51 +618,21 @@ export class QueueService {
     doctorId: string,
     bookingDate: string,
   ): Promise<void> {
+    const parsedDate = new Date(bookingDate);
+
     // Fetch all pre-bookings still active today (to find gaps)
-    const preBookings = await this.bookingRepository.findMany({
-      where: {
+    const preBookings =
+      await this.bookingRepository.findActivePreBookingsForRecalculation(
         doctorId,
-        bookingDate: new Date(bookingDate),
-        isPreBooked: true,
-        startTime: { not: null },
-        status: {
-          notIn: [
-            BookingStatus.CANCELLED,
-            BookingStatus.NO_SHOW,
-            BookingStatus.COMPLETED,
-          ],
-        },
-      },
-      select: { startTime: true, endTime: true },
-      orderBy: { startTime: 'asc' },
-    });
+        parsedDate,
+      );
 
     // Fetch walk-in queue records for this doctor today
-    const walkInQueues = await this.bookingRepository.findQueueMany({
-      where: {
+    const walkInQueues =
+      await this.bookingRepository.findActiveWalkInQueueForRecalculation(
         doctorId,
-        queueDate: new Date(bookingDate),
-        isPreBooked: false,
-        booking: {
-          status: {
-            notIn: [
-              BookingStatus.CANCELLED,
-              BookingStatus.NO_SHOW,
-              BookingStatus.COMPLETED,
-            ],
-          },
-        },
-      },
-      include: {
-        booking: {
-          select: {
-            id: true,
-            service: { select: { durationMinutes: true } },
-          },
-        },
-      },
-      orderBy: { queuePosition: 'asc' },
-    });
+        parsedDate,
+      );
 
     if (walkInQueues.length === 0) return;
 
@@ -970,10 +649,10 @@ export class QueueService {
       const estTime = new Date(cursor);
       const duration = record.booking.service?.durationMinutes ?? 30;
 
-      await this.bookingRepository.update({
-        where: { id: record.booking.id },
-        data: { estimatedTime: estTime },
-      });
+      await this.bookingRepository.updateBookingEstimatedTime(
+        record.booking.id,
+        estTime,
+      );
 
       cursor = new Date(cursor.getTime() + duration * 60 * 1000);
     }

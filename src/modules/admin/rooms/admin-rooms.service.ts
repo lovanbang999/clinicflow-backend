@@ -1,5 +1,4 @@
 import { Injectable, HttpStatus, Inject } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { ApiException } from '../../../common/exceptions/api.exception';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
@@ -26,35 +25,20 @@ export class AdminRoomsService {
   async findAll(filter: FilterRoomDto) {
     const { search, isActive, page = 1, limit = 20 } = filter;
 
-    const where: Prisma.RoomWhereInput = {};
+    const parsedIsActive =
+      isActive !== undefined
+        ? String(isActive) === 'true'
+          ? true
+          : String(isActive) === 'false'
+            ? false
+            : undefined
+        : undefined;
 
-    if (isActive !== undefined) {
-      if (String(isActive) === 'true') {
-        where.isActive = true;
-      } else if (String(isActive) === 'false') {
-        where.isActive = false;
-      }
-    }
-
-    if (search) {
-      where.OR = [
-        { name: { contains: search } },
-        { notes: { contains: search } },
-      ];
-    }
-
-    const [rooms, total] = await Promise.all([
-      this.catalogRepository.findManyRooms({
-        where,
-        include: {
-          _count: { select: { scheduleSlots: true, doctorProfiles: true } },
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { name: 'asc' },
-      }),
-      this.catalogRepository.countRooms({ where }),
-    ]);
+    const [rooms, total] = await this.catalogRepository.findAdminRoomsPage(
+      { search, isActive: parsedIsActive },
+      page,
+      limit,
+    );
 
     return {
       rooms,
@@ -68,12 +52,7 @@ export class AdminRoomsService {
   }
 
   async findOne(id: string) {
-    const room = await this.catalogRepository.findUniqueRoom({
-      where: { id },
-      include: {
-        _count: { select: { scheduleSlots: true, doctorProfiles: true } },
-      },
-    });
+    const room = await this.catalogRepository.findAdminRoomDetailById(id);
 
     if (!room) {
       throw new ApiException(
@@ -88,9 +67,7 @@ export class AdminRoomsService {
   }
 
   async create(dto: CreateRoomDto) {
-    const existing = await this.catalogRepository.findUniqueRoom({
-      where: { name: dto.name },
-    });
+    const existing = await this.catalogRepository.findRoomByName(dto.name);
     if (existing) {
       throw new ApiException(
         MessageCodes.ROOM_NAME_EXISTS,
@@ -113,9 +90,7 @@ export class AdminRoomsService {
   }
 
   async update(id: string, dto: UpdateRoomDto) {
-    const existing = await this.catalogRepository.findUniqueRoom({
-      where: { id },
-    });
+    const existing = await this.catalogRepository.findAdminRoomDetailById(id);
     if (!existing) {
       throw new ApiException(
         MessageCodes.ROOM_NOT_FOUND,
@@ -126,9 +101,7 @@ export class AdminRoomsService {
     }
 
     if (dto.name && dto.name !== existing.name) {
-      const duplicate = await this.catalogRepository.findUniqueRoom({
-        where: { name: dto.name },
-      });
+      const duplicate = await this.catalogRepository.findRoomByName(dto.name);
       if (duplicate) {
         throw new ApiException(
           MessageCodes.ROOM_NAME_EXISTS,
@@ -152,30 +125,25 @@ export class AdminRoomsService {
   }
 
   async remove(id: string) {
-    const room = await this.catalogRepository.findUniqueRoom({ where: { id } });
+    const room = await this.catalogRepository.findAdminRoomDetailById(id);
     if (!room) {
       throw new ApiException(
         MessageCodes.ROOM_NOT_FOUND,
         'Room not found',
         404,
-        'Room deletion failed',
+        'Room deactivation failed',
       );
     }
 
     // Block delete if room has upcoming/active schedule slots
     const now = new Date();
-    const activeSlots = await this.bookingRepository.countDoctorScheduleSlot({
-      where: {
-        roomId: id,
-        date: { gte: now },
-        isActive: true,
-      },
-    });
+    const activeSlots =
+      await this.bookingRepository.countActiveScheduleSlotsForRoom(id, now);
 
     if (activeSlots > 0) {
       throw new ApiException(
         MessageCodes.ROOM_HAS_ACTIVE_SLOTS,
-        `Không thể ngừng hoạt động phòng này vì còn ${activeSlots} lịch khám đang dùng phòng này.`,
+        `This room still has ${activeSlots} active schedule slots.`,
         HttpStatus.BAD_REQUEST,
         'Cannot deactivate room',
       );
@@ -189,7 +157,7 @@ export class AdminRoomsService {
   }
 
   async restore(id: string) {
-    const room = await this.catalogRepository.findUniqueRoom({ where: { id } });
+    const room = await this.catalogRepository.findAdminRoomDetailById(id);
     if (!room) {
       throw new ApiException(
         MessageCodes.ROOM_NOT_FOUND,

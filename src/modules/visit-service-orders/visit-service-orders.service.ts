@@ -11,12 +11,15 @@ import {
   Logger,
 } from '@nestjs/common';
 import {
-  Prisma,
-  VisitStep,
   NotificationType,
   ServiceOrderStatus,
-  PerformerType,
+  VisitServiceOrder,
+  Prisma,
 } from '@prisma/client';
+import {
+  VisitServiceOrderDetail,
+  VisitServiceOrderWorklistItem,
+} from '../database/types/prisma-payload.types';
 
 import { CompleteServiceOrderDto } from './dto/complete-service-order.dto';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -32,65 +35,30 @@ export class VisitServiceOrdersService {
   ) {}
 
   // KTV Worklist — list service orders assigned to perform
-  async getWorklist(technicianId: string, status?: ServiceOrderStatus) {
-    const where: Prisma.VisitServiceOrderWhereInput = {
-      status: status ?? {
-        in: [ServiceOrderStatus.PENDING, ServiceOrderStatus.IN_PROGRESS],
-      },
-      service: {
-        performerType: PerformerType.DOCTOR,
-      },
-    };
-
-    const orders = await this.clinicalRepository.findManyVisitServiceOrder({
-      where,
-      orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
-      include: {
-        service: {
-          select: { id: true, name: true, category: true, serviceCode: true },
-        },
-        medicalRecord: {
-          include: {
-            booking: {
-              include: {
-                patientProfile: {
-                  select: {
-                    id: true,
-                    patientCode: true,
-                    fullName: true,
-                    phone: true,
-                    gender: true,
-                    dateOfBirth: true,
-                  },
-                },
-                doctor: { select: { id: true, fullName: true } },
-              },
-            },
-          },
-        },
-      },
-    });
-
+  async getWorklist(
+    technicianId: string,
+    status?: ServiceOrderStatus,
+  ): Promise<VisitServiceOrderWorklistItem[]> {
+    const orders =
+      await this.clinicalRepository.findVisitServiceOrdersWorklist(status);
     return orders;
   }
 
   // KTV starts a service order
-  async startOrder(orderId: string, technicianId: string) {
-    const order = await this.clinicalRepository.findUniqueVisitServiceOrder({
-      where: { id: orderId },
-    });
+  async startOrder(
+    orderId: string,
+    technicianId: string,
+  ): Promise<VisitServiceOrder> {
+    const order =
+      await this.clinicalRepository.findVisitServiceOrderById(orderId);
     if (!order) throw new NotFoundException('Service order not found');
     if (order.status !== ServiceOrderStatus.PENDING)
       throw new ConflictException(`Order is already ${order.status}`);
 
-    const updated = await this.clinicalRepository.updateVisitServiceOrder({
-      where: { id: orderId },
-      data: {
-        status: ServiceOrderStatus.IN_PROGRESS,
-        performedBy: technicianId,
-        startedAt: new Date(),
-      },
-    });
+    const updated = await this.clinicalRepository.startVisitServiceOrder(
+      orderId,
+      technicianId,
+    );
 
     this.logger.log(
       `Technician ${technicianId} started service order ${orderId} successfully`,
@@ -104,127 +72,57 @@ export class VisitServiceOrdersService {
     orderId: string,
     dto: CompleteServiceOrderDto,
     technicianId: string,
-  ) {
-    const order = await this.clinicalRepository.findUniqueVisitServiceOrder({
-      where: { id: orderId },
-    });
+  ): Promise<VisitServiceOrder> {
+    const order =
+      await this.clinicalRepository.findVisitServiceOrderById(orderId);
     if (!order) throw new NotFoundException('Service order not found');
     if (order.status === ServiceOrderStatus.COMPLETED)
       throw new ConflictException('Order already completed');
     if (order.status === ServiceOrderStatus.CANCELLED)
       throw new BadRequestException('Cannot complete a cancelled order');
 
-    const updatedOrder = await this.clinicalRepository.transaction(
-      async (tx) => {
-        // Mark order as COMPLETED
-        const completed = await tx.visitServiceOrder.update({
-          where: { id: orderId },
-          data: {
-            status: ServiceOrderStatus.COMPLETED,
-            performedBy: technicianId,
-            resultText: dto.resultText,
-            findings: dto.findings as Prisma.InputJsonValue,
-            resultFileUrl: dto.resultFileUrl,
-            isAbnormal: dto.isAbnormal,
-            abnormalNote: dto.abnormalNote,
-            completedAt: new Date(),
-          },
-        });
-
-        // Auto-advance MedicalRecord to RESULTS_READY if all sibling orders are done
-        const allSiblings = await tx.visitServiceOrder.findMany({
-          where: { medicalRecordId: order.medicalRecordId },
-          select: { id: true, status: true },
-        });
-
-        const allLabs = await tx.labOrder.findMany({
-          where: { medicalRecordId: order.medicalRecordId },
-          select: { status: true },
-        });
-
-        const allVsoDone = allSiblings.every(
-          (o) =>
-            o.id === orderId ||
-            o.status === ServiceOrderStatus.COMPLETED ||
-            o.status === ServiceOrderStatus.CANCELLED,
-        );
-        const allLabsDone = allLabs.every(
-          (o) => o.status === 'COMPLETED' || o.status === 'CANCELLED',
-        );
-
-        if (allVsoDone && allLabsDone) {
-          const record = await tx.medicalRecord.findUnique({
-            where: { id: order.medicalRecordId },
-            include: {
-              booking: {
-                include: { patientProfile: true },
-              },
-            },
-          });
-
-          // Only advance if currently AWAITING_RESULTS; never step backward
-          if (record && record.visitStep === VisitStep.AWAITING_RESULTS) {
-            await tx.medicalRecord.update({
-              where: { id: order.medicalRecordId },
-              data: {
-                visitStep: VisitStep.RESULTS_READY,
-                version: { increment: 1 },
-              },
-            });
-
-            // Notify doctor
-            if (record.booking?.doctorId) {
-              // Do not await, fire and forget to not block transaction
-              this.notificationsService
-                .createInAppNotification({
-                  userId: record.booking.doctorId,
-                  title: 'Kết quả CLS đã có',
-                  content: `Bệnh nhân ${record.booking.patientProfile?.fullName ?? '...'} đã hoàn tất các chỉ định cận lâm sàng. Bạn có thể chẩn đoán ngay.`,
-                  type: NotificationType.LAB_RESULT_READY,
-                  metadata: {
-                    bookingId: record.bookingId,
-                    recordId: record.id,
-                  },
-                })
-                .catch((err) =>
-                  this.logger.error(
-                    'Failed to send notification for RESULTS_READY:',
-                    err instanceof Error ? err.stack : String(err),
-                  ),
-                );
-            }
-          }
-        }
-
-        return completed;
-      },
-    );
+    const result =
+      await this.clinicalRepository.completeVisitServiceOrderTransaction(
+        orderId,
+        technicianId,
+        {
+          ...dto,
+          findings: dto.findings as Prisma.InputJsonValue,
+        },
+      );
 
     this.logger.log(
       `Technician ${technicianId} completed service order ${orderId} successfully`,
     );
 
-    return updatedOrder;
+    if (result.advanced && result.record?.booking?.doctorId) {
+      // Do not await, fire and forget to not block transaction
+      this.notificationsService
+        .createInAppNotification({
+          userId: result.record.booking.doctorId,
+          title: 'Kết quả CLS đã có',
+          content: `Bệnh nhân ${result.record.booking.patientProfile?.fullName ?? '...'} đã hoàn tất các chỉ định cận lâm sàng. Bạn có thể chẩn đoán ngay.`,
+          type: NotificationType.LAB_RESULT_READY,
+          metadata: {
+            bookingId: result.record.bookingId,
+            recordId: result.record.id,
+          },
+        })
+        .catch((err) =>
+          this.logger.error(
+            'Failed to send notification for RESULTS_READY:',
+            err instanceof Error ? err.stack : String(err),
+          ),
+        );
+    }
+
+    return result.completedOrder;
   }
 
   // Get detail of a single service order
-  async getOrderDetail(orderId: string) {
-    const order = await this.clinicalRepository.findUniqueVisitServiceOrder({
-      where: { id: orderId },
-      include: {
-        service: true,
-        medicalRecord: {
-          include: {
-            booking: {
-              include: {
-                patientProfile: true,
-                doctor: { select: { id: true, fullName: true } },
-              },
-            },
-          },
-        },
-      },
-    });
+  async getOrderDetail(orderId: string): Promise<VisitServiceOrderDetail> {
+    const order =
+      await this.clinicalRepository.findVisitServiceOrderDetailById(orderId);
     if (!order) throw new NotFoundException('Service order not found');
     return order;
   }

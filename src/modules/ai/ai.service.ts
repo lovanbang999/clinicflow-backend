@@ -35,7 +35,7 @@ interface DoctorInfoEntry {
   doctorId: string;
   fullName: string;
   specialties?: string[];
-  services?: { serviceId: string }[];
+  services?: Array<{ serviceId: string }>;
   upcomingSlots?: DoctorSlot[];
 }
 
@@ -60,12 +60,18 @@ export class AiService {
     private readonly aiSessionService: AiSessionService,
   ) {}
 
+  /**
+   * Randomly selects one of the configured Google GenAI client instances to distribute API load.
+   */
   private pickAiInstance(): GoogleGenAI {
     return this.aiInstances[
       Math.floor(Math.random() * this.aiInstances.length)
     ];
   }
 
+  /**
+   * Checks if the error returned from Google GenAI is transient and retryable.
+   */
   private isRetryableError(err: unknown): boolean {
     const e = err as { status?: number; message?: string };
     const msg = e?.message?.toLowerCase() ?? '';
@@ -79,6 +85,9 @@ export class AiService {
     );
   }
 
+  /**
+   * Route and execute tool calls by their registered name.
+   */
   private async executeTool(
     name: string,
     args: Record<string, unknown>,
@@ -89,7 +98,7 @@ export class AiService {
 
     const toolMap: Record<
       string,
-      (args: Record<string, unknown>) => Promise<unknown>
+      (a: Record<string, unknown>) => Promise<unknown>
     > = {
       getSpecialtyBySymptoms: (a) =>
         this.specialtyTool.execute(a as { symptoms: string }),
@@ -137,8 +146,12 @@ export class AiService {
     return { error: `Tool ${name} not found` };
   }
 
+  /**
+   * Creates an Observable stream representing the live AI chatbot conversation.
+   * Handles auto-retries and fallbacks to Groq and Cloudflare Llama endpoints.
+   */
   chatStream(
-    historyMessages: unknown[],
+    historyMessages: Content[],
     userMessage: string,
     patientId: string,
     userId: string,
@@ -209,15 +222,18 @@ export class AiService {
     });
   }
 
+  /**
+   * Processes the chat turn with Gemini, handling functions/tools iteratively.
+   */
   private async processChat(
-    historyMessages: unknown[],
+    historyMessages: Content[],
     userMessage: string,
     patientId: string,
     userId: string,
     sessionId: string,
     subscriber: Subscriber<unknown>,
     patientContext?: PatientContext,
-  ) {
+  ): Promise<void> {
     void this.aiSessionService.saveMessage(
       sessionId,
       AiMessageRole.USER,
@@ -232,7 +248,7 @@ export class AiService {
         systemInstruction,
         tools: CHATBOT_TOOLS,
       },
-      history: historyMessages as Content[],
+      history: historyMessages,
     });
 
     let messageToProcess: SendMessageParameters = {
@@ -254,6 +270,7 @@ export class AiService {
         fullModelText += maxTurnsMsg;
         break;
       }
+
       const responseStream = await chat.sendMessageStream(messageToProcess);
       const functionCallsInTurn: FunctionCall[] = [];
       let turnText = '';
@@ -273,75 +290,14 @@ export class AiService {
       }
 
       if (functionCallsInTurn.length > 0) {
-        const toolResults = await Promise.all(
-          functionCallsInTurn.map(async (call) => {
-            const rawResult = await this.executeTool(
-              call.name || '',
-              call.args || {},
-              patientId,
-              userId,
-            );
-
-            const result = this.sanitizeToolResult(rawResult);
-            const toolResult = result as Record<string, unknown>;
-            void this.aiSessionService.saveMessage(
-              sessionId,
-              AiMessageRole.TOOL,
-              JSON.stringify(toolResult),
-              {
-                toolName: call.name,
-                toolInput: call.args || {},
-                toolOutput: toolResult,
-              },
-            );
-
-            if (call.name === 'getAvailableSlots') {
-              const r = toolResult as { slots?: unknown[]; metadata?: unknown };
-              if (r?.slots && Array.isArray(r.slots) && r.slots.length > 0) {
-                subscriber.next({ slotsData: r.slots, metadata: r.metadata });
-              }
-            }
-
-            if (call.name === 'getDoctorInfo') {
-              const r = toolResult as DoctorInfoResult;
-              if (r?.found && r.doctors && r.doctors.length > 0) {
-                const slots = r.doctors.flatMap((d) => {
-                  const serviceId =
-                    d.services && d.services.length > 0
-                      ? d.services[0].serviceId
-                      : 'unknown';
-
-                  return (d.upcomingSlots || []).map((s) => ({
-                    ...s,
-                    doctorId: d.doctorId,
-                    doctorName: d.fullName,
-                    specialties: d.specialties,
-                    serviceId,
-                  }));
-                });
-                if (slots.length > 0) {
-                  subscriber.next({ slotsData: slots });
-                }
-              }
-            }
-
-            const r = result as { bookingId?: string; status?: string };
-            if (call.name === 'createBookingFromChat' && r?.bookingId) {
-              void this.aiSessionService.endSession(
-                sessionId,
-                AiSessionOutcome.BOOKING_MADE,
-                r.bookingId,
-              );
-            }
-            return {
-              functionResponse: {
-                name: call.name,
-                response: { result },
-              },
-            };
-          }),
+        const toolResults = await this.handleFunctionCalls(
+          functionCallsInTurn,
+          patientId,
+          userId,
+          sessionId,
+          subscriber,
         );
-        messageToProcess = { message: toolResults as Part[] };
+        messageToProcess = { message: toolResults };
       } else {
         hasMoreTurns = false;
       }
@@ -358,8 +314,111 @@ export class AiService {
     subscriber.complete();
   }
 
+  /**
+   * Executes, logs, and handles custom side effects for function/tool calls in a single turn.
+   */
+  private async handleFunctionCalls(
+    functionCalls: FunctionCall[],
+    patientId: string,
+    userId: string,
+    sessionId: string,
+    subscriber: Subscriber<unknown>,
+  ): Promise<Part[]> {
+    return Promise.all(
+      functionCalls.map(async (call) => {
+        const name = call.name || '';
+        const args = (call.args as Record<string, unknown>) || {};
+
+        const rawResult = await this.executeTool(name, args, patientId, userId);
+        const result = this.sanitizeToolResult(rawResult);
+        const toolResult = result as Record<string, unknown>;
+
+        void this.aiSessionService.saveMessage(
+          sessionId,
+          AiMessageRole.TOOL,
+          JSON.stringify(toolResult),
+          {
+            toolName: name,
+            toolInput: args,
+            toolOutput: toolResult,
+          },
+        );
+
+        this.processCustomToolSideEffects(
+          name,
+          toolResult,
+          sessionId,
+          subscriber,
+        );
+
+        return {
+          functionResponse: {
+            name,
+            response: { result },
+          },
+        };
+      }),
+    );
+  }
+
+  /**
+   * Triggers specific real-time streaming updates or session endings based on tool output.
+   */
+  private processCustomToolSideEffects(
+    name: string,
+    toolResult: Record<string, unknown>,
+    sessionId: string,
+    subscriber: Subscriber<unknown>,
+  ): void {
+    if (name === 'getAvailableSlots') {
+      const r = toolResult as { slots?: unknown[]; metadata?: unknown };
+      if (r?.slots && Array.isArray(r.slots) && r.slots.length > 0) {
+        subscriber.next({ slotsData: r.slots, metadata: r.metadata });
+      }
+    }
+
+    if (name === 'getDoctorInfo') {
+      const r = toolResult as DoctorInfoResult;
+      if (r?.found && r.doctors && r.doctors.length > 0) {
+        const slots = r.doctors.flatMap((d) => {
+          const serviceId =
+            d.services && d.services.length > 0
+              ? d.services[0].serviceId
+              : 'unknown';
+
+          return (d.upcomingSlots || []).map((s) => ({
+            ...s,
+            doctorId: d.doctorId,
+            doctorName: d.fullName,
+            specialties: d.specialties,
+            serviceId,
+          }));
+        });
+        if (slots.length > 0) {
+          subscriber.next({ slotsData: slots });
+        }
+      }
+    }
+
+    if (name === 'createBookingFromChat') {
+      const r = toolResult as { bookingId?: string; status?: string };
+      if (r?.bookingId) {
+        void this.aiSessionService.endSession(
+          sessionId,
+          AiSessionOutcome.BOOKING_MADE,
+          r.bookingId,
+        );
+      }
+    }
+  }
+
+  /**
+   * Sanitizes the tool output to ensure it contains only plain serializable data.
+   */
   private sanitizeToolResult(result: unknown): unknown {
-    if (!result) return result;
+    if (!result) {
+      return result;
+    }
     try {
       return JSON.parse(JSON.stringify(result));
     } catch (error) {
