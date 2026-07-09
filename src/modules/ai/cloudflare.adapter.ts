@@ -1,131 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Subscriber } from 'rxjs';
-import { GEMINI_SYSTEM_PROMPT, CHATBOT_TOOLS } from './ai.provider';
-
-export type OpenAiTool = {
-  type: 'function';
-  function: {
-    name: string;
-    description: string;
-    parameters: Record<string, unknown>;
-  };
-};
-
-export type OpenAiToolCall = {
-  id: string;
-  type: 'function';
-  function: { name: string; arguments: string };
-};
-
-export type OpenAiMessage = {
-  role: string;
-  content: string | null;
-  tool_calls?: OpenAiToolCall[];
-  tool_call_id?: string;
-};
-
-export type ToolExecutorFn = (
-  name: string,
-  args: Record<string, unknown>,
-  patientId: string,
-  userId?: string,
-) => Promise<unknown>;
-
-export function convertToOpenAiTools(): OpenAiTool[] {
-  const declarations = CHATBOT_TOOLS[0]?.functionDeclarations ?? [];
-  return (
-    declarations as Array<{
-      name: string;
-      description?: string;
-      parameters?: unknown;
-    }>
-  ).map((fn) => ({
-    type: 'function',
-    function: {
-      name: fn.name,
-      description: fn.description ?? '',
-      parameters: convertSchema(fn.parameters),
-    },
-  }));
-}
-
-type CloudflareTool = {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>;
-};
-
-function convertToCloudflareTools(): CloudflareTool[] {
-  const declarations = CHATBOT_TOOLS[0]?.functionDeclarations ?? [];
-  return (
-    declarations as Array<{
-      name: string;
-      description?: string;
-      parameters?: unknown;
-    }>
-  ).map((fn) => ({
-    name: fn.name,
-    description: fn.description ?? '',
-    parameters: convertSchema(fn.parameters),
-  }));
-}
-
-function convertSchema(schema: unknown): Record<string, unknown> {
-  if (!schema || typeof schema !== 'object')
-    return { type: 'object', properties: {} };
-  const s = schema as Record<string, unknown>;
-  const result: Record<string, unknown> = {};
-
-  if (s.type) result.type = (s.type as string).toLowerCase();
-  if (s.description) result.description = s.description;
-  if (s.required) result.required = s.required;
-  if (s.enum) result.enum = s.enum;
-
-  if (s.properties && typeof s.properties === 'object') {
-    const props: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(
-      s.properties as Record<string, unknown>,
-    )) {
-      props[key] = convertSchema(val);
-    }
-    result.properties = props;
-  }
-
-  if (s.items) result.items = convertSchema(s.items);
-  return result;
-}
-
-export async function handleToolCalls(
-  toolCalls: OpenAiToolCall[],
-  executeTool: ToolExecutorFn,
-  patientId: string,
-  userId: string | undefined,
-  messages: OpenAiMessage[],
-): Promise<void> {
-  await Promise.all(
-    toolCalls.map(async (tc) => {
-      let args: Record<string, unknown> = {};
-      try {
-        args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-      } catch {
-        // Ignored
-      }
-
-      let result: unknown;
-      try {
-        result = await executeTool(tc.function.name, args, patientId, userId);
-      } catch (e) {
-        result = { error: String(e) };
-      }
-
-      messages.push({
-        role: 'tool',
-        tool_call_id: tc.id,
-        content: JSON.stringify(result),
-      });
-    }),
-  );
-}
+import { GEMINI_SYSTEM_PROMPT } from './ai.provider';
+import {
+  OpenAiMessage,
+  OpenAiToolCall,
+  ToolExecutorFn,
+  CloudflareTool,
+  convertToCloudflareTools,
+  handleToolCalls,
+} from './ai-fallback.utils';
 
 @Injectable()
 export class CloudflareAdapter {
@@ -145,7 +28,7 @@ export class CloudflareAdapter {
     executeTool?: ToolExecutorFn,
     patientId?: string,
     userId?: string,
-  ) {
+  ): Promise<void> {
     if (!this.accountId || !this.apiToken) {
       this.logger.warn('Cloudflare credentials not configured.');
       subscriber.next({
@@ -182,7 +65,7 @@ export class CloudflareAdapter {
         try {
           data = await this.callCloudflare(messages, tools);
         } catch (err) {
-          const msg = (err as Error).message ?? '';
+          const msg = err instanceof Error ? err.message : String(err);
           if (msg.includes('400') && tools && tools.length > 0) {
             this.logger.warn(
               'Cloudflare 400 with tools — retrying without tools',
@@ -194,7 +77,7 @@ export class CloudflareAdapter {
         }
 
         const toolCalls = data.result?.tool_calls;
-        const text: string = data.result?.response ?? '';
+        const text = data.result?.response ?? '';
 
         if (toolCalls && toolCalls.length > 0 && executeTool) {
           messages.push({
@@ -247,7 +130,9 @@ export class CloudflareAdapter {
     result?: { response?: string; tool_calls?: OpenAiToolCall[] };
   }> {
     const body: Record<string, unknown> = { messages };
-    if (tools && tools.length > 0) body.tools = tools;
+    if (tools && tools.length > 0) {
+      body.tools = tools;
+    }
 
     const response = await fetch(
       `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/ai/run/${this.model}`,

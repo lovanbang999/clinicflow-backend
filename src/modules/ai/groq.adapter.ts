@@ -8,7 +8,7 @@ import {
   OpenAiToolCall,
   convertToOpenAiTools,
   handleToolCalls,
-} from './cloudflare.adapter';
+} from './ai-fallback.utils';
 
 type GroqResponse = {
   choices?: Array<{
@@ -105,7 +105,9 @@ export class GroqAdapter {
     tools?: OpenAiTool[],
   ): Promise<GroqResponse> {
     const body: Record<string, unknown> = { model: this.model, messages };
-    if (tools && tools.length > 0) body.tools = tools;
+    if (tools && tools.length > 0) {
+      body.tools = tools;
+    }
 
     const response = await fetch(
       'https://api.groq.com/openai/v1/chat/completions',

@@ -19,6 +19,7 @@ import { AiSessionOutcome } from '@prisma/client';
 import { AiService } from './ai.service';
 import { AiSessionService } from './ai-session.service';
 import { PatientContext } from './ai.provider';
+import { Content } from '@google/genai';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { ResponseMessage } from 'src/common/decorators/response-message.decorator';
@@ -40,7 +41,7 @@ export class AiController {
 
   @Post('chat')
   async chatStream(
-    @Body('history') history: unknown[] = [],
+    @Body('history') history: Content[] = [],
     @Body('message') message: string,
     @Body('sessionId') incomingSessionId: string | undefined,
     @CurrentUser() user: { id: string },
