@@ -35,6 +35,7 @@ describe('BillingService', () => {
       findUniqueBooking: jest.fn(),
       findFirst: jest.fn(),
       update: jest.fn(),
+      findBookingForInvoiceCreation: jest.fn(),
     };
 
     profileRepositoryMock = {
@@ -110,7 +111,9 @@ describe('BillingService', () => {
 
   describe('createInvoice', () => {
     it('should throw an ApiException if booking is not found', async () => {
-      bookingRepositoryMock.findUniqueBooking.mockResolvedValue(null);
+      bookingRepositoryMock.findBookingForInvoiceCreation.mockResolvedValue(
+        null,
+      );
 
       await expect(
         service.createInvoice({

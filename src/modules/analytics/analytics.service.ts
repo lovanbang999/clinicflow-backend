@@ -34,9 +34,8 @@ export class AnalyticsService {
   // PATIENT ANALYTICS
 
   async getPatientVisitTrend(userId: string) {
-    const profile = await this.profileRepository.findFirstPatientProfile({
-      where: { userId },
-    });
+    const profile =
+      await this.profileRepository.findPatientProfileByUserId(userId);
     if (!profile)
       throw new ApiException(
         MessageCodes.PATIENT_NOT_FOUND,
@@ -47,13 +46,11 @@ export class AnalyticsService {
     const now = new Date();
     const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
 
-    const records = await this.clinicalRepository.findManyMedicalRecord({
-      where: {
+    const records =
+      await this.clinicalRepository.findMedicalRecordsForVisitTrend({
         patientProfileId: profile.id,
-        createdAt: { gte: twelveMonthsAgo },
-      },
-      select: { createdAt: true },
-    });
+        gte: twelveMonthsAgo,
+      });
 
     // Build a full 12-month bucket map (including empty months)
     const monthMap: Record<string, number> = {};
@@ -78,9 +75,8 @@ export class AnalyticsService {
   }
 
   async getPatientTopDiseases(userId: string) {
-    const profile = await this.profileRepository.findFirstPatientProfile({
-      where: { userId },
-    });
+    const profile =
+      await this.profileRepository.findPatientProfileByUserId(userId);
     if (!profile)
       throw new ApiException(
         MessageCodes.PATIENT_NOT_FOUND,
@@ -88,12 +84,8 @@ export class AnalyticsService {
         HttpStatus.NOT_FOUND,
       );
 
-    const records = await this.clinicalRepository.findManyMedicalRecord({
-      where: {
-        patientProfileId: profile.id,
-        diagnosisName: { not: null },
-      },
-      select: { diagnosisCode: true, diagnosisName: true },
+    const records = await this.clinicalRepository.findDiagnosisRecords({
+      patientProfileId: profile.id,
     });
 
     const freq: Record<
@@ -116,9 +108,8 @@ export class AnalyticsService {
   }
 
   async getPatientTotalSpending(userId: string) {
-    const profile = await this.profileRepository.findFirstPatientProfile({
-      where: { userId },
-    });
+    const profile =
+      await this.profileRepository.findPatientProfileByUserId(userId);
     if (!profile)
       throw new ApiException(
         MessageCodes.PATIENT_NOT_FOUND,
@@ -129,37 +120,22 @@ export class AnalyticsService {
     const now = new Date();
     const startOfYear = new Date(now.getFullYear(), 0, 1);
 
-    const [allTimeAgg, thisYearAgg] = await Promise.all([
-      this.financeRepository.aggregateInvoice({
-        where: { patientProfileId: profile.id, status: 'PAID' },
-        _sum: { totalAmount: true },
-      }),
-      this.financeRepository.aggregateInvoice({
-        where: {
-          patientProfileId: profile.id,
-          status: 'PAID',
-          paidAt: { gte: startOfYear },
-        },
-        _sum: { totalAmount: true },
-      }),
+    const [total, thisYear] = await Promise.all([
+      this.financeRepository.getPatientRevenueStats(profile.id),
+      this.financeRepository.getPatientRevenueStats(profile.id, startOfYear),
     ]);
 
     return {
-      total: Number(allTimeAgg._sum?.totalAmount ?? 0),
-      thisYear: Number(thisYearAgg._sum?.totalAmount ?? 0),
+      total,
+      thisYear,
     };
   }
 
   // DOCTOR ANALYTICS
 
   async getDoctorTopDiagnoses(userId: string) {
-    // userId here is User.id — doctor's user id
-    const records = await this.clinicalRepository.findManyMedicalRecord({
-      where: {
-        doctorId: userId,
-        diagnosisName: { not: null },
-      },
-      select: { diagnosisCode: true, diagnosisName: true },
+    const records = await this.clinicalRepository.findDiagnosisRecords({
+      doctorId: userId,
     });
 
     const freq: Record<
@@ -191,7 +167,7 @@ export class AnalyticsService {
     const counts = await Promise.all(
       statuses.map((status) =>
         this.bookingRepository
-          .countBooking({ where: { doctorId: userId, status } })
+          .countDoctorBookings(userId, { status })
           .then((count: number) => ({ status, count })),
       ),
     );
@@ -203,14 +179,13 @@ export class AnalyticsService {
     const now = new Date();
     const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
-    const bookings = await this.bookingRepository.findManyBooking({
-      where: {
+    const bookings =
+      await this.bookingRepository.findBookingsForDoctorAnalytics({
         doctorId: userId,
-        bookingDate: { gte: sixMonthsAgo },
-        status: { in: ['COMPLETED', 'CHECKED_IN', 'IN_PROGRESS'] },
-      },
-      select: { bookingDate: true },
-    });
+        gte: sixMonthsAgo,
+        statuses: ['COMPLETED', 'CHECKED_IN', 'IN_PROGRESS'],
+        selectFields: 'bookingDate',
+      });
 
     // Build 6-month map
     const monthMap: Record<string, number> = {};
@@ -221,6 +196,7 @@ export class AnalyticsService {
     }
 
     for (const b of bookings) {
+      if (!b.bookingDate) continue;
       const d = new Date(b.bookingDate);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       if (key in monthMap) monthMap[key]++;
@@ -262,36 +238,24 @@ export class AnalyticsService {
         prevTo = new Date(now.getFullYear(), now.getMonth(), 0);
     }
 
-    const [current, previous, revenueAgg, prevRevenueAgg] = await Promise.all([
-      this.bookingRepository.findManyBooking({
-        where: { doctorId: userId, bookingDate: { gte: from } },
-        select: { status: true, source: true },
+    const [current, previous, revenue, prevRevenue] = await Promise.all([
+      this.bookingRepository.findBookingsForDoctorAnalytics({
+        doctorId: userId,
+        gte: from,
+        selectFields: 'status_source',
       }),
-      this.bookingRepository.findManyBooking({
-        where: {
-          doctorId: userId,
-          bookingDate: { gte: prevFrom, lte: prevTo },
-        },
-        select: { status: true },
+      this.bookingRepository.findBookingsForDoctorAnalytics({
+        doctorId: userId,
+        gte: prevFrom,
+        lte: prevTo,
+        selectFields: 'status',
       }),
-      this.financeRepository.aggregateInvoice({
-        where: {
-          booking: { doctorId: userId },
-          status: 'PAID',
-          invoiceType: 'CONSULTATION',
-          paidAt: { gte: from },
-        },
-        _sum: { totalAmount: true },
-      }),
-      this.financeRepository.aggregateInvoice({
-        where: {
-          booking: { doctorId: userId },
-          status: 'PAID',
-          invoiceType: 'CONSULTATION',
-          paidAt: { gte: prevFrom, lte: prevTo },
-        },
-        _sum: { totalAmount: true },
-      }),
+      this.financeRepository.getDoctorConsultationRevenue(userId, from),
+      this.financeRepository.getDoctorConsultationRevenue(
+        userId,
+        prevFrom,
+        prevTo,
+      ),
     ]);
 
     const total = current.length;
@@ -317,9 +281,6 @@ export class AnalyticsService {
     const phone = current.filter(
       (b) => (b as { source?: string }).source === 'PHONE',
     ).length;
-
-    const revenue = Number(revenueAgg._sum?.totalAmount ?? 0);
-    const prevRevenue = Number(prevRevenueAgg._sum?.totalAmount ?? 0);
 
     const deltaTotal =
       prevTotal > 0 ? Math.round(((total - prevTotal) / prevTotal) * 100) : 0;
@@ -360,53 +321,12 @@ export class AnalyticsService {
 
   /** Ten most recent patients seen by this doctor */
   async getDoctorRecentPatients(userId: string) {
-    const bookings = await this.bookingRepository.findManyBooking({
-      where: {
-        doctorId: userId,
-        status: { in: ['COMPLETED', 'IN_PROGRESS', 'NO_SHOW', 'CANCELLED'] },
-      },
-      select: {
-        id: true,
-        bookingDate: true,
-        startTime: true,
-        status: true,
-        patientProfile: {
-          select: { fullName: true, patientCode: true },
-        },
-        service: { select: { name: true } },
-        medicalRecord: { select: { diagnosisName: true } },
-      },
-      orderBy: [{ bookingDate: 'desc' }, { startTime: 'desc' }],
-      take: 10,
-    } as object);
-
-    return bookings;
+    return this.bookingRepository.findRecentBookingsForDoctor(userId, 10);
   }
 
   /** Today's appointments as a timeline for this doctor */
   async getDoctorTodaySchedule(userId: string) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today.getTime() + 86400000);
-
-    const bookings = await this.bookingRepository.findManyBooking({
-      where: {
-        doctorId: userId,
-        bookingDate: { gte: today, lt: tomorrow },
-      },
-      select: {
-        id: true,
-        startTime: true,
-        endTime: true,
-        status: true,
-        source: true,
-        patientProfile: { select: { fullName: true } },
-        service: { select: { name: true } },
-      },
-      orderBy: { startTime: 'asc' },
-    } as object);
-
-    return bookings;
+    return this.bookingRepository.findTodayBookingsForDoctor(userId);
   }
 
   /**
@@ -418,13 +338,10 @@ export class AnalyticsService {
     const now = new Date();
     const twelveWeeksAgo = new Date(now.getTime() - 84 * 24 * 60 * 60 * 1000);
 
-    const bookings = await this.bookingRepository.findManyBooking({
-      where: {
-        doctorId: userId,
-        bookingDate: { gte: twelveWeeksAgo },
-        status: { in: ['COMPLETED', 'CHECKED_IN', 'IN_PROGRESS', 'NO_SHOW'] },
-      },
-      select: { bookingDate: true, startTime: true },
+    const bookings = await this.bookingRepository.findBookingsForHeatmap({
+      doctorId: userId,
+      gte: twelveWeeksAgo,
+      statuses: ['COMPLETED', 'CHECKED_IN', 'IN_PROGRESS', 'NO_SHOW'],
     });
 
     // Build a 24×7 matrix initialised to 0
@@ -463,28 +380,14 @@ export class AnalyticsService {
 
     // Fetch bookings in parallel with medical records
     const [bookings, records] = await Promise.all([
-      this.bookingRepository.findManyBooking({
-        where: {
-          doctorId: userId,
-          bookingDate: { gte: sixMonthsAgo },
-          status: { in: ['COMPLETED', 'CHECKED_IN', 'IN_PROGRESS'] },
-        },
-        select: {
-          patientProfileId: true,
-          queueRecord: { select: { estimatedWaitMinutes: true } },
-        },
+      this.bookingRepository.findBookingsForClinicalKPIs({
+        doctorId: userId,
+        gte: sixMonthsAgo,
+        statuses: ['COMPLETED', 'CHECKED_IN', 'IN_PROGRESS'],
       }),
-      this.clinicalRepository.findManyMedicalRecord({
-        where: {
-          doctorId: userId,
-          createdAt: { gte: sixMonthsAgo },
-        },
-        select: {
-          patientProfileId: true,
-          diagnosisCode: true,
-          followUpDate: true,
-          labOrders: { select: { id: true } },
-        },
+      this.clinicalRepository.findMedicalRecordsForKPIs({
+        doctorId: userId,
+        gte: sixMonthsAgo,
       }),
     ]);
 
@@ -492,11 +395,7 @@ export class AnalyticsService {
     const totalRecords = records.length;
 
     // 1. Avg wait minutes
-    const waits = (
-      bookings as Array<{
-        queueRecord?: { estimatedWaitMinutes?: number } | null;
-      }>
-    )
+    const waits = bookings
       .map((b) => b.queueRecord?.estimatedWaitMinutes ?? null)
       .filter((v): v is number => v !== null);
     const avgWaitMinutes = waits.length
@@ -504,10 +403,8 @@ export class AnalyticsService {
       : 0;
 
     // 2 & 5. Return rate / new patient rate
-    const allTimeBookings = await this.bookingRepository.findManyBooking({
-      where: { doctorId: userId },
-      select: { patientProfileId: true },
-    });
+    const allTimeBookings =
+      await this.bookingRepository.findAllPatientIdsForDoctor(userId);
     const visitCountByPatient: Record<string, number> = {};
     for (const b of allTimeBookings) {
       visitCountByPatient[b.patientProfileId] =
@@ -526,25 +423,19 @@ export class AnalyticsService {
     const newPatientRate = Math.round((newPatients / totalDistinct) * 100);
 
     // 3. Lab order rate
-    const withLab = (records as Array<{ labOrders: unknown[] }>).filter(
-      (r) => r.labOrders.length > 0,
-    ).length;
+    const withLab = records.filter((r) => r.labOrders.length > 0).length;
     const labOrderRate = totalRecords
       ? Math.round((withLab / totalRecords) * 100)
       : 0;
 
     // 4. ICD-10 usage rate
-    const withIcd = (records as Array<{ diagnosisCode: string | null }>).filter(
-      (r) => !!r.diagnosisCode,
-    ).length;
+    const withIcd = records.filter((r) => !!r.diagnosisCode).length;
     const icdUsageRate = totalRecords
       ? Math.round((withIcd / totalRecords) * 100)
       : 0;
 
     // 6. Follow-up rate
-    const withFollowUp = (
-      records as Array<{ followUpDate: Date | null }>
-    ).filter((r) => !!r.followUpDate).length;
+    const withFollowUp = records.filter((r) => !!r.followUpDate).length;
     const followUpRate = totalRecords
       ? Math.round((withFollowUp / totalRecords) * 100)
       : 0;
@@ -566,20 +457,8 @@ export class AnalyticsService {
 
   /** Expose top 5 services for a specific doctor */
   async getDoctorTopServices(userId: string) {
-    const bookings = await this.bookingRepository.findManyBooking({
-      where: {
-        doctorId: userId,
-        status: 'COMPLETED',
-        serviceId: { not: null },
-      },
-      select: {
-        service: {
-          select: {
-            name: true,
-          },
-        },
-      },
-    });
+    const bookings =
+      await this.bookingRepository.findDoctorCompletedServices(userId);
 
     const freq: Record<string, number> = {};
     for (const b of bookings) {
@@ -609,19 +488,13 @@ export class AnalyticsService {
     endOfWeek.setDate(startOfWeek.getDate() + 6);
     endOfWeek.setHours(23, 59, 59, 999);
 
-    const bookings = await this.bookingRepository.findManyBooking({
-      where: {
+    const bookings =
+      await this.bookingRepository.findBookingsForDoctorAnalytics({
         doctorId: userId,
-        bookingDate: {
-          gte: startOfWeek,
-          lte: endOfWeek,
-        },
-      },
-      select: {
-        bookingDate: true,
-        status: true,
-      },
-    });
+        gte: startOfWeek,
+        lte: endOfWeek,
+        selectFields: 'bookingDate',
+      });
 
     const days = [
       { day: 'T2', dow: 1, count: 0 },
@@ -634,6 +507,7 @@ export class AnalyticsService {
     ];
 
     for (const b of bookings) {
+      if (!b.bookingDate) continue;
       const date = new Date(b.bookingDate);
       const dow = date.getDay();
       const match = days.find((d) => d.dow === dow);
