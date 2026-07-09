@@ -3,10 +3,9 @@ import {
   I_CLINICAL_REPOSITORY,
 } from '../database/interfaces/clinical.repository.interface';
 import {
-  IUserRepository,
-  I_USER_REPOSITORY,
-} from '../database/interfaces/user.repository.interface';
-import { BookingDetail } from '../database/types/prisma-payload.types';
+  BookingDetail,
+  MedicalRecordDetail,
+} from '../database/types/prisma-payload.types';
 import {
   IBookingRepository,
   I_BOOKING_REPOSITORY,
@@ -26,13 +25,11 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import {
-  LabOrderStatus,
-  Prisma,
   ServiceOrderStatus,
   VisitStep,
   UserRole,
   NotificationType,
-  PerformerType,
+  Prisma,
 } from '@prisma/client';
 import { format } from 'date-fns';
 import { vi } from 'date-fns/locale';
@@ -42,7 +39,6 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { BillingService } from '../billing/billing.service';
 import { SaveSymptomsDto } from './dto/save-symptoms.dto';
 import { CompleteSpecialistExamDto } from './dto/complete-specialist-exam.dto';
-import { BookingStatus } from '@prisma/client';
 import { CreateMedicalRecordDto } from './dto/create-medical-record.dto';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { OrderServicesDto } from './dto/order-services.dto';
@@ -53,32 +49,11 @@ import { QueueGateway } from '../queue/queue.gateway';
 export class MedicalRecordsService {
   private readonly logger = new Logger(MedicalRecordsService.name);
 
-  private readonly visitIncludes = {
-    visitServiceOrders: {
-      include: { service: true, performer: true },
-      orderBy: { createdAt: 'asc' },
-    },
-    labOrders: {
-      include: { result: true, service: true },
-      orderBy: { createdAt: 'asc' },
-    },
-    prescription: {
-      include: { items: { orderBy: { sortOrder: 'asc' } } },
-    },
-    booking: {
-      include: {
-        doctor: true,
-        patientProfile: true,
-      },
-    },
-  } as const;
-
   constructor(
     @Inject(I_CLINICAL_REPOSITORY)
     private readonly clinicalRepository: IClinicalRepository,
     @Inject(I_BOOKING_REPOSITORY)
     private readonly bookingRepository: IBookingRepository,
-    @Inject(I_USER_REPOSITORY) private readonly userRepository: IUserRepository,
     @Inject(I_PROFILE_REPOSITORY)
     private readonly profileRepository: IProfileRepository,
     private readonly notificationsService: NotificationsService,
@@ -123,9 +98,9 @@ export class MedicalRecordsService {
     if (currentUser.role === 'ADMIN') return;
 
     if (currentUser.role === 'PATIENT') {
-      const profile = await this.profileRepository.findFirstPatientProfile({
-        where: { userId: currentUser.id },
-      });
+      const profile = await this.profileRepository.findPatientProfileByUserId(
+        currentUser.id,
+      );
       if (!profile || profile.id !== patientProfileId) {
         throw new ForbiddenException(
           'You can only access your own medical records',
@@ -135,26 +110,12 @@ export class MedicalRecordsService {
     }
 
     if (currentUser.role === 'DOCTOR') {
-      // Check for ANY active or COMPLETED booking between this doctor and patient
-      const treatmentRelation = await this.bookingRepository.findFirst({
-        where: {
-          doctorId: currentUser.id,
-          patientProfileId,
-          status: {
-            in: [
-              'CONFIRMED',
-              'CHECKED_IN',
-              'IN_PROGRESS',
-              'AWAITING_RESULTS',
-              'COMPLETED',
-              'PENDING',
-              'CANCELLED', // Allow viewing history even if cancelled later
-            ],
-          },
-        },
-      });
+      const hasRelation = await this.bookingRepository.hasTreatmentRelationship(
+        currentUser.id,
+        patientProfileId,
+      );
 
-      if (!treatmentRelation) {
+      if (!hasRelation) {
         throw new ForbiddenException(
           'You are not authorized to view this patient history (No prior treatment relationship)',
         );
@@ -165,126 +126,52 @@ export class MedicalRecordsService {
     throw new ForbiddenException('Unauthorized access');
   }
 
-  private async getOrCreateRecord(
-    bookingId: string,
-    booking: { patientProfileId: string; doctorId: string },
-  ) {
-    return this.clinicalRepository.transaction(async (tx) => {
-      return tx.medicalRecord.upsert({
-        where: { bookingId },
-        create: {
-          bookingId,
-          patientProfileId: booking.patientProfileId,
-          doctorId: booking.doctorId,
-          visitStep: VisitStep.SYMPTOMS_TAKEN,
-        },
-        update: {},
-      });
-    });
-  }
-
-  /** Auto-check if all VisitServiceOrders and LabOrders for a record are COMPLETED → advance step */
-  private async maybeAdvanceToResultsReady(
-    tx: Prisma.TransactionClient,
-    medicalRecordId: string,
-  ) {
-    const allVso = await tx.visitServiceOrder.findMany({
-      where: { medicalRecordId },
-      select: { status: true },
-    });
-
-    const allLabs = await tx.labOrder.findMany({
-      where: { medicalRecordId },
-      select: { status: true },
-    });
-
-    if (allVso.length === 0 && allLabs.length === 0) return;
-
-    const allVsoDone = allVso.every(
-      (o) =>
-        o.status === ServiceOrderStatus.COMPLETED ||
-        o.status === ServiceOrderStatus.CANCELLED,
-    );
-    const allLabsDone = allLabs.every(
-      (o) =>
-        o.status === LabOrderStatus.COMPLETED ||
-        o.status === LabOrderStatus.CANCELLED,
-    );
-
-    const record = await tx.medicalRecord.findUnique({
-      where: { id: medicalRecordId },
-      include: {
-        booking: {
-          include: { patientProfile: true },
-        },
-      },
-    });
-
-    this.logger.log(
-      `Checking advancement for record ${medicalRecordId}: allVsoDone=${allVsoDone}, allLabsDone=${allLabsDone}, currentStep=${record?.visitStep}`,
-    );
-
-    if (allVsoDone && allLabsDone) {
-      // Advance step if we are in SERVICES_ORDERED or AWAITING_RESULTS phase
-      const allowedSteps: VisitStep[] = [
-        VisitStep.SERVICES_ORDERED,
-        VisitStep.AWAITING_RESULTS,
-      ];
-
-      if (record && allowedSteps.includes(record.visitStep)) {
-        this.logger.log(`Advancing record ${medicalRecordId} to RESULTS_READY`);
-        await tx.medicalRecord.update({
-          where: { id: medicalRecordId },
-          data: {
-            visitStep: VisitStep.RESULTS_READY,
-            version: { increment: 1 },
-          },
-        });
-
-        // Notify doctor if possible
-        if (record.booking?.doctorId) {
-          this.notificationsService
-            .createInAppNotification({
-              userId: record.booking.doctorId,
-              title: 'Kết quả khám/CLS đã có',
-              content: `Bệnh nhân ${record.booking.patientProfile?.fullName ?? '...'} đã hoàn tất các chỉ định. Bạn có thể chẩn đoán.`,
-              type: NotificationType.LAB_RESULT_READY,
-              metadata: {
-                bookingId: record.bookingId,
-                recordId: record.id,
-              },
-            })
-            .catch((err) =>
-              this.logger.error(
-                'Failed to send lab result notification to doctor',
-                err instanceof Error ? err.stack : String(err),
-              ),
-            );
-
-          // Broadcast queue update so doctor's dashboard refreshes
-          this.queueGateway.broadcastQueueUpdate(record.doctorId, 'UPDATE', {
+  private handlePostAdvanceNotifications(record: MedicalRecordDetail) {
+    if (record && record.booking?.doctorId) {
+      this.notificationsService
+        .createInAppNotification({
+          userId: record.booking.doctorId,
+          title: 'Kết quả khám/CLS đã có',
+          content: `Bệnh nhân ${record.booking.patientProfile?.fullName ?? '...'} đã hoàn tất các chỉ định. Bạn có thể chẩn đoán.`,
+          type: NotificationType.LAB_RESULT_READY,
+          metadata: {
             bookingId: record.bookingId,
-            visitStep: VisitStep.RESULTS_READY,
-          });
+            recordId: record.id,
+          },
+        })
+        .catch((err) =>
+          this.logger.error(
+            'Failed to send lab result notification to doctor',
+            err instanceof Error ? err.stack : String(err),
+          ),
+        );
 
-          // Notify Patient
-          if (record.booking?.patientProfile?.userId) {
-            this.notificationsService
-              .createInAppNotification({
-                userId: record.booking.patientProfile.userId,
-                title: 'Kết quả CLS đã có',
-                content: `Tất cả kết quả xét nghiệm của bạn đã có. Vui lòng quay lại phòng khám gặp bác sĩ.`,
-                type: NotificationType.LAB_RESULT_READY,
-                metadata: { bookingId: record.bookingId },
-              })
-              .catch((err) =>
-                this.logger.error(
-                  'Failed to send lab result notification to patient',
-                  err instanceof Error ? err.stack : String(err),
-                ),
-              );
-          }
-        }
+      // Broadcast queue update so doctor's dashboard refreshes
+      this.queueGateway.broadcastQueueUpdate(
+        record.booking.doctorId,
+        'UPDATE',
+        {
+          bookingId: record.bookingId,
+          visitStep: VisitStep.RESULTS_READY,
+        },
+      );
+
+      // Notify Patient
+      if (record.booking?.patientProfile?.userId) {
+        this.notificationsService
+          .createInAppNotification({
+            userId: record.booking.patientProfile.userId,
+            title: 'Kết quả CLS đã có',
+            content: `Tất cả kết quả xét nghiệm của bạn đã có. Vui lòng quay lại phòng khám gặp bác sĩ.`,
+            type: NotificationType.LAB_RESULT_READY,
+            metadata: { bookingId: record.bookingId },
+          })
+          .catch((err) =>
+            this.logger.error(
+              'Failed to send lab result notification to patient',
+              err instanceof Error ? err.stack : String(err),
+            ),
+          );
       }
     }
   }
@@ -296,62 +183,18 @@ export class MedicalRecordsService {
     doctorId: string,
     currentUser?: Express.User,
   ) {
-    await this.getVerifiedBooking(bookingId, doctorId, currentUser);
+    const booking = await this.getVerifiedBooking(
+      bookingId,
+      doctorId,
+      currentUser,
+    );
 
-    const record = await this.clinicalRepository.transaction(async (tx) => {
-      const b = await this.bookingRepository.findUnique({
-        where: { id: bookingId },
-      });
-      if (!b) throw new NotFoundException('Booking not found');
-
-      return tx.medicalRecord.upsert({
-        where: { bookingId },
-        create: {
-          bookingId,
-          patientProfileId: b.patientProfileId,
-          doctorId,
-          visitStep: VisitStep.SYMPTOMS_TAKEN,
-          chiefComplaint: dto.chiefComplaint,
-          clinicalFindings: dto.clinicalFindings,
-          doctorNotes: dto.doctorNotes,
-          bloodPressure: dto.bloodPressure,
-          heartRate: dto.heartRate,
-          temperature: dto.temperature,
-          spO2: dto.spO2,
-          weightKg: dto.weightKg,
-          heightCm: dto.heightCm,
-          bmi: dto.bmi,
-          medicalHistory: dto.medicalHistory,
-          allergies: dto.allergies,
-          additionalSymptoms: dto.additionalSymptoms,
-          followUpNote: dto.followUpNote,
-          symptomsAt: new Date(),
-          version: 1,
-        },
-        update: {
-          chiefComplaint: dto.chiefComplaint,
-          clinicalFindings: dto.clinicalFindings,
-          doctorNotes: dto.doctorNotes,
-          bloodPressure: dto.bloodPressure,
-          heartRate: dto.heartRate,
-          temperature: dto.temperature,
-          spO2: dto.spO2,
-          weightKg: dto.weightKg,
-          heightCm: dto.heightCm,
-          bmi: dto.bmi,
-          medicalHistory: dto.medicalHistory,
-          allergies: dto.allergies,
-          additionalSymptoms: dto.additionalSymptoms,
-          followUpNote: dto.followUpNote,
-          symptomsAt: new Date(),
-          visitStep: VisitStep.SYMPTOMS_TAKEN,
-          version: { increment: 1 },
-        },
-        include: this.visitIncludes,
-      });
-    });
-
-    return record;
+    return this.clinicalRepository.saveSymptomsTransaction(
+      bookingId,
+      doctorId,
+      booking.patientProfileId,
+      dto,
+    );
   }
 
   // Order Services
@@ -370,135 +213,21 @@ export class MedicalRecordsService {
     const serviceIds = dto.items.map((i) => i.serviceId);
 
     // Validate services exist and load doctorServices associations
-    const servicesWithDoctors = await this.clinicalRepository.transaction(
-      async (tx) =>
-        tx.service.findMany({
-          where: { id: { in: serviceIds }, isActive: true },
-          include: {
-            doctorServices: {
-              include: {
-                doctorProfile: {
-                  include: { user: { select: { id: true } } },
-                },
-              },
-              take: 1, // Take the first assigned specialist
-            },
-          },
-        }),
-    );
+    const servicesWithDoctors =
+      await this.clinicalRepository.findActiveServicesWithDoctors(serviceIds);
     if (servicesWithDoctors.length !== serviceIds.length) {
       throw new BadRequestException(
         'One or more service IDs are invalid or inactive',
       );
     }
 
-    const result = await this.clinicalRepository.transaction(async (tx) => {
-      // Get or create MedicalRecord
-      let record = await tx.medicalRecord.findUnique({
-        where: { bookingId },
-      });
-      if (!record) {
-        record = await tx.medicalRecord.create({
-          data: {
-            bookingId,
-            patientProfileId: booking.patientProfileId,
-            doctorId: booking.doctorId,
-            visitStep: VisitStep.SYMPTOMS_TAKEN,
-          },
-        });
-      }
-
-      // Guard: cannot order if already DIAGNOSED or later
-      const lockedSteps: VisitStep[] = [
-        VisitStep.DIAGNOSED,
-        VisitStep.PRESCRIBED,
-        VisitStep.COMPLETED,
-      ];
-      if (lockedSteps.includes(record.visitStep)) {
-        throw new BadRequestException(
-          'Cannot order services after diagnosis is finalized',
-        );
-      }
-
-      // Create VisitServiceOrders (skip duplicates)
-      const existing = await tx.visitServiceOrder.findMany({
-        where: { medicalRecordId: record.id },
-        select: { serviceId: true },
-      });
-      const existingIds = new Set(existing.map((o) => o.serviceId));
-      const newItems = dto.items.filter((i) => !existingIds.has(i.serviceId));
-
-      if (newItems.length > 0) {
-        for (const item of newItems) {
-          const serviceId = item.serviceId;
-          const svc = servicesWithDoctors.find((s) => s.id === serviceId);
-          if (!svc) continue;
-
-          if (svc.performerType === PerformerType.TECHNICIAN) {
-            // Create LabOrder for Technicians
-            await tx.labOrder.create({
-              data: {
-                medicalRecordId: record.id,
-                serviceId,
-                patientProfileId: booking.patientProfileId,
-                bookingId,
-                doctorId: booking.doctorId, // Doctor who ordered it
-                testName: svc.name,
-                status: LabOrderStatus.PENDING,
-              },
-            });
-          } else {
-            // Create VisitServiceOrder for Specialists (Doctors)
-            // Priority: 1. Directly assigned in DTO -> 2. First specialist in association -> 3. Null
-            const specialistUserId =
-              item.performedBy ??
-              svc?.doctorServices?.[0]?.doctorProfile?.user?.id ??
-              null;
-
-            await tx.visitServiceOrder.create({
-              data: {
-                medicalRecordId: record.id,
-                serviceId,
-                patientProfileId: booking.patientProfileId,
-                bookingId,
-                orderedBy: doctorId,
-                performedBy: specialistUserId,
-                status: ServiceOrderStatus.PENDING,
-              },
-            });
-          }
-        }
-      }
-
-      // Advance step
-      const newStep: VisitStep =
-        record.visitStep === VisitStep.SYMPTOMS_TAKEN ||
-        record.visitStep === VisitStep.SERVICES_ORDERED
-          ? VisitStep.SERVICES_ORDERED
-          : VisitStep.AWAITING_RESULTS;
-
-      const updated = await tx.medicalRecord.update({
-        where: { id: record.id },
-        data: {
-          visitStep: newStep,
-          orderedAt: new Date(),
-          version: { increment: 1 },
-        },
-        include: this.visitIncludes,
-      });
-
-      const vsoOrders = await tx.visitServiceOrder.findMany({
-        where: { medicalRecordId: record.id },
-        include: { service: true },
-      });
-
-      const labOrders = await tx.labOrder.findMany({
-        where: { medicalRecordId: record.id },
-        include: { service: true },
-      });
-
-      return { record: updated, orders: vsoOrders, labOrders };
-    });
+    const result = await this.clinicalRepository.orderServicesTransaction(
+      bookingId,
+      doctorId,
+      booking,
+      servicesWithDoctors,
+      dto.items,
+    );
 
     // Auto-sync to draft invoice
     await this.billingService.syncLabInvoice(bookingId);
@@ -535,9 +264,8 @@ export class MedicalRecordsService {
   ) {
     await this.getVerifiedBooking(bookingId, doctorId, currentUser);
 
-    const order = await this.clinicalRepository.findUniqueVisitServiceOrder({
-      where: { id: orderId },
-    });
+    const order =
+      await this.clinicalRepository.findVisitServiceOrderById(orderId);
     if (!order || order.bookingId !== bookingId)
       throw new NotFoundException('Service order not found');
     if (order.status !== ServiceOrderStatus.PENDING)
@@ -545,9 +273,7 @@ export class MedicalRecordsService {
         'Cannot remove a service order that is already in progress',
       );
 
-    await this.clinicalRepository.deleteVisitServiceOrder({
-      where: { id: orderId },
-    });
+    await this.clinicalRepository.deleteVisitServiceOrderById(orderId);
 
     // Auto-sync after removal
     await this.billingService.syncLabInvoice(bookingId);
@@ -557,17 +283,15 @@ export class MedicalRecordsService {
 
   // GET Results — composite response for B4
   async getVisitResults(bookingId: string, currentUser?: Express.User) {
-    const booking = await this.bookingRepository.findUnique({
-      where: { id: bookingId },
-    });
+    const booking = await this.bookingRepository.findBookingById(bookingId);
     if (!booking) throw new NotFoundException('Booking not found');
 
     // Ownership check for doctors/patients
     await this.validateTreatmentRelation(booking.patientProfileId, currentUser);
-    const record = await this.clinicalRepository.findUniqueMedicalRecord({
-      where: { bookingId },
-      include: this.visitIncludes,
-    });
+    const record =
+      await this.clinicalRepository.findMedicalRecordDetailByBookingId(
+        bookingId,
+      );
 
     if (!record) {
       // In early stages of an exam, the record might not exist yet. Return null.
@@ -586,18 +310,21 @@ export class MedicalRecordsService {
   ) {
     await this.getVerifiedBooking(bookingId, doctorId, currentUser);
 
-    const record = await this.clinicalRepository.findUniqueMedicalRecord({
-      where: { bookingId },
-    });
+    const record =
+      await this.clinicalRepository.findMedicalRecordDetailByBookingId(
+        bookingId,
+        {},
+      );
     if (!record)
       throw new NotFoundException(
         'Medical record not found. Complete B1 first.',
       );
 
     // Guard: can only diagnose when results are ready OR there are no service orders
-    const orderCount = await this.clinicalRepository.countVisitServiceOrder({
-      where: { medicalRecordId: record.id },
-    });
+    const orderCount =
+      await this.clinicalRepository.countVisitServiceOrdersByMedicalRecordId(
+        record.id,
+      );
     const allowedSteps: VisitStep[] = [
       VisitStep.RESULTS_READY,
       VisitStep.DIAGNOSED,
@@ -608,21 +335,7 @@ export class MedicalRecordsService {
       );
     }
 
-    const updated = await this.clinicalRepository.updateMedicalRecord({
-      where: { id: record.id },
-      data: {
-        diagnosisCode: dto.diagnosisCode,
-        diagnosisName: dto.diagnosisName,
-        treatmentPlan: dto.treatmentPlan,
-        doctorNotes: dto.doctorNotes,
-        followUpDate: dto.followUpDate ? new Date(dto.followUpDate) : null,
-        followUpNote: dto.followUpNote,
-        visitStep: VisitStep.DIAGNOSED,
-        diagnosedAt: new Date(),
-        version: { increment: 1 },
-      },
-      include: this.visitIncludes,
-    });
+    const updated = await this.clinicalRepository.saveDiagnosis(record.id, dto);
 
     return updated;
   }
@@ -640,9 +353,11 @@ export class MedicalRecordsService {
       currentUser,
     );
 
-    const record = await this.clinicalRepository.findUniqueMedicalRecord({
-      where: { bookingId },
-    });
+    const record =
+      await this.clinicalRepository.findMedicalRecordDetailByBookingId(
+        bookingId,
+        {},
+      );
     if (!record)
       throw new NotFoundException(
         'Medical record not found. Complete B4 first.',
@@ -657,80 +372,15 @@ export class MedicalRecordsService {
       );
     }
 
-    const updatedRecord = await this.clinicalRepository.transaction(
-      async (tx) => {
-        // Upsert Prescription header
-        const prescription = await tx.prescription.upsert({
-          where: { medicalRecordId: record.id },
-          create: {
-            medicalRecordId: record.id,
-            patientProfileId: booking.patientProfileId,
-            doctorId,
-            notes: dto.notes,
-            isFulfilledInternally: null, // null = patient has not decided yet
-          },
-          update: { notes: dto.notes },
-        });
-
-        // Replace all items
-        await tx.prescriptionItem.deleteMany({
-          where: { prescriptionId: prescription.id },
-        });
-        if (dto.items.length > 0) {
-          await tx.prescriptionItem.createMany({
-            data: dto.items.map((item, idx) => ({
-              prescriptionId: prescription.id,
-              visitServiceOrderId: item.visitServiceOrderId,
-              labOrderId: item.labOrderId,
-              medicineName: item.medicineName,
-              dosage: item.dosage,
-              frequency: item.frequency,
-              durationDays: item.durationDays,
-              quantity: item.quantity,
-              unit: item.unit ?? 'viên',
-              instructions: item.instructions,
-              sortOrder: item.sortOrder ?? idx,
-              medicineId: item.medicineId || null,
-              unitPrice: item.unitPrice ?? null,
-            })),
-          });
-        }
-
-        // Advance visitStep → PRESCRIBED / COMPLETED
-        await tx.medicalRecord.update({
-          where: { id: record.id },
-          data: {
-            visitStep: VisitStep.COMPLETED,
-            isFinalized: true,
-            prescribedAt: new Date(),
-            version: { increment: 1 },
-          },
-        });
-
-        // Mark booking COMPLETED & update queue
-        await tx.booking.update({
-          where: { id: bookingId },
-          data: { status: 'COMPLETED', doctorNotes: dto.notes },
-        });
-        await tx.bookingStatusHistory.create({
-          data: {
-            bookingId,
-            oldStatus: booking.status,
-            newStatus: 'COMPLETED',
-            changedById: doctorId,
-            reason: 'Prescription issued — visit finalized',
-          },
-        });
-
-        // NOTE (v5.0): PHARMACY invoice is NOT auto-created here.
-        // Receptionist will create it manually if the patient chooses to buy medicine at the clinic (B8).
-
-        return tx.medicalRecord.findUnique({
-          where: { id: record.id },
-          include: this.visitIncludes,
-        });
-      },
-    );
+    const updatedRecord =
+      await this.clinicalRepository.savePrescriptionTransaction(
+        bookingId,
+        doctorId,
+        record.id,
+        booking.patientProfileId,
+        booking.status,
+        dto,
+      );
 
     // Send post-visit email (non-blocking)
     if (updatedRecord) {
@@ -757,14 +407,9 @@ export class MedicalRecordsService {
     record: { bookingId: string; diagnosisName?: string | null },
     dto: CreatePrescriptionDto,
   ) {
-    const booking = await this.bookingRepository.findUnique({
-      where: { id: record.bookingId },
-      include: {
-        patientProfile: { include: { user: { select: { email: true } } } },
-        doctor: true,
-        service: true,
-      },
-    });
+    const booking = await this.bookingRepository.findBookingForPostVisitEmail(
+      record.bookingId,
+    );
     if (!booking?.patientProfile?.user?.email) return;
 
     await this.notificationsService.sendPostVisitEmail({
@@ -854,41 +499,12 @@ export class MedicalRecordsService {
 
   // ICD-10 Search
   async searchICD10(query: string) {
-    if (!query) {
-      return this.clinicalRepository.findManyIcd10Code({
-        take: 10,
-        orderBy: { code: 'asc' },
-      });
-    }
-    return this.clinicalRepository.findManyIcd10Code({
-      where: {
-        OR: [{ code: { contains: query } }, { name: { contains: query } }],
-      },
-      take: 20,
-      orderBy: { code: 'asc' },
-    });
+    return this.clinicalRepository.searchICD10(query);
   }
 
   // Medicine Search
   async searchMedicines(query: string) {
-    if (!query) {
-      return this.clinicalRepository.findManyMedicine({
-        where: { isActive: true },
-        take: 10,
-        orderBy: { brandName: 'asc' },
-      });
-    }
-    return this.clinicalRepository.findManyMedicine({
-      where: {
-        isActive: true,
-        OR: [
-          { brandName: { contains: query } },
-          { genericName: { contains: query } },
-        ],
-      },
-      take: 20,
-      orderBy: { brandName: 'asc' },
-    });
+    return this.clinicalRepository.searchMedicines(query);
   }
 
   // Patient History
@@ -900,9 +516,7 @@ export class MedicalRecordsService {
   ) {
     await this.validateTreatmentRelation(patientProfileId, currentUser);
     const patientProfile =
-      await this.profileRepository.findUniquePatientProfile({
-        where: { id: patientProfileId },
-      });
+      await this.profileRepository.findPatientProfileById(patientProfileId);
     if (!patientProfile)
       throw new ApiException(
         MessageCodes.PATIENT_NOT_FOUND,
@@ -911,30 +525,11 @@ export class MedicalRecordsService {
       );
 
     const skip = (page - 1) * limit;
-    const [visits, total] = await Promise.all([
-      this.clinicalRepository.findManyMedicalRecord({
-        where: { patientProfileId },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-        include: {
-          booking: {
-            include: {
-              doctor: { select: { id: true, fullName: true } },
-              service: { select: { id: true, name: true } },
-            },
-          },
-          visitServiceOrders: { include: { service: true } },
-          labOrders: { include: { service: true } },
-          prescription: {
-            include: { items: { orderBy: { sortOrder: 'asc' } } },
-          },
-        },
-      }),
-      this.clinicalRepository.countMedicalRecord({
-        where: { patientProfileId },
-      }),
-    ]);
+    const [visits, total] = await this.clinicalRepository.findPatientHistory(
+      patientProfileId,
+      skip,
+      limit,
+    );
 
     return {
       patientProfile: {
@@ -964,9 +559,13 @@ export class MedicalRecordsService {
 
   // Auto-advance MedicalRecord step (called by VisitServiceOrdersService)
   async checkAndAdvanceToResultsReady(medicalRecordId: string) {
-    await this.clinicalRepository.transaction((tx) =>
-      this.maybeAdvanceToResultsReady(tx, medicalRecordId),
-    );
+    const result =
+      await this.clinicalRepository.checkAndAdvanceToResultsReadyTransaction(
+        medicalRecordId,
+      );
+    if (result.advanced && result.record) {
+      this.handlePostAdvanceNotifications(result.record);
+    }
   }
 
   // Patient my-visits (self-service)
@@ -976,11 +575,8 @@ export class MedicalRecordsService {
     limit = 10,
     currentUser?: Express.User,
   ) {
-    const patientProfile = await this.profileRepository.findFirstPatientProfile(
-      {
-        where: { userId },
-      },
-    );
+    const patientProfile =
+      await this.profileRepository.findPatientProfileByUserId(userId);
     if (!patientProfile)
       throw new NotFoundException('Patient profile not found');
 
@@ -989,11 +585,8 @@ export class MedicalRecordsService {
 
   // Patient visit stats
   async getPatientStats(userId: string, currentUser?: Express.User) {
-    const patientProfile = await this.profileRepository.findFirstPatientProfile(
-      {
-        where: { userId },
-      },
-    );
+    const patientProfile =
+      await this.profileRepository.findPatientProfileByUserId(userId);
     if (!patientProfile)
       throw new NotFoundException('Patient profile not found');
 
@@ -1003,38 +596,19 @@ export class MedicalRecordsService {
     const now = new Date();
     const startOfYear = new Date(now.getFullYear(), 0, 1);
 
-    const [totalVisits, visitsThisYear, activeBookings, abnormalResults] =
-      await Promise.all([
-        this.clinicalRepository.countMedicalRecord({
-          where: { patientProfileId: patientProfile.id },
-        }),
-        this.clinicalRepository.countMedicalRecord({
-          where: {
-            patientProfileId: patientProfile.id,
-            createdAt: { gte: startOfYear },
-          },
-        }),
-        this.bookingRepository.count({
-          where: {
-            patientProfileId: patientProfile.id,
-            status: {
-              in: ['PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS'],
-            },
-          },
-        }),
-        this.clinicalRepository.countVisitServiceOrder({
-          where: {
-            patientProfileId: patientProfile.id,
-            isAbnormal: true,
-          },
-        }),
-      ]);
+    const [clinicalStats, activeBookings] = await Promise.all([
+      this.clinicalRepository.getPatientClinicalStats(
+        patientProfile.id,
+        startOfYear,
+      ),
+      this.bookingRepository.countActiveBookingsForPatient(patientProfile.id),
+    ]);
 
     return {
-      totalVisits,
-      visitsThisYear,
+      totalVisits: clinicalStats.totalVisits,
+      visitsThisYear: clinicalStats.visitsThisYear,
       activeBookings,
-      abnormalResults,
+      abnormalResults: clinicalStats.abnormalResults,
     };
   }
 
@@ -1046,70 +620,37 @@ export class MedicalRecordsService {
       now.getMonth(),
       now.getDate(),
     );
+    const endOfToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 1,
+    );
 
-    const [
-      patientsSeenToday,
-      totalPatientsSeen,
-      pendingActive,
-      abnormalLabs,
-      abnormalVso,
-    ] = await Promise.all([
-      this.bookingRepository.count({
-        where: {
-          doctorId,
-          bookingDate: {
-            gte: startOfToday,
-            lt: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1),
-          },
-          status: 'COMPLETED',
-        },
-      }),
-      this.bookingRepository.count({
-        where: {
-          doctorId,
-          status: 'COMPLETED',
-        },
-      }),
-      this.bookingRepository.count({
-        where: {
-          doctorId,
-          status: {
-            in: ['CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'AWAITING_RESULTS'],
-          },
-        },
-      }),
-      this.clinicalRepository.countLabOrder({
-        where: {
-          doctorId,
-          result: {
-            isAbnormal: true,
-            createdAt: { gte: startOfToday },
-          },
-        },
-      }),
-      this.clinicalRepository.countVisitServiceOrder({
-        where: {
-          orderedBy: doctorId,
-          isAbnormal: true,
-          completedAt: { gte: startOfToday },
-        },
-      }),
+    const [bookingStats, clinicalStats] = await Promise.all([
+      this.bookingRepository.getDoctorBookingStats(
+        doctorId,
+        startOfToday,
+        endOfToday,
+      ),
+      this.clinicalRepository.getDoctorClinicalStats(doctorId, startOfToday),
     ]);
 
     return {
-      patientsSeenToday,
-      totalPatientsSeen,
-      pendingActive,
-      abnormalResultsToday: abnormalLabs + abnormalVso,
+      patientsSeenToday: bookingStats.patientsSeenToday,
+      totalPatientsSeen: bookingStats.totalPatientsSeen,
+      pendingActive: bookingStats.pendingActive,
+      abnormalResultsToday:
+        clinicalStats.abnormalLabsToday + clinicalStats.abnormalVsoToday,
     };
   }
 
   // B8 — Fulfill Prescription (BN mua thuốc tại phòng khám)
   async fulfillPrescription(bookingId: string, pharmacyInvoiceId?: string) {
-    const record = await this.clinicalRepository.findUniqueMedicalRecord({
-      where: { bookingId },
-      include: { prescription: true },
-    });
+    const record =
+      await this.clinicalRepository.findMedicalRecordDetailByBookingId(
+        bookingId,
+        { prescription: true },
+      );
     if (!record) {
       throw new NotFoundException('Medical record not found');
     }
@@ -1125,25 +666,15 @@ export class MedicalRecordsService {
       );
     }
 
-    const updated = await this.clinicalRepository.transaction(async (tx) => {
-      return tx.prescription.update({
-        where: { id: prescription.id },
-        data: {
-          isFulfilledInternally: true,
-          fulfilledAt: new Date(),
-          ...(pharmacyInvoiceId ? { pharmacyInvoiceId } : {}),
-        },
-      });
-    });
-
-    return updated;
+    return this.clinicalRepository.fulfillPrescriptionTransaction(
+      prescription.id,
+      pharmacyInvoiceId,
+    );
   }
 
   // Specialist Examination Actions
   async startSpecialistExamination(vsoId: string, doctorId: string) {
-    const vso = await this.clinicalRepository.findUniqueVisitServiceOrder({
-      where: { id: vsoId },
-    });
+    const vso = await this.clinicalRepository.findVisitServiceOrderById(vsoId);
     if (!vso) throw new NotFoundException('Service order not found');
 
     if (vso.performedBy !== doctorId) {
@@ -1158,43 +689,20 @@ export class MedicalRecordsService {
       );
     }
 
-    const updated = await this.clinicalRepository.transaction(async (tx) => {
-      // 1. Update VSO to IN_PROGRESS
-      const updatedVso = await tx.visitServiceOrder.update({
-        where: { id: vsoId },
-        data: { status: ServiceOrderStatus.IN_PROGRESS },
-      });
+    let prevBookingStatus: string | undefined;
+    if (vso.bookingId) {
+      const currentBooking = await this.bookingRepository.findBookingById(
+        vso.bookingId,
+      );
+      prevBookingStatus = currentBooking?.status;
+    }
 
-      // 2. Update Booking to AWAITING_RESULTS (Consultation doctor knows patient is being seen)
-      if (vso.bookingId) {
-        // Fetch current booking status to use as correct oldStatus in history
-        // (direct-service walk-ins are CONFIRMED; normal referrals are CHECKED_IN)
-        const currentBooking = await tx.booking.findUnique({
-          where: { id: vso.bookingId },
-          select: { status: true },
-        });
-        const prevStatus = currentBooking?.status ?? BookingStatus.CHECKED_IN;
-
-        await tx.booking.update({
-          where: { id: vso.bookingId },
-          data: { status: BookingStatus.AWAITING_RESULTS },
-        });
-
-        await tx.bookingStatusHistory.create({
-          data: {
-            bookingId: vso.bookingId,
-            oldStatus: prevStatus,
-            newStatus: BookingStatus.AWAITING_RESULTS,
-            changedById: doctorId,
-            reason: 'Specialist examination started',
-          },
-        });
-      }
-
-      return updatedVso;
-    });
-
-    return updated;
+    return this.clinicalRepository.startSpecialistExaminationTransaction(
+      vsoId,
+      vso.bookingId,
+      doctorId,
+      prevBookingStatus,
+    );
   }
 
   async completeSpecialistExamination(
@@ -1202,9 +710,7 @@ export class MedicalRecordsService {
     doctorId: string,
     dto: CompleteSpecialistExamDto,
   ) {
-    const vso = await this.clinicalRepository.findUniqueVisitServiceOrder({
-      where: { id: vsoId },
-    });
+    const vso = await this.clinicalRepository.findVisitServiceOrderById(vsoId);
     if (!vso) throw new NotFoundException('Service order not found');
 
     if (vso.performedBy !== doctorId) {
@@ -1223,25 +729,19 @@ export class MedicalRecordsService {
       );
     }
 
-    const updated = await this.clinicalRepository.transaction(async (tx) => {
-      const updatedVso = await tx.visitServiceOrder.update({
-        where: { id: vsoId },
-        data: {
-          status: ServiceOrderStatus.COMPLETED,
-          resultText: dto.resultText,
-          specialistNote: dto.doctorNotes,
-          isAbnormal: dto.isAbnormal,
-          abnormalNote: dto.abnormalNote,
+    const result =
+      await this.clinicalRepository.completeSpecialistExaminationTransaction(
+        vsoId,
+        {
+          ...dto,
           findings: dto.findings as Prisma.InputJsonValue,
-          completedAt: new Date(),
         },
-      });
+      );
 
-      await this.maybeAdvanceToResultsReady(tx, vso.medicalRecordId);
+    if (result.advanced && result.record) {
+      this.handlePostAdvanceNotifications(result.record);
+    }
 
-      return updatedVso;
-    });
-
-    return updated;
+    return result.updatedVso;
   }
 }

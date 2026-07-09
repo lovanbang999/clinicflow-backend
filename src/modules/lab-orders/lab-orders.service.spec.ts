@@ -25,6 +25,10 @@ describe('LabOrdersService', () => {
           useValue: {},
         },
         {
+          provide: 'IUserRepository',
+          useValue: {},
+        },
+        {
           provide: LabOrdersGateway,
           useValue: {},
         },
