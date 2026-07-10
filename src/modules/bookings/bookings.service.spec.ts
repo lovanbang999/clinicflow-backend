@@ -13,7 +13,13 @@ import { BillingService } from '../billing/billing.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SequenceService } from '../database/services/sequence.service';
 import { RedisService } from '../database/services/redis.service';
-import { BookingStatus, BookingSource, BookingPriority } from '@prisma/client';
+import {
+  BookingStatus,
+  BookingSource,
+  BookingPriority,
+  UserRole,
+} from '@prisma/client';
+import { ApiException } from '../../common/exceptions/api.exception';
 
 describe('BookingsService Unit Tests', () => {
   let service: BookingsService;
@@ -26,41 +32,16 @@ describe('BookingsService Unit Tests', () => {
     findConflictingBooking: jest.fn(),
     findDoctorScheduleSlot: jest.fn(),
     createOnlinePreBookingTransaction: jest.fn(),
-    transaction: jest.fn().mockImplementation(
-      (
-        cb: (tx: {
-          booking: {
-            count: jest.Mock;
-            create: jest.Mock;
-          };
-          bookingStatusHistory: {
-            create: jest.Mock;
-          };
-          slotReservation: {
-            deleteMany: jest.Mock;
-          };
-        }) => Promise<unknown>,
-      ) => {
-        const txMock = {
-          booking: {
-            count: jest.fn().mockResolvedValue(0),
-            create: jest
-              .fn()
-              .mockImplementation(
-                (args: unknown) =>
-                  mockBookingRepository.create(args) as Promise<unknown>,
-              ),
-          },
-          bookingStatusHistory: {
-            create: jest.fn(),
-          },
-          slotReservation: {
-            deleteMany: jest.fn(),
-          },
-        };
-        return cb(txMock);
-      },
-    ),
+    countActiveWalkInBookings: jest.fn(),
+    createReceptionistBookingTransaction: jest.fn(),
+    createDirectServiceBookingTransaction: jest.fn(),
+    findBookingWithRelations: jest.fn(),
+    assignServiceAndMoveToConfirmedTransaction: jest.fn(),
+    findBookingsPaginated: jest.fn(),
+    findBookingById: jest.fn(),
+    updateBookingStatusTransaction: jest.fn(),
+    findActiveExamination: jest.fn(),
+    findMyBookingsPaginated: jest.fn(),
   };
 
   const mockUserRepository = {
@@ -69,14 +50,17 @@ describe('BookingsService Unit Tests', () => {
 
   const mockCatalogRepository = {
     findServiceById: jest.fn(),
+    findActiveServicesWithDoctors: jest.fn(),
   };
 
   const mockProfileRepository = {
     findPatientProfileById: jest.fn(),
+    findPatientProfileByUserId: jest.fn(),
   };
 
   const mockClinicalRepository = {
     createVisit: jest.fn(),
+    hasAccessToVisitServiceOrder: jest.fn(),
   };
 
   const mockValidator = {
@@ -97,14 +81,18 @@ describe('BookingsService Unit Tests', () => {
   const mockBookingNotification = {
     sendBookingNotification: jest.fn().mockResolvedValue(undefined),
     notifyAdminsOfBooking: jest.fn().mockResolvedValue(undefined),
+    sendCancellationNotification: jest.fn().mockResolvedValue(undefined),
+    sendStatusSpecificNotification: jest.fn().mockResolvedValue(undefined),
+    notifyReceptionistsOfPayment: jest.fn().mockResolvedValue(undefined),
   };
 
   const mockQueueGateway = {
-    emitQueueUpdate: jest.fn(),
+    broadcastQueueUpdate: jest.fn(),
   };
 
   const mockQueueService = {
     addToQueue: jest.fn(),
+    removeFromQueue: jest.fn(),
   };
 
   const mockBillingService = {
@@ -112,7 +100,7 @@ describe('BookingsService Unit Tests', () => {
   };
 
   const mockNotificationsService = {
-    create: jest.fn(),
+    createInAppNotification: jest.fn().mockResolvedValue(undefined),
     notifyRole: jest.fn().mockResolvedValue(undefined),
   };
 
@@ -129,6 +117,8 @@ describe('BookingsService Unit Tests', () => {
   };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BookingsService,
@@ -191,7 +181,6 @@ describe('BookingsService Unit Tests', () => {
         },
       };
 
-      // Set up mock resolves
       mockValidator.validateBooking.mockResolvedValue(undefined);
       mockValidator.checkSlotAvailability.mockResolvedValue(true);
       mockCatalogRepository.findServiceById.mockResolvedValue({
@@ -211,6 +200,274 @@ describe('BookingsService Unit Tests', () => {
       expect(
         mockBookingRepository.createOnlinePreBookingTransaction,
       ).toHaveBeenCalled();
+    });
+  });
+
+  describe('createByReceptionist', () => {
+    it('should throw QUEUE_SLOT_FULL if walk-in count exceeds max queue size', async () => {
+      mockValidator.validateBooking.mockResolvedValue(undefined);
+      mockBookingRepository.findDoctorScheduleSlot.mockResolvedValue({
+        maxQueueSize: 5,
+      });
+      mockBookingRepository.countActiveWalkInBookings.mockResolvedValue(5);
+
+      await expect(
+        service.createByReceptionist(
+          {
+            patientProfileId: 'patient-id',
+            doctorId: 'doctor-id',
+            bookingDate: '2026-06-01',
+            isPreBooked: false,
+          },
+          'staff-id',
+        ),
+      ).rejects.toThrow(ApiException);
+    });
+
+    it('should successfully create receptionist walk-in booking', async () => {
+      const mockCreated = {
+        id: 'booking-2',
+        bookingCode: 'BK-2',
+        patientProfile: { fullName: 'Patient' },
+      };
+      mockValidator.validateBooking.mockResolvedValue(undefined);
+      mockBookingRepository.findDoctorScheduleSlot.mockResolvedValue({
+        maxQueueSize: 10,
+        roomId: 'room-1',
+      });
+      mockBookingRepository.countActiveWalkInBookings.mockResolvedValue(2);
+      mockBookingRepository.createReceptionistBookingTransaction.mockResolvedValue(
+        mockCreated,
+      );
+
+      const result = await service.createByReceptionist(
+        {
+          patientProfileId: 'patient-id',
+          doctorId: 'doctor-id',
+          bookingDate: '2026-06-01',
+          isPreBooked: false,
+        },
+        'staff-id',
+      );
+
+      expect(result).toEqual(mockCreated);
+      expect(
+        mockBookingRepository.createReceptionistBookingTransaction,
+      ).toHaveBeenCalled();
+    });
+  });
+
+  describe('createDirectServiceBooking', () => {
+    it('should throw SERVICE_NOT_FOUND if requested services are inactive or not found', async () => {
+      mockCatalogRepository.findActiveServicesWithDoctors.mockResolvedValue([]);
+
+      await expect(
+        service.createDirectServiceBooking(
+          {
+            patientProfileId: 'patient-id',
+            doctorId: 'doctor-id',
+            serviceIds: ['svc-1'],
+            bookingDate: '2026-06-01',
+          },
+          'staff-id',
+        ),
+      ).rejects.toThrow(ApiException);
+    });
+
+    it('should successfully create direct service booking', async () => {
+      const mockServices = [
+        {
+          id: 'svc-1',
+          name: 'Blood Test',
+          price: 100000,
+          durationMinutes: 15,
+          maxSlotsPerHour: 4,
+        },
+      ];
+      mockCatalogRepository.findActiveServicesWithDoctors.mockResolvedValue(
+        mockServices,
+      );
+      mockValidator.validateBooking.mockResolvedValue(undefined);
+      mockBookingRepository.findDoctorScheduleSlot.mockResolvedValue({
+        maxQueueSize: 10,
+      });
+      mockBookingRepository.countActiveWalkInBookings.mockResolvedValue(0);
+
+      const mockResult = {
+        id: 'booking-3',
+        patientProfile: { fullName: 'Patient Name' },
+      };
+      mockBookingRepository.createDirectServiceBookingTransaction.mockResolvedValue(
+        mockResult,
+      );
+
+      const result = await service.createDirectServiceBooking(
+        {
+          patientProfileId: 'patient-id',
+          doctorId: 'doctor-id',
+          serviceIds: ['svc-1'],
+          bookingDate: '2026-06-01',
+        },
+        'staff-id',
+      );
+
+      expect(result).toEqual(mockResult);
+      expect(mockNotificationsService.notifyRole).toHaveBeenCalled();
+    });
+  });
+
+  describe('assignSpecialistService', () => {
+    it('should throw if old doctor is not the caller doctor', async () => {
+      mockBookingRepository.findBookingWithRelations.mockResolvedValue({
+        id: 'booking-1',
+        doctorId: 'doctor-original',
+      });
+
+      await expect(
+        service.assignSpecialistService(
+          'booking-1',
+          'svc-1',
+          'doctor-malicious',
+        ),
+      ).rejects.toThrow(ApiException);
+    });
+
+    it('should successfully assign service and trigger invoice creation', async () => {
+      mockBookingRepository.findBookingWithRelations.mockResolvedValue({
+        id: 'booking-1',
+        doctorId: 'doctor-1',
+        status: BookingStatus.IN_PROGRESS,
+      });
+      mockCatalogRepository.findServiceById.mockResolvedValue({
+        id: 'svc-1',
+        name: 'Specialist',
+        isActive: true,
+      });
+      mockQueueService.removeFromQueue.mockResolvedValue(undefined);
+      mockBookingRepository.assignServiceAndMoveToConfirmedTransaction.mockResolvedValue(
+        { id: 'booking-1' },
+      );
+
+      const result = await service.assignSpecialistService(
+        'booking-1',
+        'svc-1',
+        'doctor-1',
+      );
+
+      expect(result).toEqual({ id: 'booking-1' });
+      expect(mockQueueService.removeFromQueue).toHaveBeenCalledWith(
+        'booking-1',
+      );
+      expect(mockBillingService.createInvoice).toHaveBeenCalled();
+    });
+  });
+
+  describe('findOne', () => {
+    it('should throw if booking not found', async () => {
+      mockBookingRepository.findBookingById.mockResolvedValue(null);
+
+      await expect(service.findOne('booking-1')).rejects.toThrow(ApiException);
+    });
+
+    it('should allow patient to view their own booking', async () => {
+      const mockBooking = {
+        id: 'booking-1',
+        patientProfile: { userId: 'patient-user-id' },
+        doctorId: 'doctor-id',
+      };
+      mockBookingRepository.findBookingById.mockResolvedValue(mockBooking);
+
+      const result = await service.findOne('booking-1', {
+        id: 'patient-user-id',
+        role: UserRole.PATIENT,
+      } as unknown as Express.User);
+
+      expect(result).toEqual(mockBooking);
+    });
+
+    it('should restrict patient from viewing others bookings', async () => {
+      const mockBooking = {
+        id: 'booking-1',
+        patientProfile: { userId: 'patient-user-id' },
+        doctorId: 'doctor-id',
+      };
+      mockBookingRepository.findBookingById.mockResolvedValue(mockBooking);
+
+      await expect(
+        service.findOne('booking-1', {
+          id: 'another-patient-id',
+          role: UserRole.PATIENT,
+        } as unknown as Express.User),
+      ).rejects.toThrow(ApiException);
+    });
+  });
+
+  describe('updateStatus', () => {
+    it('should update booking status and dispatch notifications', async () => {
+      const mockBooking = {
+        id: 'booking-1',
+        status: BookingStatus.CHECKED_IN,
+        startTime: '10:00',
+        bookingDate: new Date('2026-06-01'),
+        doctor: { id: 'doctor-1' },
+        patientProfile: { userId: 'patient-user-id' },
+      };
+      mockBookingRepository.findBookingById.mockResolvedValue(mockBooking);
+      mockBookingRepository.updateBookingStatusTransaction.mockResolvedValue({
+        ...mockBooking,
+        status: BookingStatus.IN_PROGRESS,
+      });
+
+      const result = await service.updateStatus(
+        'booking-1',
+        {
+          status: BookingStatus.IN_PROGRESS,
+          reason: 'Call patient',
+        },
+        'staff-1',
+      );
+
+      expect(result.status).toBe(BookingStatus.IN_PROGRESS);
+      expect(mockValidator.validateStatusTransition).toHaveBeenCalledWith(
+        BookingStatus.CHECKED_IN,
+        BookingStatus.IN_PROGRESS,
+      );
+      expect(mockQueueGateway.broadcastQueueUpdate).toHaveBeenCalled();
+    });
+  });
+
+  describe('startExamination', () => {
+    it('should throw if doctor is busy with another active examination', async () => {
+      mockBookingRepository.findBookingById.mockResolvedValue({
+        id: 'booking-1',
+        doctorId: 'doctor-1',
+      });
+      mockBookingRepository.findActiveExamination.mockResolvedValue({
+        id: 'booking-busy',
+      });
+
+      await expect(
+        service.startExamination('booking-1', 'doctor-1'),
+      ).rejects.toThrow(ApiException);
+    });
+
+    it('should successfully start examination', async () => {
+      const mockBooking = {
+        id: 'booking-1',
+        doctorId: 'doctor-1',
+        doctor: { id: 'doctor-1' },
+        patientProfile: { userId: 'patient-1' },
+      };
+      mockBookingRepository.findBookingById.mockResolvedValue(mockBooking);
+      mockBookingRepository.findActiveExamination.mockResolvedValue(null);
+
+      mockBookingRepository.updateBookingStatusTransaction.mockResolvedValue({
+        ...mockBooking,
+        status: BookingStatus.IN_PROGRESS,
+      });
+
+      const result = await service.startExamination('booking-1', 'doctor-1');
+      expect(result.status).toBe(BookingStatus.IN_PROGRESS);
     });
   });
 });
