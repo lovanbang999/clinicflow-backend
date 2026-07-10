@@ -47,9 +47,22 @@ const buildQueueRecord = (overrides: Record<string, unknown> = {}) => ({
     status: BookingStatus.CHECKED_IN,
     bookingDate: new Date('2026-07-01'),
     doctorId: 'doctor-1',
-    patientProfile: { id: 'pp-1', userId: 'user-1', fullName: 'Patient A', phone: null, email: null, isGuest: false, patientCode: null },
+    patientProfile: {
+      id: 'pp-1',
+      userId: 'user-1',
+      fullName: 'Patient A',
+      phone: null,
+      email: null,
+      isGuest: false,
+      patientCode: null,
+    },
     doctor: { id: 'doctor-1', email: 'doc@clinic.com', fullName: 'Dr. Smith' },
-    service: { id: 'svc-1', name: 'Consultation', durationMinutes: 30, maxSlotsPerHour: 2 },
+    service: {
+      id: 'svc-1',
+      name: 'Consultation',
+      durationMinutes: 30,
+      maxSlotsPerHour: 2,
+    },
   },
   ...overrides,
 });
@@ -58,7 +71,10 @@ describe('QueueService', () => {
   let service: QueueService;
   let bookingRepository: MockBookingRepo;
   let clinicalRepository: MockClinicalRepo;
-  let notificationsService: { notifyAdmins: jest.Mock; createInAppNotification: jest.Mock };
+  let notificationsService: {
+    notifyAdmins: jest.Mock;
+    createInAppNotification: jest.Mock;
+  };
   let queueGateway: { broadcastQueueUpdate: jest.Mock };
 
   beforeEach(async () => {
@@ -109,16 +125,35 @@ describe('QueueService', () => {
   describe('addToQueue (check-in)', () => {
     it('should check in a pre-booked CONFIRMED booking successfully', async () => {
       // Arrange
-      const booking = buildBookingForQueue({ isPreBooked: true, startTime: '09:00', status: BookingStatus.CONFIRMED });
-      const checkInResult = { booking: { ...booking, status: BookingStatus.CHECKED_IN }, queue: { queuePosition: 1 } };
+      const booking = buildBookingForQueue({
+        isPreBooked: true,
+        startTime: '09:00',
+        status: BookingStatus.CONFIRMED,
+      });
+      const checkInResult = {
+        booking: { ...booking, status: BookingStatus.CHECKED_IN },
+        queue: { queuePosition: 1 },
+      };
 
-      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(booking);
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(null);
-      (bookingRepository.findLatestQueuePosition as jest.Mock).mockResolvedValue(0);
+      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        null,
+      );
+      (
+        bookingRepository.findLatestQueuePosition as jest.Mock
+      ).mockResolvedValue(0);
       (bookingRepository.countCheckedInQueue as jest.Mock).mockResolvedValue(2);
-      (bookingRepository.checkInTransaction as jest.Mock).mockResolvedValue(checkInResult);
-      (bookingRepository.findActivePreBookingsForRecalculation as jest.Mock).mockResolvedValue([]);
-      (bookingRepository.findActiveWalkInQueueForRecalculation as jest.Mock).mockResolvedValue([]);
+      (bookingRepository.checkInTransaction as jest.Mock).mockResolvedValue(
+        checkInResult,
+      );
+      (
+        bookingRepository.findActivePreBookingsForRecalculation as jest.Mock
+      ).mockResolvedValue([]);
+      (
+        bookingRepository.findActiveWalkInQueueForRecalculation as jest.Mock
+      ).mockResolvedValue([]);
 
       // Act
       const result = await service.addToQueue('booking-1', 'user-1');
@@ -129,26 +164,45 @@ describe('QueueService', () => {
         'booking-1',
         booking.doctorId,
         booking.bookingDate,
-        true,      // isPreBooked
-        '09:00',   // startTime
+        true, // isPreBooked
+        '09:00', // startTime
         'user-1',
-        60,        // estWaitMinutes = 2 * 30
-        1,         // currentPosition = 0 + 1
+        60, // estWaitMinutes = 2 * 30
+        1, // currentPosition = 0 + 1
       );
     });
 
     it('should check in a walk-in booking successfully', async () => {
       // Arrange
-      const booking = buildBookingForQueue({ isPreBooked: false, startTime: null, status: BookingStatus.CONFIRMED });
-      const checkInResult = { booking: { ...booking }, queue: { queuePosition: 3 } };
+      const booking = buildBookingForQueue({
+        isPreBooked: false,
+        startTime: null,
+        status: BookingStatus.CONFIRMED,
+      });
+      const checkInResult = {
+        booking: { ...booking },
+        queue: { queuePosition: 3 },
+      };
 
-      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(booking);
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(null);
-      (bookingRepository.findLatestQueuePosition as jest.Mock).mockResolvedValue(2);
+      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        null,
+      );
+      (
+        bookingRepository.findLatestQueuePosition as jest.Mock
+      ).mockResolvedValue(2);
       (bookingRepository.countCheckedInQueue as jest.Mock).mockResolvedValue(0);
-      (bookingRepository.checkInTransaction as jest.Mock).mockResolvedValue(checkInResult);
-      (bookingRepository.findActivePreBookingsForRecalculation as jest.Mock).mockResolvedValue([]);
-      (bookingRepository.findActiveWalkInQueueForRecalculation as jest.Mock).mockResolvedValue([]);
+      (bookingRepository.checkInTransaction as jest.Mock).mockResolvedValue(
+        checkInResult,
+      );
+      (
+        bookingRepository.findActivePreBookingsForRecalculation as jest.Mock
+      ).mockResolvedValue([]);
+      (
+        bookingRepository.findActiveWalkInQueueForRecalculation as jest.Mock
+      ).mockResolvedValue([]);
 
       // Act
       const result = await service.addToQueue('booking-1', 'user-1');
@@ -159,44 +213,64 @@ describe('QueueService', () => {
         'booking-1',
         booking.doctorId,
         booking.bookingDate,
-        false,   // isPreBooked
-        null,    // startTime
+        false, // isPreBooked
+        null, // startTime
         'user-1',
-        0,       // estWaitMinutes = 0 * 30
-        3,       // currentPosition = 2 + 1
+        0, // estWaitMinutes = 0 * 30
+        3, // currentPosition = 2 + 1
       );
     });
 
     it('should throw 404 ApiException when booking is not found', async () => {
       // Arrange
-      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(null);
+      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(
+        null,
+      );
 
       // Act & Assert
-      await expect(service.addToQueue('missing-booking', 'user-1')).rejects.toThrow(ApiException);
+      await expect(
+        service.addToQueue('missing-booking', 'user-1'),
+      ).rejects.toThrow(ApiException);
     });
 
     it('should throw 400 ApiException when booking status is not CONFIRMED', async () => {
       // Arrange
       const booking = buildBookingForQueue({ status: BookingStatus.PENDING });
-      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(booking);
+      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(
+        booking,
+      );
 
       // Act & Assert
-      await expect(service.addToQueue('booking-1', 'user-1')).rejects.toMatchObject({
-        response: expect.objectContaining({ messageCode: MessageCodes.BOOKING_INVALID_STATUS }),
-      });
+      const expectedShape = {
+        response: expect.objectContaining({
+          messageCode: MessageCodes.BOOKING_INVALID_STATUS,
+        }) as unknown,
+      };
+      await expect(
+        service.addToQueue('booking-1', 'user-1'),
+      ).rejects.toMatchObject(expectedShape);
     });
 
     it('should throw 409 ApiException when booking is already in queue', async () => {
       // Arrange
       const booking = buildBookingForQueue({ status: BookingStatus.CONFIRMED });
       const existingQueue = buildQueueRecord();
-      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(booking);
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(existingQueue);
+      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        existingQueue,
+      );
 
       // Act & Assert
-      await expect(service.addToQueue('booking-1', 'user-1')).rejects.toMatchObject({
-        response: expect.objectContaining({ messageCode: MessageCodes.BOOKING_ALREADY_IN_QUEUE }),
-      });
+      const expectedShape = {
+        response: expect.objectContaining({
+          messageCode: MessageCodes.BOOKING_ALREADY_IN_QUEUE,
+        }) as unknown,
+      };
+      await expect(
+        service.addToQueue('booking-1', 'user-1'),
+      ).rejects.toMatchObject(expectedShape);
     });
 
     it('should broadcast gateway event after successful check-in', async () => {
@@ -204,13 +278,25 @@ describe('QueueService', () => {
       const booking = buildBookingForQueue({ status: BookingStatus.CONFIRMED });
       const checkInResult = { booking, queue: { queuePosition: 1 } };
 
-      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(booking);
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(null);
-      (bookingRepository.findLatestQueuePosition as jest.Mock).mockResolvedValue(0);
+      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        null,
+      );
+      (
+        bookingRepository.findLatestQueuePosition as jest.Mock
+      ).mockResolvedValue(0);
       (bookingRepository.countCheckedInQueue as jest.Mock).mockResolvedValue(0);
-      (bookingRepository.checkInTransaction as jest.Mock).mockResolvedValue(checkInResult);
-      (bookingRepository.findActivePreBookingsForRecalculation as jest.Mock).mockResolvedValue([]);
-      (bookingRepository.findActiveWalkInQueueForRecalculation as jest.Mock).mockResolvedValue([]);
+      (bookingRepository.checkInTransaction as jest.Mock).mockResolvedValue(
+        checkInResult,
+      );
+      (
+        bookingRepository.findActivePreBookingsForRecalculation as jest.Mock
+      ).mockResolvedValue([]);
+      (
+        bookingRepository.findActiveWalkInQueueForRecalculation as jest.Mock
+      ).mockResolvedValue([]);
 
       // Act
       await service.addToQueue('booking-1', 'user-1');
@@ -228,20 +314,35 @@ describe('QueueService', () => {
       const booking = buildBookingForQueue({ status: BookingStatus.CONFIRMED });
       const checkInResult = { booking, queue: { queuePosition: 1 } };
 
-      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(booking);
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(null);
-      (bookingRepository.findLatestQueuePosition as jest.Mock).mockResolvedValue(0);
+      (bookingRepository.findBookingForQueue as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        null,
+      );
+      (
+        bookingRepository.findLatestQueuePosition as jest.Mock
+      ).mockResolvedValue(0);
       (bookingRepository.countCheckedInQueue as jest.Mock).mockResolvedValue(0);
-      (bookingRepository.checkInTransaction as jest.Mock).mockResolvedValue(checkInResult);
-      (bookingRepository.findActivePreBookingsForRecalculation as jest.Mock).mockResolvedValue([]);
-      (bookingRepository.findActiveWalkInQueueForRecalculation as jest.Mock).mockResolvedValue([]);
+      (bookingRepository.checkInTransaction as jest.Mock).mockResolvedValue(
+        checkInResult,
+      );
+      (
+        bookingRepository.findActivePreBookingsForRecalculation as jest.Mock
+      ).mockResolvedValue([]);
+      (
+        bookingRepository.findActiveWalkInQueueForRecalculation as jest.Mock
+      ).mockResolvedValue([]);
 
       // Act
       await service.addToQueue('booking-1', 'user-1');
 
       // Assert
+      const expectedNotification = expect.objectContaining({
+        metadata: expect.objectContaining({ bookingId: booking.id }) as unknown,
+      }) as unknown;
       expect(notificationsService.notifyAdmins).toHaveBeenCalledWith(
-        expect.objectContaining({ metadata: expect.objectContaining({ bookingId: booking.id }) }),
+        expectedNotification,
       );
     });
   });
@@ -287,7 +388,9 @@ describe('QueueService', () => {
     it('should return queue record when found directly', async () => {
       // Arrange
       const queueRecord = buildQueueRecord();
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(queueRecord);
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        queueRecord,
+      );
 
       // Act
       const result = await service.findByBookingId('booking-1');
@@ -298,7 +401,9 @@ describe('QueueService', () => {
 
     it('should return synthetic queue record when queue is missing but booking exists', async () => {
       // Arrange
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(null);
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        null,
+      );
       const booking = {
         id: 'booking-1',
         doctorId: 'doctor-1',
@@ -308,7 +413,9 @@ describe('QueueService', () => {
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-      (bookingRepository.findBookingWithRelations as jest.Mock).mockResolvedValue(booking);
+      (
+        bookingRepository.findBookingWithRelations as jest.Mock
+      ).mockResolvedValue(booking);
 
       // Act
       const result = await service.findByBookingId('booking-1');
@@ -321,11 +428,17 @@ describe('QueueService', () => {
 
     it('should throw ApiException when neither queue nor booking is found', async () => {
       // Arrange
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(null);
-      (bookingRepository.findBookingWithRelations as jest.Mock).mockResolvedValue(null);
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        null,
+      );
+      (
+        bookingRepository.findBookingWithRelations as jest.Mock
+      ).mockResolvedValue(null);
 
       // Act & Assert
-      await expect(service.findByBookingId('missing')).rejects.toThrow(ApiException);
+      await expect(service.findByBookingId('missing')).rejects.toThrow(
+        ApiException,
+      );
     });
   });
 
@@ -336,9 +449,15 @@ describe('QueueService', () => {
       const promotedQueue = { ...queueRecord, id: 'queue-promoted' };
 
       // findByBookingId returns a QueueRecordWithRelations, so mock findQueueByBookingId
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(queueRecord);
-      (bookingRepository.countConfirmedBookingsForSlot as jest.Mock).mockResolvedValue(0); // slot available
-      (bookingRepository.promoteQueueTransaction as jest.Mock).mockResolvedValue(promotedQueue);
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        queueRecord,
+      );
+      (
+        bookingRepository.countConfirmedBookingsForSlot as jest.Mock
+      ).mockResolvedValue(0); // slot available
+      (
+        bookingRepository.promoteQueueTransaction as jest.Mock
+      ).mockResolvedValue(promotedQueue);
 
       // Act
       const result = await service.promoteManually(
@@ -368,26 +487,41 @@ describe('QueueService', () => {
           status: BookingStatus.CONFIRMED,
         },
       });
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(queueRecord);
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        queueRecord,
+      );
 
       // Act & Assert
       await expect(
-        service.promoteManually({ bookingId: 'booking-1', reason: '' }, 'admin-1'),
+        service.promoteManually(
+          { bookingId: 'booking-1', reason: '' },
+          'admin-1',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('should throw ApiException when slot is full', async () => {
       // Arrange
       const queueRecord = buildQueueRecord();
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(queueRecord);
-      (bookingRepository.countConfirmedBookingsForSlot as jest.Mock).mockResolvedValue(2); // maxSlotsPerHour = 2, slot full
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        queueRecord,
+      );
+      (
+        bookingRepository.countConfirmedBookingsForSlot as jest.Mock
+      ).mockResolvedValue(2); // maxSlotsPerHour = 2, slot full
 
       // Act & Assert
+      const expectedShape = {
+        response: expect.objectContaining({
+          messageCode: MessageCodes.QUEUE_SLOT_FULL,
+        }) as unknown,
+      };
       await expect(
-        service.promoteManually({ bookingId: 'booking-1', reason: '' }, 'admin-1'),
-      ).rejects.toMatchObject({
-        response: expect.objectContaining({ messageCode: MessageCodes.QUEUE_SLOT_FULL }),
-      });
+        service.promoteManually(
+          { bookingId: 'booking-1', reason: '' },
+          'admin-1',
+        ),
+      ).rejects.toMatchObject(expectedShape);
     });
   });
 
@@ -395,14 +529,20 @@ describe('QueueService', () => {
     it('should remove from queue and broadcast update', async () => {
       // Arrange
       const queueRecord = buildQueueRecord();
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(queueRecord);
-      (bookingRepository.removeFromQueueAndShiftTransaction as jest.Mock).mockResolvedValue(undefined);
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        queueRecord,
+      );
+      (
+        bookingRepository.removeFromQueueAndShiftTransaction as jest.Mock
+      ).mockResolvedValue(undefined);
 
       // Act
       await service.removeFromQueue('booking-1');
 
       // Assert
-      expect(bookingRepository.removeFromQueueAndShiftTransaction).toHaveBeenCalledWith('booking-1');
+      expect(
+        bookingRepository.removeFromQueueAndShiftTransaction,
+      ).toHaveBeenCalledWith('booking-1');
       expect(queueGateway.broadcastQueueUpdate).toHaveBeenCalledWith(
         queueRecord.doctorId,
         'UPDATE',
@@ -412,13 +552,17 @@ describe('QueueService', () => {
 
     it('should silently succeed when booking is not in queue', async () => {
       // Arrange
-      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(null);
+      (bookingRepository.findQueueByBookingId as jest.Mock).mockResolvedValue(
+        null,
+      );
 
       // Act
       await service.removeFromQueue('not-in-queue');
 
       // Assert
-      expect(bookingRepository.removeFromQueueAndShiftTransaction).not.toHaveBeenCalled();
+      expect(
+        bookingRepository.removeFromQueueAndShiftTransaction,
+      ).not.toHaveBeenCalled();
       expect(queueGateway.broadcastQueueUpdate).not.toHaveBeenCalled();
     });
   });
@@ -429,7 +573,11 @@ describe('QueueService', () => {
       (bookingRepository.findFirstInQueue as jest.Mock).mockResolvedValue(null);
 
       // Act
-      const result = await service.autoPromote('doctor-1', '2026-07-01', '09:00');
+      const result = await service.autoPromote(
+        'doctor-1',
+        '2026-07-01',
+        '09:00',
+      );
 
       // Assert
       expect(result).toBe(false);
@@ -438,12 +586,23 @@ describe('QueueService', () => {
 
     it('should return false when slot is still full', async () => {
       // Arrange
-      const firstInQueue = { bookingId: 'booking-1', booking: { service: { maxSlotsPerHour: 1 } } };
-      (bookingRepository.findFirstInQueue as jest.Mock).mockResolvedValue(firstInQueue);
-      (bookingRepository.countConfirmedBookingsForSlot as jest.Mock).mockResolvedValue(1); // full
+      const firstInQueue = {
+        bookingId: 'booking-1',
+        booking: { service: { maxSlotsPerHour: 1 } },
+      };
+      (bookingRepository.findFirstInQueue as jest.Mock).mockResolvedValue(
+        firstInQueue,
+      );
+      (
+        bookingRepository.countConfirmedBookingsForSlot as jest.Mock
+      ).mockResolvedValue(1); // full
 
       // Act
-      const result = await service.autoPromote('doctor-1', '2026-07-01', '09:00');
+      const result = await service.autoPromote(
+        'doctor-1',
+        '2026-07-01',
+        '09:00',
+      );
 
       // Assert
       expect(result).toBe(false);
@@ -451,13 +610,26 @@ describe('QueueService', () => {
 
     it('should promote the first booking and return true when slot available', async () => {
       // Arrange
-      const firstInQueue = { bookingId: 'booking-1', booking: { service: { maxSlotsPerHour: 2 } } };
-      (bookingRepository.findFirstInQueue as jest.Mock).mockResolvedValue(firstInQueue);
-      (bookingRepository.countConfirmedBookingsForSlot as jest.Mock).mockResolvedValue(0);
-      (bookingRepository.promoteQueueTransaction as jest.Mock).mockResolvedValue({ id: 'queue-1' });
+      const firstInQueue = {
+        bookingId: 'booking-1',
+        booking: { service: { maxSlotsPerHour: 2 } },
+      };
+      (bookingRepository.findFirstInQueue as jest.Mock).mockResolvedValue(
+        firstInQueue,
+      );
+      (
+        bookingRepository.countConfirmedBookingsForSlot as jest.Mock
+      ).mockResolvedValue(0);
+      (
+        bookingRepository.promoteQueueTransaction as jest.Mock
+      ).mockResolvedValue({ id: 'queue-1' });
 
       // Act
-      const result = await service.autoPromote('doctor-1', '2026-07-01', '09:00');
+      const result = await service.autoPromote(
+        'doctor-1',
+        '2026-07-01',
+        '09:00',
+      );
 
       // Assert
       expect(result).toBe(true);
