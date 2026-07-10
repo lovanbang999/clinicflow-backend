@@ -9,16 +9,22 @@ import { BookingStatus } from '@prisma/client';
 
 type MockBookingRepo = Partial<Record<keyof IBookingRepository, jest.Mock>>;
 
-const buildBooking = (overrides: Partial<{
-  id: string;
-  bookingCode: string;
-  startTime: string;
-  endTime: string;
-  status: BookingStatus;
-  patientProfile: { userId: string; fullName: string; user: { email: string } | null } | null;
-  doctor: { fullName: string } | null;
-  service: { name: string; durationMinutes: number } | null;
-}> = {}) => ({
+const buildBooking = (
+  overrides: Partial<{
+    id: string;
+    bookingCode: string;
+    startTime: string;
+    endTime: string;
+    status: BookingStatus;
+    patientProfile: {
+      userId: string;
+      fullName: string;
+      user: { email: string } | null;
+    } | null;
+    doctor: { fullName: string } | null;
+    service: { name: string; durationMinutes: number } | null;
+  }> = {},
+) => ({
   id: 'booking-1',
   bookingCode: 'BK001',
   startTime: '08:00',
@@ -63,18 +69,26 @@ describe('BookingReminderService', () => {
     it('should find confirmed bookings in tomorrow date range and send reminders', async () => {
       // Arrange
       const booking = buildBooking();
-      (bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock).mockResolvedValue([booking]);
+      (
+        bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock
+      ).mockResolvedValue([booking]);
 
       // Act
       await service.sendTomorrowReminders();
 
       // Assert
-      expect(bookingRepository.findConfirmedBookingsInTimeRange).toHaveBeenCalledTimes(1);
-      const [start, end] = (bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock).mock.calls[0];
+      expect(
+        bookingRepository.findConfirmedBookingsInTimeRange,
+      ).toHaveBeenCalledTimes(1);
+      const [start, end]: [Date, Date] = (
+        bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock
+      ).mock.calls[0] as [Date, Date];
       // start and end should span tomorrow
       expect(end.getTime()).toBeGreaterThan(start.getTime());
       // Roughly 24 hours apart
-      expect(end.getTime() - start.getTime()).toBeGreaterThan(23 * 60 * 60 * 1000);
+      expect(end.getTime() - start.getTime()).toBeGreaterThan(
+        23 * 60 * 60 * 1000,
+      );
 
       expect(notificationsService.sendBookingReminder).toHaveBeenCalledTimes(1);
       expect(notificationsService.sendBookingReminder).toHaveBeenCalledWith(
@@ -102,7 +116,9 @@ describe('BookingReminderService', () => {
           user: null,
         },
       });
-      (bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock).mockResolvedValue([bookingNoEmail]);
+      (
+        bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock
+      ).mockResolvedValue([bookingNoEmail]);
 
       // Act
       await service.sendTomorrowReminders();
@@ -114,7 +130,9 @@ describe('BookingReminderService', () => {
     it('should skip bookings where patientProfile is null', async () => {
       // Arrange
       const bookingNoProfile = buildBooking({ patientProfile: null });
-      (bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock).mockResolvedValue([bookingNoProfile]);
+      (
+        bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock
+      ).mockResolvedValue([bookingNoProfile]);
 
       // Act
       await service.sendTomorrowReminders();
@@ -125,7 +143,9 @@ describe('BookingReminderService', () => {
 
     it('should handle an empty bookings list without sending any reminders', async () => {
       // Arrange
-      (bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock).mockResolvedValue([]);
+      (
+        bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock
+      ).mockResolvedValue([]);
 
       // Act
       await service.sendTomorrowReminders();
@@ -136,9 +156,27 @@ describe('BookingReminderService', () => {
 
     it('should send reminders for multiple valid bookings', async () => {
       // Arrange
-      const booking1 = buildBooking({ id: 'b1', bookingCode: 'BK001', patientProfile: { userId: 'u1', fullName: 'Patient A', user: { email: 'a@test.com' } } });
-      const booking2 = buildBooking({ id: 'b2', bookingCode: 'BK002', patientProfile: { userId: 'u2', fullName: 'Patient B', user: { email: 'b@test.com' } } });
-      (bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock).mockResolvedValue([booking1, booking2]);
+      const booking1 = buildBooking({
+        id: 'b1',
+        bookingCode: 'BK001',
+        patientProfile: {
+          userId: 'u1',
+          fullName: 'Patient A',
+          user: { email: 'a@test.com' },
+        },
+      });
+      const booking2 = buildBooking({
+        id: 'b2',
+        bookingCode: 'BK002',
+        patientProfile: {
+          userId: 'u2',
+          fullName: 'Patient B',
+          user: { email: 'b@test.com' },
+        },
+      });
+      (
+        bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock
+      ).mockResolvedValue([booking1, booking2]);
 
       // Act
       await service.sendTomorrowReminders();
@@ -157,7 +195,9 @@ describe('BookingReminderService', () => {
         doctor: null,
         service: null,
       });
-      (bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock).mockResolvedValue([bookingMinimal]);
+      (
+        bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock
+      ).mockResolvedValue([bookingMinimal]);
 
       // Act
       await service.sendTomorrowReminders();
@@ -177,9 +217,9 @@ describe('BookingReminderService', () => {
 
     it('should not throw and log error if repository throws', async () => {
       // Arrange
-      (bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock).mockRejectedValue(
-        new Error('DB connection lost'),
-      );
+      (
+        bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock
+      ).mockRejectedValue(new Error('DB connection lost'));
 
       // Act & Assert: should NOT throw — error is caught internally
       await expect(service.sendTomorrowReminders()).resolves.toBeUndefined();
@@ -193,7 +233,10 @@ describe('BookingReminderService', () => {
       const now = new Date();
       const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
       const targetHour = oneHourLater.getHours().toString().padStart(2, '0');
-      const otherHour = oneHourLater.getHours() === 23 ? '00' : String(oneHourLater.getHours() + 1).padStart(2, '0');
+      const otherHour =
+        oneHourLater.getHours() === 23
+          ? '00'
+          : String(oneHourLater.getHours() + 1).padStart(2, '0');
 
       const matchingBooking = buildBooking({ startTime: `${targetHour}:00` });
       const nonMatchingBooking = buildBooking({
@@ -202,10 +245,9 @@ describe('BookingReminderService', () => {
         startTime: `${otherHour}:00`,
       });
 
-      (bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock).mockResolvedValue([
-        matchingBooking,
-        nonMatchingBooking,
-      ]);
+      (
+        bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock
+      ).mockResolvedValue([matchingBooking, nonMatchingBooking]);
 
       // Act
       await service.sendOneHourReminders();
@@ -219,8 +261,12 @@ describe('BookingReminderService', () => {
 
     it('should skip bookings without startTime during 1-hour reminder', async () => {
       // Arrange
-      const bookingNoTime = buildBooking({ startTime: undefined as unknown as string });
-      (bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock).mockResolvedValue([bookingNoTime]);
+      const bookingNoTime = buildBooking({
+        startTime: undefined as unknown as string,
+      });
+      (
+        bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock
+      ).mockResolvedValue([bookingNoTime]);
 
       // Act
       await service.sendOneHourReminders();
@@ -231,9 +277,9 @@ describe('BookingReminderService', () => {
 
     it('should not throw if 1h reminder repository call fails', async () => {
       // Arrange
-      (bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock).mockRejectedValue(
-        new Error('Timeout'),
-      );
+      (
+        bookingRepository.findConfirmedBookingsInTimeRange as jest.Mock
+      ).mockRejectedValue(new Error('Timeout'));
 
       // Act & Assert
       await expect(service.sendOneHourReminders()).resolves.toBeUndefined();
