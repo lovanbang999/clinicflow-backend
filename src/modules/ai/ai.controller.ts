@@ -125,7 +125,7 @@ export class AiController {
     return { data: result };
   }
 
-  // ─── Private Helpers ───────────────────────────────────────────────────────
+  // ─── Private Helpers ───
 
   private async resolvePatientContext(
     userId: string,

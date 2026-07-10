@@ -53,8 +53,12 @@ describe('AiSessionService', () => {
       const patientProfileId = 'profile-456';
       const sessionId = 'session-abc';
 
-      (profileRepository.findPatientProfileIdByUserId as jest.Mock).mockResolvedValue(patientProfileId);
-      (aiRepository.createChatSession as jest.Mock).mockResolvedValue({ id: sessionId });
+      (
+        profileRepository.findPatientProfileIdByUserId as jest.Mock
+      ).mockResolvedValue(patientProfileId);
+      (aiRepository.createChatSession as jest.Mock).mockResolvedValue({
+        id: sessionId,
+      });
 
       // Act
       const result = await service.createSession(userId);
@@ -75,8 +79,12 @@ describe('AiSessionService', () => {
       const modelName = 'gemini-1.5-pro';
       const sessionId = 'session-xyz';
 
-      (profileRepository.findPatientProfileIdByUserId as jest.Mock).mockResolvedValue(null);
-      (aiRepository.createChatSession as jest.Mock).mockResolvedValue({ id: sessionId });
+      (
+        profileRepository.findPatientProfileIdByUserId as jest.Mock
+      ).mockResolvedValue(null);
+      (aiRepository.createChatSession as jest.Mock).mockResolvedValue({
+        id: sessionId,
+      });
 
       // Act
       const result = await service.createSession(userId, modelName);
@@ -94,8 +102,12 @@ describe('AiSessionService', () => {
     it('should handle missing patient profile gracefully (patientProfileId = null)', async () => {
       // Arrange
       const userId = 'user-no-profile';
-      (profileRepository.findPatientProfileIdByUserId as jest.Mock).mockResolvedValue(null);
-      (aiRepository.createChatSession as jest.Mock).mockResolvedValue({ id: 'session-1' });
+      (
+        profileRepository.findPatientProfileIdByUserId as jest.Mock
+      ).mockResolvedValue(null);
+      (aiRepository.createChatSession as jest.Mock).mockResolvedValue({
+        id: 'session-1',
+      });
 
       // Act
       const result = await service.createSession(userId);
@@ -173,7 +185,10 @@ describe('AiSessionService', () => {
       await service.addTokens(sessionId, tokens);
 
       // Assert
-      expect(aiRepository.incrementSessionTokens).toHaveBeenCalledWith(sessionId, tokens);
+      expect(aiRepository.incrementSessionTokens).toHaveBeenCalledWith(
+        sessionId,
+        tokens,
+      );
     });
   });
 
@@ -188,7 +203,11 @@ describe('AiSessionService', () => {
       await service.endSession(sessionId, outcome);
 
       // Assert
-      expect(aiRepository.endSession).toHaveBeenCalledWith(sessionId, outcome, undefined);
+      expect(aiRepository.endSession).toHaveBeenCalledWith(
+        sessionId,
+        outcome,
+        undefined,
+      );
     });
 
     it('should end session with outcome and bookingId', async () => {
@@ -202,7 +221,11 @@ describe('AiSessionService', () => {
       await service.endSession(sessionId, outcome, bookingId);
 
       // Assert
-      expect(aiRepository.endSession).toHaveBeenCalledWith(sessionId, outcome, bookingId);
+      expect(aiRepository.endSession).toHaveBeenCalledWith(
+        sessionId,
+        outcome,
+        bookingId,
+      );
     });
   });
 
@@ -229,7 +252,10 @@ describe('AiSessionService', () => {
       await service.reportSession(sessionId);
 
       // Assert
-      expect(aiRepository.reportSession).toHaveBeenCalledWith(sessionId, undefined);
+      expect(aiRepository.reportSession).toHaveBeenCalledWith(
+        sessionId,
+        undefined,
+      );
     });
   });
 
@@ -248,7 +274,9 @@ describe('AiSessionService', () => {
           messages: [{ content: 'First message' }],
         },
       ];
-      (aiRepository.findSessionsPaginated as jest.Mock).mockResolvedValue(mockSessions);
+      (aiRepository.findSessionsPaginated as jest.Mock).mockResolvedValue(
+        mockSessions,
+      );
       (aiRepository.countSessions as jest.Mock).mockResolvedValue(1);
 
       // Act
@@ -263,7 +291,11 @@ describe('AiSessionService', () => {
         messageCount: 4,
         firstMessage: 'First message',
       });
-      expect(aiRepository.findSessionsPaginated).toHaveBeenCalledWith(userId, 0, 20);
+      expect(aiRepository.findSessionsPaginated).toHaveBeenCalledWith(
+        userId,
+        0,
+        20,
+      );
     });
 
     it('should return null firstMessage when session has no messages', async () => {
@@ -280,7 +312,9 @@ describe('AiSessionService', () => {
           messages: [],
         },
       ];
-      (aiRepository.findSessionsPaginated as jest.Mock).mockResolvedValue(mockSessions);
+      (aiRepository.findSessionsPaginated as jest.Mock).mockResolvedValue(
+        mockSessions,
+      );
       (aiRepository.countSessions as jest.Mock).mockResolvedValue(1);
 
       // Act
@@ -297,7 +331,10 @@ describe('AiSessionService', () => {
       (aiRepository.findSessionDetails as jest.Mock).mockResolvedValue(null);
 
       // Act
-      const result = await service.getSessionMessages('bad-session', 'user-123');
+      const result = await service.getSessionMessages(
+        'bad-session',
+        'user-123',
+      );
 
       // Assert
       expect(result).toBeNull();
@@ -322,7 +359,9 @@ describe('AiSessionService', () => {
           },
         ],
       };
-      (aiRepository.findSessionDetails as jest.Mock).mockResolvedValue(mockDetails);
+      (aiRepository.findSessionDetails as jest.Mock).mockResolvedValue(
+        mockDetails,
+      );
 
       // Act
       const result = await service.getSessionMessages(sessionId, userId);
@@ -332,7 +371,10 @@ describe('AiSessionService', () => {
       expect(result!.session.id).toBe(sessionId);
       expect(result!.messages).toHaveLength(1);
       expect(result!.messages[0].role).toBe(AiMessageRole.USER);
-      expect(aiRepository.findSessionDetails).toHaveBeenCalledWith(sessionId, userId);
+      expect(aiRepository.findSessionDetails).toHaveBeenCalledWith(
+        sessionId,
+        userId,
+      );
     });
   });
 
@@ -346,7 +388,10 @@ describe('AiSessionService', () => {
 
       // Assert
       expect(result).toBe(true);
-      expect(aiRepository.checkSessionOwnership).toHaveBeenCalledWith('session-abc', 'user-123');
+      expect(aiRepository.checkSessionOwnership).toHaveBeenCalledWith(
+        'session-abc',
+        'user-123',
+      );
     });
   });
 });
