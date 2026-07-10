@@ -5,7 +5,11 @@ import {
   IClinicalRepository,
 } from '../database/interfaces/clinical.repository.interface';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationType, ServiceOrderStatus, VisitServiceOrder } from '@prisma/client';
+import {
+  NotificationType,
+  ServiceOrderStatus,
+  VisitServiceOrder,
+} from '@prisma/client';
 import {
   BadRequestException,
   ConflictException,
@@ -14,7 +18,9 @@ import {
 
 type MockClinicalRepo = Partial<Record<keyof IClinicalRepository, jest.Mock>>;
 
-const buildOrder = (overrides: Partial<VisitServiceOrder> = {}): VisitServiceOrder =>
+const buildOrder = (
+  overrides: Partial<VisitServiceOrder> = {},
+): VisitServiceOrder =>
   ({
     id: 'order-1',
     bookingId: 'booking-1',
@@ -34,7 +40,7 @@ const buildOrder = (overrides: Partial<VisitServiceOrder> = {}): VisitServiceOrd
     completedAt: null,
     notes: null,
     ...overrides,
-  } as VisitServiceOrder);
+  }) as VisitServiceOrder;
 
 describe('VisitServiceOrdersService', () => {
   let service: VisitServiceOrdersService;
@@ -72,27 +78,33 @@ describe('VisitServiceOrdersService', () => {
         { id: 'order-1', status: ServiceOrderStatus.PENDING },
         { id: 'order-2', status: ServiceOrderStatus.IN_PROGRESS },
       ];
-      (clinicalRepository.findVisitServiceOrdersWorklist as jest.Mock).mockResolvedValue(mockWorklist);
+      (
+        clinicalRepository.findVisitServiceOrdersWorklist as jest.Mock
+      ).mockResolvedValue(mockWorklist);
 
       // Act
       const result = await service.getWorklist('tech-1');
 
       // Assert
       expect(result).toEqual(mockWorklist);
-      expect(clinicalRepository.findVisitServiceOrdersWorklist).toHaveBeenCalledWith(undefined);
+      expect(
+        clinicalRepository.findVisitServiceOrdersWorklist,
+      ).toHaveBeenCalledWith(undefined);
     });
 
     it('should pass status filter to clinical repository', async () => {
       // Arrange
-      (clinicalRepository.findVisitServiceOrdersWorklist as jest.Mock).mockResolvedValue([]);
+      (
+        clinicalRepository.findVisitServiceOrdersWorklist as jest.Mock
+      ).mockResolvedValue([]);
 
       // Act
       await service.getWorklist('tech-1', ServiceOrderStatus.PAID);
 
       // Assert
-      expect(clinicalRepository.findVisitServiceOrdersWorklist).toHaveBeenCalledWith(
-        ServiceOrderStatus.PAID,
-      );
+      expect(
+        clinicalRepository.findVisitServiceOrdersWorklist,
+      ).toHaveBeenCalledWith(ServiceOrderStatus.PAID);
     });
   });
 
@@ -100,49 +112,77 @@ describe('VisitServiceOrdersService', () => {
     it('should start a PENDING order successfully', async () => {
       // Arrange
       const order = buildOrder({ status: ServiceOrderStatus.PENDING });
-      const updatedOrder = buildOrder({ status: ServiceOrderStatus.IN_PROGRESS });
+      const updatedOrder = buildOrder({
+        status: ServiceOrderStatus.IN_PROGRESS,
+      });
 
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(order);
-      (clinicalRepository.startVisitServiceOrder as jest.Mock).mockResolvedValue(updatedOrder);
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(order);
+      (
+        clinicalRepository.startVisitServiceOrder as jest.Mock
+      ).mockResolvedValue(updatedOrder);
 
       // Act
       const result = await service.startOrder('order-1', 'tech-1');
 
       // Assert
       expect(result.status).toBe(ServiceOrderStatus.IN_PROGRESS);
-      expect(clinicalRepository.startVisitServiceOrder).toHaveBeenCalledWith('order-1', 'tech-1');
+      expect(clinicalRepository.startVisitServiceOrder).toHaveBeenCalledWith(
+        'order-1',
+        'tech-1',
+      );
     });
 
     it('should throw NotFoundException when order does not exist', async () => {
       // Arrange
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(null);
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(null);
 
       // Act & Assert
-      await expect(service.startOrder('missing-order', 'tech-1')).rejects.toThrow(NotFoundException);
+      await expect(
+        service.startOrder('missing-order', 'tech-1'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('should throw ConflictException when order is not in PENDING status', async () => {
       // Arrange
       const order = buildOrder({ status: ServiceOrderStatus.IN_PROGRESS });
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(order);
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(order);
 
       // Act & Assert
-      await expect(service.startOrder('order-1', 'tech-1')).rejects.toThrow(ConflictException);
+      await expect(service.startOrder('order-1', 'tech-1')).rejects.toThrow(
+        ConflictException,
+      );
     });
 
     it('should call clinical repository with domain-level parameters (no Prisma objects)', async () => {
       // Arrange
       const order = buildOrder({ status: ServiceOrderStatus.PENDING });
-      const updatedOrder = buildOrder({ status: ServiceOrderStatus.IN_PROGRESS });
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(order);
-      (clinicalRepository.startVisitServiceOrder as jest.Mock).mockResolvedValue(updatedOrder);
+      const updatedOrder = buildOrder({
+        status: ServiceOrderStatus.IN_PROGRESS,
+      });
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(order);
+      (
+        clinicalRepository.startVisitServiceOrder as jest.Mock
+      ).mockResolvedValue(updatedOrder);
 
       // Act
       await service.startOrder('order-1', 'tech-42');
 
       // Assert — the call must use plain string IDs, not Prisma-shaped objects
-      expect(clinicalRepository.startVisitServiceOrder).toHaveBeenCalledWith('order-1', 'tech-42');
-      const [arg0, arg1] = (clinicalRepository.startVisitServiceOrder as jest.Mock).mock.calls[0];
+      expect(clinicalRepository.startVisitServiceOrder).toHaveBeenCalledWith(
+        'order-1',
+        'tech-42',
+      );
+      const [arg0, arg1]: [string, string] = (
+        clinicalRepository.startVisitServiceOrder as jest.Mock
+      ).mock.calls[0] as [string, string];
       expect(typeof arg0).toBe('string');
       expect(typeof arg1).toBe('string');
     });
@@ -152,7 +192,9 @@ describe('VisitServiceOrdersService', () => {
     it('should complete an IN_PROGRESS order and notify doctor when advanced', async () => {
       // Arrange
       const order = buildOrder({ status: ServiceOrderStatus.IN_PROGRESS });
-      const completedOrder = buildOrder({ status: ServiceOrderStatus.COMPLETED });
+      const completedOrder = buildOrder({
+        status: ServiceOrderStatus.COMPLETED,
+      });
       const dto = { resultText: 'All normal', isAbnormal: false };
 
       const result = {
@@ -168,8 +210,12 @@ describe('VisitServiceOrdersService', () => {
         },
       };
 
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(order);
-      (clinicalRepository.completeVisitServiceOrderTransaction as jest.Mock).mockResolvedValue(result);
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(order);
+      (
+        clinicalRepository.completeVisitServiceOrderTransaction as jest.Mock
+      ).mockResolvedValue(result);
 
       // Act
       const response = await service.completeOrder('order-1', dto, 'tech-1');
@@ -189,11 +235,17 @@ describe('VisitServiceOrdersService', () => {
     it('should complete an order without sending notification when not advanced', async () => {
       // Arrange
       const order = buildOrder({ status: ServiceOrderStatus.IN_PROGRESS });
-      const completedOrder = buildOrder({ status: ServiceOrderStatus.COMPLETED });
+      const completedOrder = buildOrder({
+        status: ServiceOrderStatus.COMPLETED,
+      });
       const dto = { resultText: 'Pending review' };
 
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(order);
-      (clinicalRepository.completeVisitServiceOrderTransaction as jest.Mock).mockResolvedValue({
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(order);
+      (
+        clinicalRepository.completeVisitServiceOrderTransaction as jest.Mock
+      ).mockResolvedValue({
         completedOrder,
         advanced: false,
         record: null,
@@ -204,45 +256,69 @@ describe('VisitServiceOrdersService', () => {
 
       // Assert
       await new Promise((r) => setTimeout(r, 0));
-      expect(notificationsService.createInAppNotification).not.toHaveBeenCalled();
+      expect(
+        notificationsService.createInAppNotification,
+      ).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException when order does not exist', async () => {
       // Arrange
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(null);
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(null);
 
       // Act & Assert
-      await expect(service.completeOrder('missing', {}, 'tech-1')).rejects.toThrow(NotFoundException);
+      await expect(
+        service.completeOrder('missing', {}, 'tech-1'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('should throw ConflictException when order is already COMPLETED', async () => {
       // Arrange
       const order = buildOrder({ status: ServiceOrderStatus.COMPLETED });
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(order);
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(order);
 
       // Act & Assert
-      await expect(service.completeOrder('order-1', {}, 'tech-1')).rejects.toThrow(ConflictException);
+      await expect(
+        service.completeOrder('order-1', {}, 'tech-1'),
+      ).rejects.toThrow(ConflictException);
     });
 
     it('should throw BadRequestException when order is CANCELLED', async () => {
       // Arrange
       const order = buildOrder({ status: ServiceOrderStatus.CANCELLED });
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(order);
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(order);
 
       // Act & Assert
-      await expect(service.completeOrder('order-1', {}, 'tech-1')).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.completeOrder('order-1', {}, 'tech-1'),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should pass findings as Prisma.InputJsonValue to the transaction', async () => {
       // Arrange
       const order = buildOrder({ status: ServiceOrderStatus.IN_PROGRESS });
-      const completedOrder = buildOrder({ status: ServiceOrderStatus.COMPLETED });
-      const dto = { findings: { status: 'normal', conclusion: 'All clear' } as { status: string; conclusion: string }, isAbnormal: true };
+      const completedOrder = buildOrder({
+        status: ServiceOrderStatus.COMPLETED,
+      });
+      const dto = {
+        findings: { status: 'normal', conclusion: 'All clear' } as {
+          status: string;
+          conclusion: string;
+        },
+        isAbnormal: true,
+      };
 
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(order);
-      (clinicalRepository.completeVisitServiceOrderTransaction as jest.Mock).mockResolvedValue({
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(order);
+      (
+        clinicalRepository.completeVisitServiceOrderTransaction as jest.Mock
+      ).mockResolvedValue({
         completedOrder,
         advanced: false,
         record: null,
@@ -252,7 +328,9 @@ describe('VisitServiceOrdersService', () => {
       await service.completeOrder('order-1', dto, 'tech-1');
 
       // Assert — verify the findings object was passed through
-      expect(clinicalRepository.completeVisitServiceOrderTransaction).toHaveBeenCalledWith(
+      expect(
+        clinicalRepository.completeVisitServiceOrderTransaction,
+      ).toHaveBeenCalledWith(
         'order-1',
         'tech-1',
         expect.objectContaining({
@@ -266,23 +344,35 @@ describe('VisitServiceOrdersService', () => {
   describe('getOrderDetail', () => {
     it('should return order detail when found', async () => {
       // Arrange
-      const detail = { id: 'order-1', status: ServiceOrderStatus.COMPLETED, service: { name: 'X-Ray' } };
-      (clinicalRepository.findVisitServiceOrderDetailById as jest.Mock).mockResolvedValue(detail);
+      const detail = {
+        id: 'order-1',
+        status: ServiceOrderStatus.COMPLETED,
+        service: { name: 'X-Ray' },
+      };
+      (
+        clinicalRepository.findVisitServiceOrderDetailById as jest.Mock
+      ).mockResolvedValue(detail);
 
       // Act
       const result = await service.getOrderDetail('order-1');
 
       // Assert
       expect(result).toEqual(detail);
-      expect(clinicalRepository.findVisitServiceOrderDetailById).toHaveBeenCalledWith('order-1');
+      expect(
+        clinicalRepository.findVisitServiceOrderDetailById,
+      ).toHaveBeenCalledWith('order-1');
     });
 
     it('should throw NotFoundException when order detail is not found', async () => {
       // Arrange
-      (clinicalRepository.findVisitServiceOrderDetailById as jest.Mock).mockResolvedValue(null);
+      (
+        clinicalRepository.findVisitServiceOrderDetailById as jest.Mock
+      ).mockResolvedValue(null);
 
       // Act & Assert
-      await expect(service.getOrderDetail('missing')).rejects.toThrow(NotFoundException);
+      await expect(service.getOrderDetail('missing')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

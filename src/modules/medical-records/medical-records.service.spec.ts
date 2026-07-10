@@ -142,11 +142,17 @@ describe('MedicalRecordsService', () => {
     it('should save symptoms successfully and return a medical record detail', async () => {
       // Arrange
       const booking = buildBooking();
-      const savedRecord = buildMedicalRecord({ visitStep: VisitStep.SYMPTOMS_TAKEN });
+      const savedRecord = buildMedicalRecord({
+        visitStep: VisitStep.SYMPTOMS_TAKEN,
+      });
       const dto = { chiefComplaint: 'Headache', clinicalFindings: 'Normal BP' };
 
-      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(booking);
-      (clinicalRepository.saveSymptomsTransaction as jest.Mock).mockResolvedValue(savedRecord);
+      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (
+        clinicalRepository.saveSymptomsTransaction as jest.Mock
+      ).mockResolvedValue(savedRecord);
 
       // Act
       const result = await service.saveSymptoms('booking-1', dto, 'doctor-1');
@@ -166,14 +172,18 @@ describe('MedicalRecordsService', () => {
       (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(null);
 
       // Act & Assert
-      await expect(service.saveSymptoms('missing', {}, 'doctor-1')).rejects.toThrow(NotFoundException);
+      await expect(
+        service.saveSymptoms('missing', {}, 'doctor-1'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('should throw ForbiddenException when doctor is not the assigned doctor', async () => {
       // Arrange
       const booking = buildBooking({ doctorId: 'other-doctor' });
       const currentUser = { id: 'doctor-1', role: 'DOCTOR' } as Express.User;
-      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(booking);
+      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(
+        booking,
+      );
 
       // Act & Assert
       await expect(
@@ -184,14 +194,28 @@ describe('MedicalRecordsService', () => {
     it('should call clinical repository with domain-level parameters only (no Prisma objects)', async () => {
       // Arrange
       const booking = buildBooking();
-      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(booking);
-      (clinicalRepository.saveSymptomsTransaction as jest.Mock).mockResolvedValue(buildMedicalRecord());
+      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (
+        clinicalRepository.saveSymptomsTransaction as jest.Mock
+      ).mockResolvedValue(buildMedicalRecord());
 
       // Act
-      await service.saveSymptoms('booking-1', { chiefComplaint: 'Fever' }, 'doctor-1');
+      await service.saveSymptoms(
+        'booking-1',
+        { chiefComplaint: 'Fever' },
+        'doctor-1',
+      );
 
       // Assert
-      const [bId, dId, ppId, dto] = (clinicalRepository.saveSymptomsTransaction as jest.Mock).mock.calls[0];
+      const [bId, dId, ppId, dto]: [
+        string,
+        string,
+        string,
+        Record<string, unknown>,
+      ] = (clinicalRepository.saveSymptomsTransaction as jest.Mock).mock
+        .calls[0] as [string, string, string, Record<string, unknown>];
       expect(typeof bId).toBe('string');
       expect(typeof dId).toBe('string');
       expect(typeof ppId).toBe('string');
@@ -206,31 +230,54 @@ describe('MedicalRecordsService', () => {
     it('should save diagnosis when no service orders and any visitStep', async () => {
       // Arrange
       const booking = buildBooking();
-      const record = buildMedicalRecord({ visitStep: VisitStep.SYMPTOMS_TAKEN });
-      const updatedRecord = buildMedicalRecord({ visitStep: VisitStep.DIAGNOSED });
+      const record = buildMedicalRecord({
+        visitStep: VisitStep.SYMPTOMS_TAKEN,
+      });
+      const updatedRecord = buildMedicalRecord({
+        visitStep: VisitStep.DIAGNOSED,
+      });
       const dto = { diagnosisCode: 'J00', diagnosisName: 'Common Cold' };
 
-      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(booking);
-      (clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock).mockResolvedValue(record);
-      (clinicalRepository.countVisitServiceOrdersByMedicalRecordId as jest.Mock).mockResolvedValue(0);
-      (clinicalRepository.saveDiagnosis as jest.Mock).mockResolvedValue(updatedRecord);
+      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (
+        clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock
+      ).mockResolvedValue(record);
+      (
+        clinicalRepository.countVisitServiceOrdersByMedicalRecordId as jest.Mock
+      ).mockResolvedValue(0);
+      (clinicalRepository.saveDiagnosis as jest.Mock).mockResolvedValue(
+        updatedRecord,
+      );
 
       // Act
       const result = await service.saveDiagnosis('booking-1', dto, 'doctor-1');
 
       // Assert
       expect(result).toEqual(updatedRecord);
-      expect(clinicalRepository.saveDiagnosis).toHaveBeenCalledWith(record.id, dto);
+      expect(clinicalRepository.saveDiagnosis).toHaveBeenCalledWith(
+        record.id,
+        dto,
+      );
     });
 
     it('should save diagnosis when visitStep is RESULTS_READY (with service orders)', async () => {
       // Arrange
       const booking = buildBooking();
       const record = buildMedicalRecord({ visitStep: VisitStep.RESULTS_READY });
-      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(booking);
-      (clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock).mockResolvedValue(record);
-      (clinicalRepository.countVisitServiceOrdersByMedicalRecordId as jest.Mock).mockResolvedValue(2);
-      (clinicalRepository.saveDiagnosis as jest.Mock).mockResolvedValue(buildMedicalRecord({ visitStep: VisitStep.DIAGNOSED }));
+      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (
+        clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock
+      ).mockResolvedValue(record);
+      (
+        clinicalRepository.countVisitServiceOrdersByMedicalRecordId as jest.Mock
+      ).mockResolvedValue(2);
+      (clinicalRepository.saveDiagnosis as jest.Mock).mockResolvedValue(
+        buildMedicalRecord({ visitStep: VisitStep.DIAGNOSED }),
+      );
 
       // Act
       const result = await service.saveDiagnosis('booking-1', {}, 'doctor-1');
@@ -242,24 +289,38 @@ describe('MedicalRecordsService', () => {
     it('should throw BadRequestException when orders exist and visitStep is not RESULTS_READY/DIAGNOSED', async () => {
       // Arrange
       const booking = buildBooking();
-      const record = buildMedicalRecord({ visitStep: VisitStep.SYMPTOMS_TAKEN });
-      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(booking);
-      (clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock).mockResolvedValue(record);
-      (clinicalRepository.countVisitServiceOrdersByMedicalRecordId as jest.Mock).mockResolvedValue(2);
+      const record = buildMedicalRecord({
+        visitStep: VisitStep.SYMPTOMS_TAKEN,
+      });
+      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (
+        clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock
+      ).mockResolvedValue(record);
+      (
+        clinicalRepository.countVisitServiceOrdersByMedicalRecordId as jest.Mock
+      ).mockResolvedValue(2);
 
       // Act & Assert
-      await expect(service.saveDiagnosis('booking-1', {}, 'doctor-1')).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.saveDiagnosis('booking-1', {}, 'doctor-1'),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should throw NotFoundException when medical record is missing', async () => {
       // Arrange
-      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(buildBooking());
-      (clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock).mockResolvedValue(null);
+      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(
+        buildBooking(),
+      );
+      (
+        clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock
+      ).mockResolvedValue(null);
 
       // Act & Assert
-      await expect(service.saveDiagnosis('booking-1', {}, 'doctor-1')).rejects.toThrow(NotFoundException);
+      await expect(
+        service.saveDiagnosis('booking-1', {}, 'doctor-1'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -267,12 +328,22 @@ describe('MedicalRecordsService', () => {
     const makeValidPrescriptionSetup = () => {
       const booking = buildBooking();
       const record = buildMedicalRecord({ visitStep: VisitStep.DIAGNOSED });
-      const updatedRecord = buildMedicalRecord({ visitStep: VisitStep.PRESCRIBED });
+      const updatedRecord = buildMedicalRecord({
+        visitStep: VisitStep.PRESCRIBED,
+      });
 
-      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(booking);
-      (clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock).mockResolvedValue(record);
-      (clinicalRepository.savePrescriptionTransaction as jest.Mock).mockResolvedValue(updatedRecord);
-      (bookingRepository.findBookingForPostVisitEmail as jest.Mock).mockResolvedValue(null); // skip email
+      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (
+        clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock
+      ).mockResolvedValue(record);
+      (
+        clinicalRepository.savePrescriptionTransaction as jest.Mock
+      ).mockResolvedValue(updatedRecord);
+      (
+        bookingRepository.findBookingForPostVisitEmail as jest.Mock
+      ).mockResolvedValue(null); // skip email
 
       return { booking, record, updatedRecord };
     };
@@ -280,14 +351,30 @@ describe('MedicalRecordsService', () => {
     it('should save prescription when visitStep is DIAGNOSED', async () => {
       // Arrange
       const { updatedRecord } = makeValidPrescriptionSetup();
-      const dto = { items: [{ medicineName: 'Paracetamol', dosage: '500mg', frequency: '3x/day', quantity: 21, unitPrice: 5000 }] };
+      const dto = {
+        items: [
+          {
+            medicineName: 'Paracetamol',
+            dosage: '500mg',
+            frequency: '3x/day',
+            quantity: 21,
+            unitPrice: 5000,
+          },
+        ],
+      };
 
       // Act
-      const result = await service.savePrescription('booking-1', dto, 'doctor-1');
+      const result = await service.savePrescription(
+        'booking-1',
+        dto,
+        'doctor-1',
+      );
 
       // Assert
       expect(result).toEqual(updatedRecord);
-      expect(clinicalRepository.savePrescriptionTransaction).toHaveBeenCalledWith(
+      expect(
+        clinicalRepository.savePrescriptionTransaction,
+      ).toHaveBeenCalledWith(
         'booking-1',
         'doctor-1',
         'record-1',
@@ -300,9 +387,15 @@ describe('MedicalRecordsService', () => {
     it('should throw BadRequestException when visitStep is not DIAGNOSED/PRESCRIBED/COMPLETED', async () => {
       // Arrange
       const booking = buildBooking();
-      const record = buildMedicalRecord({ visitStep: VisitStep.SYMPTOMS_TAKEN });
-      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(booking);
-      (clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock).mockResolvedValue(record);
+      const record = buildMedicalRecord({
+        visitStep: VisitStep.SYMPTOMS_TAKEN,
+      });
+      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (
+        clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock
+      ).mockResolvedValue(record);
 
       // Act & Assert
       await expect(
@@ -312,8 +405,12 @@ describe('MedicalRecordsService', () => {
 
     it('should throw NotFoundException when medical record is missing', async () => {
       // Arrange
-      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(buildBooking());
-      (clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock).mockResolvedValue(null);
+      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(
+        buildBooking(),
+      );
+      (
+        clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock
+      ).mockResolvedValue(null);
 
       // Act & Assert
       await expect(
@@ -324,7 +421,17 @@ describe('MedicalRecordsService', () => {
     it('should notify receptionist after successful prescription', async () => {
       // Arrange
       makeValidPrescriptionSetup();
-      const dto = { items: [{ medicineName: 'Amox', dosage: '250mg', frequency: '2x/day', quantity: 10, unitPrice: 3000 }] };
+      const dto = {
+        items: [
+          {
+            medicineName: 'Amox',
+            dosage: '250mg',
+            frequency: '2x/day',
+            quantity: 10,
+            unitPrice: 3000,
+          },
+        ],
+      };
 
       // Act
       await service.savePrescription('booking-1', dto, 'doctor-1');
@@ -341,15 +448,35 @@ describe('MedicalRecordsService', () => {
       // Arrange
       const booking = buildBooking();
       const servicesWithDoctors = [
-        { id: 'svc-1', performerType: 'TECHNICIAN', name: 'X-Ray', doctorServices: [] },
-        { id: 'svc-2', performerType: 'TECHNICIAN', name: 'Blood Test', doctorServices: [] },
+        {
+          id: 'svc-1',
+          performerType: 'TECHNICIAN',
+          name: 'X-Ray',
+          doctorServices: [],
+        },
+        {
+          id: 'svc-2',
+          performerType: 'TECHNICIAN',
+          name: 'Blood Test',
+          doctorServices: [],
+        },
       ];
       const dto = { items: [{ serviceId: 'svc-1' }, { serviceId: 'svc-2' }] };
-      const orderResult = { record: buildMedicalRecord(), orders: [], labOrders: [] };
+      const orderResult = {
+        record: buildMedicalRecord(),
+        orders: [],
+        labOrders: [],
+      };
 
-      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(booking);
-      (clinicalRepository.findActiveServicesWithDoctors as jest.Mock).mockResolvedValue(servicesWithDoctors);
-      (clinicalRepository.orderServicesTransaction as jest.Mock).mockResolvedValue(orderResult);
+      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(
+        booking,
+      );
+      (
+        clinicalRepository.findActiveServicesWithDoctors as jest.Mock
+      ).mockResolvedValue(servicesWithDoctors);
+      (
+        clinicalRepository.orderServicesTransaction as jest.Mock
+      ).mockResolvedValue(orderResult);
 
       // Act
       const result = await service.orderServices('booking-1', dto, 'doctor-1');
@@ -368,18 +495,24 @@ describe('MedicalRecordsService', () => {
     it('should throw BadRequestException when any serviceId is invalid', async () => {
       // Arrange
       const booking = buildBooking();
-      const dto = { items: [{ serviceId: 'svc-1' }, { serviceId: 'svc-invalid' }] };
+      const dto = {
+        items: [{ serviceId: 'svc-1' }, { serviceId: 'svc-invalid' }],
+      };
 
-      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(booking);
+      (bookingRepository.findBookingById as jest.Mock).mockResolvedValue(
+        booking,
+      );
       // Only 1 found, but 2 requested
-      (clinicalRepository.findActiveServicesWithDoctors as jest.Mock).mockResolvedValue([
+      (
+        clinicalRepository.findActiveServicesWithDoctors as jest.Mock
+      ).mockResolvedValue([
         { id: 'svc-1', performerType: 'TECHNICIAN', name: 'X-Ray' },
       ]);
 
       // Act & Assert
-      await expect(service.orderServices('booking-1', dto, 'doctor-1')).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.orderServices('booking-1', dto, 'doctor-1'),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -396,15 +529,23 @@ describe('MedicalRecordsService', () => {
       const record = buildMedicalRecord({ visitStep: VisitStep.RESULTS_READY });
       record.booking.doctorId = 'doctor-1';
 
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(vso);
-      (clinicalRepository.completeSpecialistExaminationTransaction as jest.Mock).mockResolvedValue({
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(vso);
+      (
+        clinicalRepository.completeSpecialistExaminationTransaction as jest.Mock
+      ).mockResolvedValue({
         updatedVso,
         advanced: true,
         record,
       });
 
       // Act
-      const result = await service.completeSpecialistExamination('vso-1', 'doctor-1', { resultText: 'Normal' });
+      const result = await service.completeSpecialistExamination(
+        'vso-1',
+        'doctor-1',
+        { resultText: 'Normal' },
+      );
 
       // Assert
       expect(result).toEqual(updatedVso);
@@ -422,28 +563,54 @@ describe('MedicalRecordsService', () => {
 
     it('should throw NotFoundException when vso does not exist', async () => {
       // Arrange
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(null);
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(null);
 
       // Act & Assert
-      await expect(service.completeSpecialistExamination('bad', 'doctor-1', { resultText: 'Test' })).rejects.toThrow(NotFoundException);
+      await expect(
+        service.completeSpecialistExamination('bad', 'doctor-1', {
+          resultText: 'Test',
+        }),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('should throw ForbiddenException when doctor is not assigned to the VSO', async () => {
       // Arrange
-      const vso = { id: 'vso-1', performedBy: 'other-doctor', status: ServiceOrderStatus.PAID };
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(vso);
+      const vso = {
+        id: 'vso-1',
+        performedBy: 'other-doctor',
+        status: ServiceOrderStatus.PAID,
+      };
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(vso);
 
       // Act & Assert
-      await expect(service.completeSpecialistExamination('vso-1', 'doctor-1', { resultText: 'Test' })).rejects.toThrow(ForbiddenException);
+      await expect(
+        service.completeSpecialistExamination('vso-1', 'doctor-1', {
+          resultText: 'Test',
+        }),
+      ).rejects.toThrow(ForbiddenException);
     });
 
     it('should throw BadRequestException for invalid status', async () => {
       // Arrange
-      const vso = { id: 'vso-1', performedBy: 'doctor-1', status: ServiceOrderStatus.CANCELLED };
-      (clinicalRepository.findVisitServiceOrderById as jest.Mock).mockResolvedValue(vso);
+      const vso = {
+        id: 'vso-1',
+        performedBy: 'doctor-1',
+        status: ServiceOrderStatus.CANCELLED,
+      };
+      (
+        clinicalRepository.findVisitServiceOrderById as jest.Mock
+      ).mockResolvedValue(vso);
 
       // Act & Assert
-      await expect(service.completeSpecialistExamination('vso-1', 'doctor-1', { resultText: 'Test' })).rejects.toThrow(BadRequestException);
+      await expect(
+        service.completeSpecialistExamination('vso-1', 'doctor-1', {
+          resultText: 'Test',
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -453,7 +620,9 @@ describe('MedicalRecordsService', () => {
       const record = buildMedicalRecord({ visitStep: VisitStep.RESULTS_READY });
       record.booking.doctorId = 'doctor-1';
 
-      (clinicalRepository.checkAndAdvanceToResultsReadyTransaction as jest.Mock).mockResolvedValue({
+      (
+        clinicalRepository.checkAndAdvanceToResultsReadyTransaction as jest.Mock
+      ).mockResolvedValue({
         advanced: true,
         record,
       });
@@ -470,7 +639,9 @@ describe('MedicalRecordsService', () => {
 
     it('should not fire notifications when not advanced', async () => {
       // Arrange
-      (clinicalRepository.checkAndAdvanceToResultsReadyTransaction as jest.Mock).mockResolvedValue({
+      (
+        clinicalRepository.checkAndAdvanceToResultsReadyTransaction as jest.Mock
+      ).mockResolvedValue({
         advanced: false,
         record: null,
       });
@@ -480,7 +651,9 @@ describe('MedicalRecordsService', () => {
 
       // Assert
       await new Promise((r) => setTimeout(r, 0));
-      expect(notificationsService.createInAppNotification).not.toHaveBeenCalled();
+      expect(
+        notificationsService.createInAppNotification,
+      ).not.toHaveBeenCalled();
     });
   });
 
@@ -490,8 +663,12 @@ describe('MedicalRecordsService', () => {
       const record = buildMedicalRecord({
         prescription: { id: 'rx-1', isFulfilledInternally: false },
       });
-      (clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock).mockResolvedValue(record);
-      (clinicalRepository.fulfillPrescriptionTransaction as jest.Mock).mockResolvedValue({
+      (
+        clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock
+      ).mockResolvedValue(record);
+      (
+        clinicalRepository.fulfillPrescriptionTransaction as jest.Mock
+      ).mockResolvedValue({
         id: 'rx-1',
         isFulfilledInternally: true,
       });
@@ -501,24 +678,34 @@ describe('MedicalRecordsService', () => {
 
       // Assert
       expect(result).toMatchObject({ isFulfilledInternally: true });
-      expect(clinicalRepository.fulfillPrescriptionTransaction).toHaveBeenCalledWith('rx-1', undefined);
+      expect(
+        clinicalRepository.fulfillPrescriptionTransaction,
+      ).toHaveBeenCalledWith('rx-1', undefined);
     });
 
     it('should throw NotFoundException when medical record is missing', async () => {
       // Arrange
-      (clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock).mockResolvedValue(null);
+      (
+        clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock
+      ).mockResolvedValue(null);
 
       // Act & Assert
-      await expect(service.fulfillPrescription('booking-1')).rejects.toThrow(NotFoundException);
+      await expect(service.fulfillPrescription('booking-1')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('should throw NotFoundException when prescription is missing', async () => {
       // Arrange
       const record = buildMedicalRecord({ prescription: null });
-      (clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock).mockResolvedValue(record);
+      (
+        clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock
+      ).mockResolvedValue(record);
 
       // Act & Assert
-      await expect(service.fulfillPrescription('booking-1')).rejects.toThrow(NotFoundException);
+      await expect(service.fulfillPrescription('booking-1')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('should throw BadRequestException when prescription already fulfilled', async () => {
@@ -526,10 +713,14 @@ describe('MedicalRecordsService', () => {
       const record = buildMedicalRecord({
         prescription: { id: 'rx-1', isFulfilledInternally: true },
       });
-      (clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock).mockResolvedValue(record);
+      (
+        clinicalRepository.findMedicalRecordDetailByBookingId as jest.Mock
+      ).mockResolvedValue(record);
 
       // Act & Assert
-      await expect(service.fulfillPrescription('booking-1')).rejects.toThrow(BadRequestException);
+      await expect(service.fulfillPrescription('booking-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 });
